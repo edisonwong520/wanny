@@ -43,3 +43,17 @@
 ## 5. 项目持续迭代与扩充 (Self-Improvement)
 
 - 这并不是一份一次性文件。如果在后续开发中，存在新的重要架构决策（如新引入了一套智能家居 API 规则、消息队列改换等），AI **必须主动**将新规范更新至 `GEMINI.md` 的内容，保证其始终作为该项目的“单一真理来源 (Single Source of Truth)”。
+
+## 6. 第三方 API 与生态对接参考 (Third-party Integrations)
+
+当需要编写或修改外部物联网设备、社交平台代理相关的代码时，AI 在生成代码前必须优先参考以下官方约定及已验证的封装机制：
+
+- **社交代理与系统自动回复 (微信 iLink 协议)**：
+  - **参考文档**: [https://www.wechatbot.dev/zh/python](https://www.wechatbot.dev/zh/python)
+  - **主要包名**: `wechatbot-sdk`
+  - **开发规范**: 基于 Async/Await 机制。监听回调必须使用 `@bot.on_message` 装饰器；发送回复使用 `bot.reply()` 方法；需使用 `bot.run()` 接管底层 WebSocket 事件循环及提供扫码登录。
+
+- **智能家居物联网层控 (米家 Mijia API)**：
+  - **参考文档**: [https://github.com/Do1e/mijia-api](https://github.com/Do1e/mijia-api)
+  - **主要包名**: `mijiaAPI`
+  - **开发规范**: 任何设备交互前必须进行 `api.login()` 获取/缓存 Token；严禁自行构造底层协议请求，统一使用 `mijiaDevice(api, dev_name="特定名称")` 类抽象来对接（读写属性用 `get()/set()`，动作操作用 `run_action()`）。

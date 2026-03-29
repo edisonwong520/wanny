@@ -8,6 +8,7 @@ dependencies = [
     "daphne>=4.2.1",
     "django>=6.0.3",
     "django-channels>=0.7.0",
+    "mijiaapi>=3.0.5",
     "mysqlclient>=2.2.8",
     "python-dotenv>=1.0.1",
     "uvicorn>=0.42.0",

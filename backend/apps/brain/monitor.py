@@ -1,3 +1,4 @@
+import os
 import time
 import asyncio
 from asgiref.sync import sync_to_async
@@ -12,14 +13,14 @@ class MonitorService:
         纯异步死循环入口，与 WeChat 事件循环共生。
         """
         logger.info("[Brain Monitor] 开启后台家室传感器定时轮询守护模式！")
+        interval = int(os.getenv("MONITOR_POLL_INTERVAL", 30))
         while True:
             try:
-                # 每 30 秒一瞥
-                await asyncio.sleep(30)
+                await asyncio.sleep(interval)
                 await cls._poll_and_judge(bot)
             except Exception as e:
                 logger.error(f"[Brain Monitor] 长青循环崩坏: {str(e)}")
-                await asyncio.sleep(30)
+                await asyncio.sleep(interval)
 
     @classmethod
     async def _poll_and_judge(cls, bot):

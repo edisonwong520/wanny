@@ -1,6 +1,7 @@
 """
 语义向量记忆引擎 (Memory A - Assistant)
 基于 ChromaDB 实现对话和操作日志的向量化存储与语义检索。
+支持 Gemini Embedding 或默认的 all-MiniLM-L6-v2。
 """
 import os
 import time
@@ -11,7 +12,8 @@ from utils.logger import logger
 class VectorStore:
     """
     封装 ChromaDB 客户端，提供统一的记忆写入和检索接口。
-    ChromaDB 使用内置的 all-MiniLM-L6-v2 模型进行 Embedding。
+    如果配置了 GEMINI_API_KEY，使用 Google text-embedding-004 模型；
+    否则降级使用 ChromaDB 内置的 all-MiniLM-L6-v2。
     """
     _instance = None
 
@@ -24,17 +26,33 @@ class VectorStore:
 
     def __init__(self):
         persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
-        logger.info(f"[VectorStore] 初始化 ChromaDB，持久化路径: {persist_dir}")
         self._client = chromadb.PersistentClient(path=persist_dir)
+
+        # 初始化 Embedding 函数
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        embedding_model = os.getenv("CHROMA_EMBEDDING_MODEL", "text-embedding-004")
+        if gemini_key:
+            from chromadb.utils.embedding_functions import GoogleGenerativeAiEmbeddingFunction
+            self._embedding_fn = GoogleGenerativeAiEmbeddingFunction(
+                api_key=gemini_key,
+                model_name=embedding_model
+            )
+            logger.info(f"[VectorStore] 初始化完成，Embedding: Gemini/{embedding_model}，持久化: {persist_dir}")
+        else:
+            self._embedding_fn = None  # 使用 ChromaDB 内置默认模型
+            logger.info(f"[VectorStore] 初始化完成，Embedding: 内置 all-MiniLM-L6-v2，持久化: {persist_dir}")
 
     def _get_collection(self, user_id: str):
         """为每个用户创建独立的 collection，实现数据隔离。"""
         safe_name = user_id.replace("@", "_at_").replace(".", "_")[:60]
         collection_name = f"user_{safe_name}"
-        return self._client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"}
-        )
+        kwargs = {
+            "name": collection_name,
+            "metadata": {"hnsw:space": "cosine"}
+        }
+        if self._embedding_fn:
+            kwargs["embedding_function"] = self._embedding_fn
+        return self._client.get_or_create_collection(**kwargs)
 
     def add_memory(self, user_id: str, text: str, metadata: dict = None):
         """

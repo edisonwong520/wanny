@@ -57,11 +57,7 @@ class Command(BaseCommand):
         bot = WeChatBot(cred_path=CRED_FILE)
 
         from brain.monitor import MonitorService
-        
-        # 为了兼容跨线程调用 bot.send()，我们捕获 bot_loop。
-        # 这里最安全的做法是在新线程中自己维持监控死循环，发消息时交由安全方法处理。
-        monitor_thread = threading.Thread(target=MonitorService.start_polling, daemon=True, args=(bot,))
-        monitor_thread.start()
+        import asyncio
         
         @bot.on_message
         async def handle_message(message):
@@ -77,9 +73,15 @@ class Command(BaseCommand):
                 logger.error(f"[WeChat Bot] 代理层抛出严重拦截错误: {str(e)}")
 
         logger.info("[WeChat Bot] 启动事件循环并接管 WebSocket，请按提示扫码...")
-        # 接管该主线程，使用 bot.run() 
+        
+        async def main():
+            # 开启大脑心跳监测并行协程
+            asyncio.create_task(MonitorService.loop_start(bot))
+            # 配合 asyncio，调用真实的底层异步入口
+            await bot._run_sync()
+
         try:
-            bot.run()
+            asyncio.run(main())
         except KeyboardInterrupt:
             logger.info("[WeChat Bot] 用户主动停止了机器人服务。")
         except Exception as e:

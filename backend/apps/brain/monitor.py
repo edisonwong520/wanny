@@ -7,19 +7,19 @@ from comms.models import PendingCommand
 
 class MonitorService:
     @classmethod
-    def start_polling(cls, bot=None):
+    async def loop_start(cls, bot):
         """
-        同步死循环入口，由 runwechatbot 的纯 Python 线程池拉起触发。
+        纯异步死循环入口，与 WeChat 事件循环共生。
         """
         logger.info("[Brain Monitor] 开启后台家室传感器定时轮询守护模式！")
         while True:
             try:
                 # 每 30 秒一瞥
-                time.sleep(30)
-                asyncio.run(cls._poll_and_judge(bot))
+                await asyncio.sleep(30)
+                await cls._poll_and_judge(bot)
             except Exception as e:
                 logger.error(f"[Brain Monitor] 长青循环崩坏: {str(e)}")
-                time.sleep(30)
+                await asyncio.sleep(30)
 
     @classmethod
     async def _poll_and_judge(cls, bot):
@@ -83,13 +83,23 @@ class MonitorService:
                     msg = "Sir，" + msg + "\n是否需要我现在关闭它？（您可以回复 同意/拒绝）"
 
                 new_pending = await sync_to_async(PendingCommand.objects.create)(
-                    # 虚拟一个上帝的用户来派发任务以便让服务知道发给谁。这里写你的微信 UserID 即可，我们在测试阶段填 mock_user
-                    user_id="o9cq809omvrgSsKeV6GXki2I9emo@im.wechat", # 这里填主人的微信 id
+                    # 先留存一条没绑定 user_id 的占位，实际发送时我们通过 bot 匹配正确的微信联系人。
+                    user_id="BROADCAST", 
                     original_prompt=f"[MIJIA:{dev_id}] 想变更 {prop_key} 为 {t_value}！",
-                    shell_command="", # 这是米家不是Shell所以为空
+                    shell_command="", 
                 )
 
                 # 将这条请求推送给微信去：
-                # 实际上通过 bot.send("userid", message)，我们在长守护进程里可以通过广播或其它事件方法。
-                # 提示：“为了演示目的我在终端打出，你需要在这直接对接 bot.send_text() ”
+                # 这里我们利用由于之前在微信上与 Bot 说过话所以留存下的上下文 Context Token 发送。
                 logger.warning(f"[主动推送给主人] ==============> \n{msg}\n")
+                if not bot or not getattr(bot, '_context_tokens', None):
+                    continue
+
+                for wx_user_id in list(bot._context_tokens.keys()):
+                    try:
+                        await bot.send(wx_user_id, msg)
+                        # 同时将 pending 的确切归属人更新，使得将来他回复时能匹配上
+                        new_pending.user_id = wx_user_id
+                        await sync_to_async(new_pending.save)()
+                    except Exception as e:
+                        logger.error(f"推送至微信 {wx_user_id} 失败：{e}")

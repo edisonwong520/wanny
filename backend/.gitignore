@@ -150,6 +150,5 @@ cython_debug/
 .DS_Store
 
 # SDK Credentials
-wechat_credentials.json
+credentials/
 chroma_data/
-*.json

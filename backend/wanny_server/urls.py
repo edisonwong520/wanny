@@ -22,4 +22,5 @@ urlpatterns = [
     path('api/devices/', include('devices.urls', namespace='devices')),
     path('api/providers/', include('providers.urls', namespace='providers')),
     path('api/memory/', include('memory.urls', namespace='memory')),
+    path('api/comms/', include('comms.urls', namespace='comms')),
 ]

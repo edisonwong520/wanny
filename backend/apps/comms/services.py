@@ -60,6 +60,7 @@ class WeChatService:
                     user_id=user_id,
                     original_prompt=content, # 自己主动发起，不是米家
                     shell_command=shell_cmd,
+                    metadata=intent_data.get("metadata", {})  # 存入丰富元数据
                 )
                 logger.info(f"[WeChat Service] 挂起一条待审批系统指令 (ID: {new_pending.id})")
                 

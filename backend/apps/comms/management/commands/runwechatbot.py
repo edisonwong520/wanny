@@ -148,7 +148,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         logger.info("========== Wanny WeChat Bot Agent 启动 ==========")
 
-        cred_file = "wechat_credentials.json"
+        cred_file = os.path.join("credentials", "wechat_credentials.json")
 
         try:
             self._prepare_wechat_credentials(cred_file)

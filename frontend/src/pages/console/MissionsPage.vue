@@ -1,28 +1,56 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { Button } from "@/components/ui/button";
-import { createConsoleMockData, type MissionRecord, type MissionRisk, type MissionStatus } from "@/data/console";
 import { cn } from "@/lib/utils";
+import {
+  type MissionRecord,
+  type MissionRisk,
+  type MissionStatus,
+  approveMission,
+  fetchMissions,
+  rejectMission,
+} from "@/lib/missions";
 
 const { t, locale } = useI18n();
 
 const missions = ref<MissionRecord[]>([]);
 const activeFilter = ref<"all" | MissionStatus>("pending");
 const selectedMissionId = ref<string>("");
+const loading = ref(false);
+const errorMessage = ref("");
+const processing = ref(false);
 
-function resetMissions() {
-  missions.value = createConsoleMockData(t).missions;
-  selectedMissionId.value = missions.value[0]?.id ?? "";
+async function loadMissions(options: { silent?: boolean } = {}) {
+  if (!options.silent) {
+    loading.value = true;
+  }
+  errorMessage.value = "";
+  try {
+    const data = await fetchMissions();
+    missions.value = data;
+    if (selectedMissionId.value === "" && data.length > 0) {
+      selectedMissionId.value = data[0].id;
+    }
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : t("missions.errors.load");
+  } finally {
+    if (!options.silent) {
+      loading.value = false;
+    }
+  }
 }
+
+onMounted(() => {
+  void loadMissions();
+});
 
 watch(
   () => locale.value,
   () => {
-    resetMissions();
+    void loadMissions();
   },
-  { immediate: true },
 );
 
 const filters = computed(() => [
@@ -103,7 +131,7 @@ function riskClasses(risk: MissionRisk) {
 
 function missionCardClasses(id: string) {
   return cn(
-    "rounded-[28px] border p-5 transition",
+    "rounded-[28px] border p-5 transition cursor-pointer",
     selectedMissionId.value === id
       ? "border-brand/18 bg-glow/65"
       : "border-black/[0.05] bg-white hover:border-brand/10 hover:bg-[#fcfffd]",
@@ -114,35 +142,48 @@ function selectMission(id: string) {
   selectedMissionId.value = id;
 }
 
-function nowTimeLabel() {
-  return new Intl.DateTimeFormat(locale.value === "zh-CN" ? "zh-CN" : "en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date());
+async function handleApprove() {
+  const mission = selectedMission.value;
+  if (!mission || processing.value) return;
+
+  processing.value = true;
+  try {
+    await approveMission(mission.id);
+    await loadMissions({ silent: true });
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : "Approval failed";
+  } finally {
+    processing.value = false;
+  }
 }
 
-function updateMissionStatus(status: MissionStatus, messageKey: "approved" | "rejected") {
+async function handleReject() {
   const mission = selectedMission.value;
-  if (!mission) {
-    return;
-  }
+  if (!mission || processing.value) return;
 
-  mission.status = status;
-  mission.timeline = [
-    {
-      id: `runtime-${Date.now()}`,
-      time: nowTimeLabel(),
-      message: t(`missions.timeline.${messageKey}`),
-    },
-    ...mission.timeline,
-  ];
+  processing.value = true;
+  try {
+    await rejectMission(mission.id);
+    await loadMissions({ silent: true });
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : "Rejection failed";
+  } finally {
+    processing.value = false;
+  }
 }
 </script>
 
 <template>
   <div class="space-y-5">
-    <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <section v-if="errorMessage" class="rounded-[24px] border border-[#F0C8C8] bg-[#FFF4F4] px-4 py-4 text-sm leading-7 text-[#A44545]">
+      {{ errorMessage }}
+    </section>
+
+    <section v-if="loading" class="rounded-[28px] border border-black/[0.05] bg-white p-8 text-sm text-muted">
+      {{ t("missions.loading") || "Loading missions..." }}
+    </section>
+
+    <section v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <article
         v-for="item in summaryCards"
         :key="item.label"
@@ -153,7 +194,7 @@ function updateMissionStatus(status: MissionStatus, messageKey: "approved" | "re
       </article>
     </section>
 
-    <section class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+    <section v-if="!loading" class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
       <div class="space-y-4">
         <div class="flex flex-wrap gap-3">
           <button
@@ -233,17 +274,17 @@ function updateMissionStatus(status: MissionStatus, messageKey: "approved" | "re
 
           <div class="mt-5 flex flex-wrap gap-3">
             <Button
-              :disabled="selectedMission.status === 'approved'"
-              @click="updateMissionStatus('approved', 'approved')"
+              :disabled="selectedMission.status !== 'pending' || processing"
+              @click="handleApprove"
             >
-              {{ t("missions.actions.approve") }}
+              {{ processing ? "..." : t("missions.actions.approve") }}
             </Button>
             <Button
               variant="secondary"
-              :disabled="selectedMission.status === 'failed'"
-              @click="updateMissionStatus('failed', 'rejected')"
+              :disabled="selectedMission.status !== 'pending' || processing"
+              @click="handleReject"
             >
-              {{ t("missions.actions.reject") }}
+              {{ processing ? "..." : t("missions.actions.reject") }}
             </Button>
           </div>
         </section>

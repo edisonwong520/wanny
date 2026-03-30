@@ -115,7 +115,16 @@ async def analyze_intent(user_msg: str, memory_context: str = "") -> dict:
       "type": "CHAT",          // 一定要是 CHAT, COMPLEX_SHELL, CONFIRM, PERMANENT_ALLOW, DENY 这五个字符串之一
       "response": "仅当类型为 CHAT 或 DENY 时，用来直接回复用户的话术。Jarvis风格",
       "shell_prompt": "仅 COMPLEX_SHELL 需要填写，向底壳传递的具体任务执行要求",
-      "confirm_text": "仅 COMPLEX_SHELL 需要填写，发给用户请求人工同意的提示语"
+      "confirm_text": "仅 COMPLEX_SHELL 需要填写，发给用户请求人工同意的提示语",
+      "metadata": {            // 仅当 COMPLEX_SHELL 时需要尽可能详细填写，用于前端展示
+        "title": "任务摘要标题",
+        "risk": "low | medium | high",
+        "summary": "该任务的长文本背景描述与影响面分析",
+        "intent": "归纳的用户真正核心意图",
+        "plan": ["分步执行计划1", "分步执行计划2"],
+        "context": ["关联到的关键上下文/记忆点1", "2"],
+        "suggested_reply": "任务完成后建议对用户说的完结语"
+      }
     }
     """
     

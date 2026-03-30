@@ -6,6 +6,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
+from utils.logger import logger
 from .models import (
     DeviceAnomaly,
     DeviceAutomationRule,
@@ -149,7 +150,17 @@ class DeviceDashboardService:
 
     @classmethod
     def refresh(cls, *, trigger: str = "manual") -> dict:
-        payload = cls._build_demo_snapshot()
+        auth = None
+        from providers.services import XiaomiAuthService
+        try:
+            auth = XiaomiAuthService.get_auth_record(active_only=True)
+        except Exception as e:
+            logger.error(f"[Device Sync] Failed to check Xiaomi auth state: {e}")
+
+        if auth:
+            payload = cls._build_mijia_snapshot()
+        else:
+            payload = cls._build_demo_snapshot()
 
         with transaction.atomic():
             state = cls._get_state()
@@ -274,6 +285,96 @@ class DeviceDashboardService:
                 ]
             )
             raise
+
+    @classmethod
+    def _build_mijia_snapshot(cls) -> dict:
+        from providers.services import XiaomiAuthService
+
+        try:
+            api = XiaomiAuthService.get_authenticated_api()
+            devices = api.get_devices_list()
+            homes = api.get_homes_list()
+        except Exception as e:
+            logger.error(f"[Device Sync] Failed to fetch real MiJia data, falling back to demo: {e}")
+            return cls._build_demo_snapshot()
+
+        home_map = {str(h["id"]): h["name"] for h in homes}
+
+        rooms_data = []
+        for h_id, h_name in home_map.items():
+            rooms_data.append(
+                {
+                    "id": h_id,
+                    "name": h_name,
+                    "climate": "已连接",
+                    "summary": f"来自米家家庭: {h_name}",
+                    "sort_order": 10,
+                }
+            )
+
+        # Ensure at least one room exists if devices have no home_id or if homes list is empty
+        if not rooms_data:
+            rooms_data.append(
+                {
+                    "id": "mijia-default",
+                    "name": "默认家庭",
+                    "climate": "未知",
+                    "summary": "未检测到明确的米家家庭分组",
+                    "sort_order": 10,
+                }
+            )
+
+        devices_data = []
+        for dev in devices:
+            is_online = dev.get("isOnline", False)
+            h_id = str(dev.get("home_id", "mijia-default"))
+            if h_id not in home_map and h_id != "mijia-default":
+                h_id = "mijia-default"
+
+            devices_data.append(
+                {
+                    "id": dev["did"],
+                    "room_id": h_id,
+                    "name": dev["name"],
+                    "category": cls._map_model_to_category(dev["model"]),
+                    "status": "online" if is_online else "offline",
+                    "telemetry": f"模型: {dev.get('model', 'unknown')}",
+                    "note": f"DID: {dev['did']} | IP: {dev.get('localip', 'N/A')}",
+                    "capabilities": [dev.get("model", "unknown")],
+                    "last_seen": timezone.now(),
+                    "sort_order": 10,
+                    "source_payload": dev,
+                }
+            )
+
+        return {
+            "source": "mijia",
+            "rooms": rooms_data,
+            "devices": devices_data,
+            "anomalies": [],
+            "rules": [],
+        }
+
+    @staticmethod
+    def _map_model_to_category(model: str) -> str:
+        model = (model or "").lower()
+        if "light" in model:
+            return "灯光"
+        if "sensor" in model:
+            return "传感器"
+        if "airpurifier" in model or "purifier" in model:
+            return "空气护理"
+        if "acpartner" in model or "aircondition" in model or "climate" in model:
+            return "空调"
+        if "fountain" in model or "feeder" in model:
+            return "宠物照护"
+        if "switch" in model or "plug" in model:
+            return "开关"
+        if "curtain" in model:
+            return "窗帘"
+        if "camera" in model:
+            return "监控"
+        return "其他设备"
 
     @staticmethod
     def _build_demo_snapshot() -> dict:

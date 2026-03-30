@@ -13,7 +13,7 @@ from .models import PlatformAuth
 
 class WeChatAuthService:
     platform_name = "wechat"
-    cred_file_name = "wechat_credentials.json"
+    cred_file_name = "credentials/wechat_credentials.json"
 
     @classmethod
     def resolve_cred_file_path(cls, cred_file_path=None) -> Path:
@@ -96,7 +96,7 @@ class WeChatAuthService:
 class XiaomiAuthService:
     platform_name = "xiaomi"
     platform_aliases = ("xiaomi", "mijia")
-    auth_file_name = "xiaomi_auth.json"
+    auth_file_name = "credentials/xiaomi_auth.json"
 
     @classmethod
     def resolve_auth_file_path(cls, auth_file_path=None) -> Path:

@@ -85,6 +85,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'wanny_server.wsgi.application'
+ASGI_APPLICATION = 'wanny_server.asgi.application'
 
 
 # Database

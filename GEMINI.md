@@ -19,6 +19,7 @@
 ### 3.1 后端 (Backend)
 - **核心框架**：Python + Django
 - **包管理工具**：必须优先使用 `uv`（例如：使用 `uv add xx` / `uv run xx`），避免使用纯粹的 pip 从而保持项目依赖锁定和一致。
+- **Mac 环境下的 mysqlclient 安装**：如果在 Mac 上执行 `uv sync` 时遇到 `mysqlclient` 编译错误（`pkg-config` 无法找到 `mysqlclient`），请确保已安装 `brew install mysql-client pkg-config`，并在执行前设置环境变量：`export PKG_CONFIG_PATH="/opt/homebrew/opt/mysql-client/lib/pkgconfig"`。建议将其加入 `~/.bash_profile` 或 `~/.zshrc` 中。
 - **配置与鉴权**：禁止硬编码（Hardcoding）API Keys、数据库密码等敏感信息或特定环境相关配置。必须统一通过 `.env` 获取并通过 `os.getenv` 读取。
 - **时区与时间**：数据库、后台逻辑和所有的业务代码必须统一且严格地使用 **北京时间 (UTC+8, Asia/Shanghai)**，**严禁混用或使用 UTC 进行任何处理**。在 Django 配置中，`TIME_ZONE` 必须设定为 `'Asia/Shanghai'` 并且统一使用此本地时间进行储存与计算。
 - **统一日志与精准排错 (Logging & Debugging)**：

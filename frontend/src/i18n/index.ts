@@ -178,6 +178,8 @@ const messages = {
     },
     devices: {
       title: "设备",
+      loading: "正在读取设备快照...",
+      allRoomsSummary: "查看所有房间的设备快照、异常事件和自动化规则。",
       filters: {
         all: "全部房间",
       },
@@ -229,14 +231,24 @@ const messages = {
       anomaly: {
         recommendation: "建议处理",
       },
+      sync: {
+        initializing: "后台 worker 正在准备第一份设备快照，页面会自动更新。",
+        pending: "后台 worker 正在刷新设备快照，页面会自动更新。",
+        empty: "还没有可展示的设备快照。",
+        error: "最近一次设备同步失败。",
+      },
       empty: {
         devices: "当前房间筛选下没有设备。",
         policies: "当前模式和房间下没有策略规则。",
         anomalies: "当前没有需要处理的异常。",
       },
+      errors: {
+        load: "读取设备页数据失败，请稍后重试。",
+      },
     },
     manage: {
       title: "管理",
+      summary: "统一查看与维护微信和小米的授权状态、重新绑定流程以及最新会话。",
       badges: {
         memory: "记忆与偏好",
         safety: "安全与权限",
@@ -268,6 +280,37 @@ const messages = {
       events: {
         label: "记录",
         title: "最近管理记录",
+      },
+      auth: {
+        title: "平台授权",
+        loading: "正在读取授权状态与当前会话...",
+        empty: "当前还没有可管理的平台。",
+        actions: {
+          connect: "开始授权",
+          viewSession: "查看授权",
+          disconnect: "断开授权",
+          openLink: "打开链接",
+        },
+        providerStatus: {
+          connected: "已连接",
+          not_connected: "未连接",
+          disabled: "已停用",
+          pending: "待完成",
+        },
+        sessionStatus: {
+          idle: "尚未发起",
+          pending: "等待扫码",
+          scanned: "已扫码待确认",
+          completed: "授权完成",
+          expired: "已过期",
+          failed: "授权失败",
+        },
+        errors: {
+          load: "读取授权状态失败，请稍后重试。",
+          action: "授权操作失败，请检查后端日志。",
+        },
+        confirmDisconnect: "确认断开这个平台的授权吗？",
+        wechatHint: "由于微信限制，请打开以下链接扫码授权，结束后请返回此页面。",
       },
     },
     memory: {
@@ -743,6 +786,8 @@ const messages = {
     },
     devices: {
       title: "Devices",
+      loading: "Loading cached device snapshot...",
+      allRoomsSummary: "Review device snapshots, anomalies and automation rules across every room.",
       filters: {
         all: "All rooms",
       },
@@ -794,14 +839,24 @@ const messages = {
       anomaly: {
         recommendation: "Recommended Action",
       },
+      sync: {
+        initializing: "The worker is preparing the first device snapshot. This page will update automatically.",
+        pending: "The worker is refreshing the device snapshot. This page will update automatically.",
+        empty: "There is no device snapshot to display yet.",
+        error: "The most recent device sync failed.",
+      },
       empty: {
         devices: "There are no devices under the current room filter.",
         policies: "There are no policies for the current mode and room.",
         anomalies: "There are no anomalies to handle right now.",
       },
+      errors: {
+        load: "Unable to load device dashboard data. Please try again.",
+      },
     },
     manage: {
       title: "Manage",
+      summary: "Review provider authorization status, rebind flows and the latest active session from one place.",
       badges: {
         memory: "Memory and preferences",
         safety: "Safety and permissions",
@@ -833,6 +888,37 @@ const messages = {
       events: {
         label: "Logs",
         title: "Recent management records",
+      },
+      auth: {
+        title: "Platform Authorization",
+        loading: "Loading provider status and active authorization sessions...",
+        empty: "There are no providers available to manage right now.",
+        actions: {
+          connect: "Start Authorization",
+          viewSession: "View Authorization",
+          disconnect: "Disconnect",
+          openLink: "Open Link",
+        },
+        providerStatus: {
+          connected: "Connected",
+          not_connected: "Not connected",
+          disabled: "Disabled",
+          pending: "Pending",
+        },
+        sessionStatus: {
+          idle: "Idle",
+          pending: "Waiting for scan",
+          scanned: "Scanned, waiting for confirmation",
+          completed: "Completed",
+          expired: "Expired",
+          failed: "Failed",
+        },
+        errors: {
+          load: "Unable to load provider authorization state. Please try again.",
+          action: "The authorization action failed. Please check backend logs.",
+        },
+        confirmDisconnect: "Disconnect authorization for this provider?",
+        wechatHint: "Due to WeChat restrictions, open the link below to scan and authorize, then return to this page.",
       },
     },
     memory: {

@@ -152,3 +152,4 @@ cython_debug/
 # SDK Credentials
 wechat_credentials.json
 chroma_data/
+*.json

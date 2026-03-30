@@ -1,120 +1,124 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import {
-  createConsoleMockData,
-  type DeviceRecord,
-  type DeviceStatus,
-  type MissionRisk,
-  type PolicyDecision,
-} from "@/data/console";
+  type DeviceAnomalyRecord,
+  type DeviceAutomationRuleRecord,
+  type DeviceDashboardSnapshot,
+  type DeviceRoomRecord,
+  type DeviceSnapshotRecord,
+  fetchDeviceDashboard,
+} from "@/lib/devices";
 import { cn } from "@/lib/utils";
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 
+const dashboard = ref<DeviceDashboardSnapshot | null>(null);
 const activeRoomId = ref("all");
-const selectedDeviceId = ref("");
+const loading = ref(true);
+const errorMessage = ref("");
+let pollTimer: number | null = null;
 
-const consoleData = computed(() => createConsoleMockData(t));
-const activeModeId = computed(() => consoleData.value.activeModeId);
+const roomTabs = computed(() => {
+  const rooms = dashboard.value?.rooms ?? [];
+  const totalDevices = dashboard.value?.devices.length ?? 0;
 
-function resetView() {
-  activeRoomId.value = "all";
-  selectedDeviceId.value = consoleData.value.devices[0]?.id ?? "";
-}
-
-watch(
-  () => locale.value,
-  () => {
-    resetView();
-  },
-  { immediate: true },
-);
-
-const summaryCards = computed(() => [
-  {
-    label: t("devices.metrics.online"),
-    value: consoleData.value.devices.filter((device) => device.status === "online").length,
-  },
-  {
-    label: t("devices.metrics.attention"),
-    value: consoleData.value.devices.filter((device) => device.status !== "online").length,
-  },
-  {
-    label: t("devices.metrics.anomalies"),
-    value: consoleData.value.deviceAlerts.length,
-  },
-  {
-    label: t("devices.metrics.rooms"),
-    value: consoleData.value.rooms.length,
-  },
-]);
-
-const roomFilters = computed(() => [
-  {
-    id: "all",
-    label: t("devices.filters.all"),
-    count: consoleData.value.devices.length,
-  },
-  ...consoleData.value.rooms.map((room) => ({
-    id: room.id,
-    label: room.name,
-    count: room.deviceCount,
-  })),
-]);
-
-const filteredDevices = computed(() => {
-  if (activeRoomId.value === "all") {
-    return consoleData.value.devices;
-  }
-  return consoleData.value.devices.filter((device) => device.roomId === activeRoomId.value);
+  return [
+    {
+      id: "all",
+      label: t("devices.filters.all"),
+      count: totalDevices,
+      anomalyCount: dashboard.value?.anomalies.length ?? 0,
+    },
+    ...rooms.map((room) => ({
+      id: room.id,
+      label: room.name,
+      count: room.device_count,
+      anomalyCount: room.anomaly_count,
+    })),
+  ];
 });
 
-watch(
-  filteredDevices,
-  (items) => {
-    if (!items.some((device) => device.id === selectedDeviceId.value)) {
-      selectedDeviceId.value = items[0]?.id ?? "";
-    }
-  },
-  { immediate: true },
-);
+const activeRoom = computed<DeviceRoomRecord | null>(() => {
+  if (!dashboard.value || activeRoomId.value === "all") {
+    return null;
+  }
+  return dashboard.value.rooms.find((room) => room.id === activeRoomId.value) ?? null;
+});
 
-const selectedDevice = computed(
-  () =>
-    filteredDevices.value.find((device) => device.id === selectedDeviceId.value) ??
-    filteredDevices.value[0] ??
-    null,
-);
+const visibleDevices = computed<DeviceSnapshotRecord[]>(() => {
+  const devices = dashboard.value?.devices ?? [];
+  if (activeRoomId.value === "all") {
+    return devices;
+  }
+  return devices.filter((device) => device.room_id === activeRoomId.value);
+});
 
-const visiblePolicies = computed(() =>
-  consoleData.value.policies.filter(
-    (policy) =>
-      policy.modeId === activeModeId.value &&
-      (activeRoomId.value === "all" || policy.roomId === activeRoomId.value),
-  ),
-);
+const visibleAnomalies = computed<DeviceAnomalyRecord[]>(() => {
+  const anomalies = dashboard.value?.anomalies ?? [];
+  if (activeRoomId.value === "all") {
+    return anomalies;
+  }
+  return anomalies.filter((anomaly) => anomaly.room_id === activeRoomId.value);
+});
 
-const visibleAlerts = computed(() =>
-  consoleData.value.deviceAlerts.filter(
-    (alert) => activeRoomId.value === "all" || alert.roomId === activeRoomId.value,
-  ),
-);
+const visibleRules = computed<DeviceAutomationRuleRecord[]>(() => {
+  const rules = dashboard.value?.rules ?? [];
+  if (activeRoomId.value === "all") {
+    return rules;
+  }
+  return rules.filter((rule) => rule.room_id === activeRoomId.value);
+});
 
-function selectRoom(id: string) {
-  activeRoomId.value = id;
+const syncNotice = computed(() => {
+  if (!dashboard.value) {
+    return "";
+  }
+  if (dashboard.value.pending_refresh && !dashboard.value.has_snapshot) {
+    return t("devices.sync.initializing");
+  }
+  if (dashboard.value.pending_refresh) {
+    return t("devices.sync.pending");
+  }
+  if (!dashboard.value.has_snapshot) {
+    return t("devices.sync.empty");
+  }
+  return "";
+});
+
+const emptyStateMessage = computed(() => {
+  if (!dashboard.value?.has_snapshot) {
+    return dashboard.value?.pending_refresh
+      ? t("devices.sync.initializing")
+      : t("devices.sync.empty");
+  }
+  return "";
+});
+
+function selectRoom(roomId: string) {
+  activeRoomId.value = roomId;
 }
 
-function selectDevice(id: string) {
-  selectedDeviceId.value = id;
+function stopPolling() {
+  if (pollTimer !== null) {
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
 }
 
-function deviceStatusLabel(status: DeviceStatus) {
+function schedulePolling(delay = 3000) {
+  stopPolling();
+  pollTimer = window.setTimeout(() => {
+    void loadDashboard({ silent: true });
+  }, delay);
+}
+
+function deviceStatusLabel(status: DeviceSnapshotRecord["status"]) {
   return t(`devices.status.${status}`);
 }
 
-function deviceStatusClasses(status: DeviceStatus) {
+function deviceStatusClasses(status: DeviceSnapshotRecord["status"]) {
   return cn(
     "rounded-full border px-3 py-1 text-xs font-semibold",
     status === "online" && "border-brand/10 bg-glow text-brand",
@@ -123,24 +127,11 @@ function deviceStatusClasses(status: DeviceStatus) {
   );
 }
 
-function policyDecisionLabel(decision: PolicyDecision) {
-  return t(`devices.decisions.${decision}`);
-}
-
-function policyDecisionClasses(decision: PolicyDecision) {
-  return cn(
-    "rounded-full border px-3 py-1 text-xs font-semibold",
-    decision === "always" && "border-brand/10 bg-glow text-brand",
-    decision === "ask" && "border-[#E3C784]/30 bg-[#FFF7DF] text-[#8B6A16]",
-    decision === "never" && "border-[#EBA5A5]/30 bg-[#FFF1F1] text-[#B64B4B]",
-  );
-}
-
-function severityLabel(severity: MissionRisk) {
+function anomalySeverityLabel(severity: DeviceAnomalyRecord["severity"]) {
   return t(`devices.severity.${severity}`);
 }
 
-function severityClasses(severity: MissionRisk) {
+function anomalySeverityClasses(severity: DeviceAnomalyRecord["severity"]) {
   return cn(
     "rounded-full border px-3 py-1 text-xs font-semibold",
     severity === "low" && "border-brand/10 bg-glow text-brand",
@@ -149,197 +140,248 @@ function severityClasses(severity: MissionRisk) {
   );
 }
 
-function deviceCardClasses(device: DeviceRecord) {
+function ruleDecisionLabel(decision: DeviceAutomationRuleRecord["decision"]) {
+  return t(`devices.decisions.${decision}`);
+}
+
+function ruleDecisionClasses(decision: DeviceAutomationRuleRecord["decision"]) {
   return cn(
-    "rounded-[28px] border p-5 text-left transition",
-    selectedDeviceId.value === device.id
-      ? "border-brand/18 bg-glow/65"
-      : "border-black/[0.05] bg-white hover:border-brand/10 hover:bg-[#fcfffd]",
+    "rounded-full border px-3 py-1 text-xs font-semibold",
+    decision === "always" && "border-brand/10 bg-glow text-brand",
+    decision === "ask" && "border-[#E3C784]/30 bg-[#FFF7DF] text-[#8B6A16]",
+    decision === "never" && "border-[#EBA5A5]/30 bg-[#FFF1F1] text-[#B64B4B]",
   );
 }
+
+async function loadDashboard(options: { silent?: boolean } = {}) {
+  if (!options.silent) {
+    loading.value = true;
+  }
+  errorMessage.value = "";
+
+  try {
+    const response = await fetchDeviceDashboard();
+    dashboard.value = response.snapshot;
+    if (
+      activeRoomId.value !== "all" &&
+      !response.snapshot.rooms.some((room) => room.id === activeRoomId.value)
+    ) {
+      activeRoomId.value = "all";
+    }
+    if (response.snapshot.pending_refresh) {
+      schedulePolling();
+    } else {
+      stopPolling();
+    }
+  } catch (error) {
+    stopPolling();
+    errorMessage.value = error instanceof Error ? error.message : t("devices.errors.load");
+  } finally {
+    if (!options.silent) {
+      loading.value = false;
+    }
+  }
+}
+
+onMounted(() => {
+  void loadDashboard();
+});
+
+onBeforeUnmount(() => {
+  stopPolling();
+});
 </script>
 
 <template>
   <div class="space-y-5">
-    <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <article
-        v-for="item in summaryCards"
-        :key="item.label"
-        class="rounded-[26px] border border-black/[0.05] bg-white p-5"
-      >
-        <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ item.label }}</div>
-        <div class="mt-4 text-3xl font-semibold text-ink">{{ item.value }}</div>
-      </article>
+    <section
+      v-if="errorMessage"
+      class="rounded-[24px] border border-[#F0C8C8] bg-[#FFF4F4] px-4 py-4 text-sm leading-7 text-[#A44545]"
+    >
+      {{ errorMessage }}
     </section>
 
-    <section class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-      <div class="space-y-4">
+    <section
+      v-if="loading"
+      class="rounded-[28px] border border-black/[0.05] bg-white p-8 text-sm text-muted"
+    >
+      {{ t("devices.loading") }}
+    </section>
+
+    <template v-else-if="dashboard">
+      <section
+        v-if="syncNotice"
+        class="rounded-[24px] border border-[#D4EFD8] bg-[#F6FFF8] px-4 py-4 text-sm leading-7 text-[#2E7D4F]"
+      >
+        {{ syncNotice }}
+      </section>
+
+      <section
+        v-if="dashboard.last_error"
+        class="rounded-[24px] border border-[#F0C8C8] bg-[#FFF4F4] px-4 py-4 text-sm leading-7 text-[#A44545]"
+      >
+        {{ t("devices.sync.error") }} {{ dashboard.last_error }}
+      </section>
+
+      <section class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="flex flex-wrap gap-3">
-            <button
-              v-for="room in roomFilters"
-              :key="room.id"
-              :class="
-                cn(
-                  'rounded-full border px-4 py-2 text-sm font-semibold transition',
-                  activeRoomId === room.id
-                    ? 'border-2 border-[#07C160] bg-[#F1FFF7] text-[#067A3C]'
-                    : 'border border-black/[0.06] bg-white text-muted hover:border-[#8ED9B0] hover:text-ink',
-                )
-              "
-              type="button"
-              @click="selectRoom(room.id)"
-            >
-              {{ room.label }}
-              <span class="ml-2 text-xs opacity-70">{{ room.count }}</span>
-            </button>
-          </div>
-        </section>
-
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("devices.sections.devices") }}</div>
-
-          <div class="mt-4 grid gap-4 sm:grid-cols-2">
-            <button
-              v-for="device in filteredDevices"
-              :key="device.id"
-              :class="deviceCardClasses(device)"
-              type="button"
-              @click="selectDevice(device.id)"
-            >
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <h2 class="text-lg font-semibold text-ink">{{ device.name }}</h2>
-                  <p class="mt-2 text-sm text-muted">{{ device.roomName }} / {{ device.category }}</p>
-                </div>
-                <span :class="deviceStatusClasses(device.status)">{{ deviceStatusLabel(device.status) }}</span>
-              </div>
-
-              <div class="mt-4 text-sm leading-7 text-[#4a4a4a]">{{ device.note }}</div>
-              <div class="mt-4 rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] px-4 py-3 text-sm font-medium text-ink">
-                {{ device.telemetry }}
-              </div>
-            </button>
-          </div>
-
-          <div
-            v-if="filteredDevices.length === 0"
-            class="mt-4 rounded-[24px] border border-dashed border-black/[0.08] bg-white/70 px-5 py-8 text-sm text-muted"
-          >
-            {{ t("devices.empty.devices") }}
-          </div>
-        </section>
-
-        <section v-if="selectedDevice" class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="flex flex-wrap items-center gap-2">
-            <span :class="deviceStatusClasses(selectedDevice.status)">
-              {{ deviceStatusLabel(selectedDevice.status) }}
-            </span>
-          </div>
-
-          <h2 class="mt-4 text-2xl font-semibold text-ink">{{ selectedDevice.name }}</h2>
-          <p class="mt-3 text-sm leading-7 text-[#4a4a4a]">{{ selectedDevice.note }}</p>
-
-          <div class="mt-5 grid gap-3 sm:grid-cols-2">
-            <div class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] p-4">
-              <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("devices.detail.room") }}</div>
-              <div class="mt-3 text-sm font-medium text-ink">{{ selectedDevice.roomName }}</div>
-            </div>
-            <div class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] p-4">
-              <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("devices.detail.category") }}</div>
-              <div class="mt-3 text-sm font-medium text-ink">{{ selectedDevice.category }}</div>
-            </div>
-            <div class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] p-4">
-              <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("devices.detail.lastSeen") }}</div>
-              <div class="mt-3 text-sm font-medium text-ink">{{ selectedDevice.lastSeen }}</div>
-            </div>
-            <div class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] p-4">
-              <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("devices.detail.telemetry") }}</div>
-              <div class="mt-3 text-sm font-medium text-ink">{{ selectedDevice.telemetry }}</div>
-            </div>
-          </div>
-
-          <section class="mt-5 rounded-[24px] border border-black/[0.05] bg-[#fcfcfc] p-4">
-            <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("devices.detail.note") }}</div>
-            <div class="mt-3 text-sm leading-7 text-[#4a4a4a]">{{ selectedDevice.note }}</div>
-          </section>
-
-          <section class="mt-5">
-            <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("devices.detail.capabilities") }}</div>
-            <div class="mt-3 flex flex-wrap gap-3">
-              <div
-                v-for="capability in selectedDevice.capabilities"
-                :key="capability"
-                class="rounded-full border border-black/[0.05] bg-[#fcfcfc] px-4 py-2 text-sm text-ink"
+          <div class="grid gap-5 lg:grid-cols-[180px_minmax(0,1fr)]">
+            <div class="space-y-2">
+              <button
+                v-for="room in roomTabs"
+                :key="room.id"
+                :class="
+                  cn(
+                    'w-full rounded-[22px] border px-4 py-4 text-left transition',
+                    activeRoomId === room.id
+                      ? 'border-[#07C160] bg-[#F1FFF7]'
+                      : 'border-black/[0.06] bg-[#fcfcfc] hover:border-brand/20 hover:bg-white',
+                  )
+                "
+                type="button"
+                @click="selectRoom(room.id)"
               >
-                {{ capability }}
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm font-semibold text-ink">{{ room.label }}</div>
+                    <div class="mt-1 text-xs text-muted">
+                      {{ room.count }} {{ t("devices.meta.devices") }}
+                    </div>
+                  </div>
+                  <span
+                    v-if="room.anomalyCount"
+                    class="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[#FFF1F1] px-2 text-xs font-semibold text-[#B64B4B]"
+                  >
+                    {{ room.anomalyCount }}
+                  </span>
+                </div>
+              </button>
+            </div>
+
+            <div class="space-y-4">
+              <div class="rounded-[24px] border border-black/[0.05] bg-[#fcfcfc] px-5 py-4">
+                <div class="text-xs uppercase tracking-[0.22em] text-muted">
+                  {{ t("devices.sections.rooms") }}
+                </div>
+                <div class="mt-3 text-2xl font-semibold text-ink">
+                  {{ activeRoom?.name ?? t("devices.filters.all") }}
+                </div>
+                <div v-if="activeRoom?.climate" class="mt-2 text-sm font-medium text-[#6C665B]">
+                  {{ activeRoom.climate }}
+                </div>
+                <p class="mt-3 text-sm leading-7 text-[#4a4a4a]">
+                  {{ activeRoom?.summary ?? t("devices.allRoomsSummary") }}
+                </p>
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-2">
+                <article
+                  v-for="device in visibleDevices"
+                  :key="device.id"
+                  class="rounded-[24px] border border-black/[0.05] bg-[#fcfcfc] p-5"
+                >
+                  <div class="flex items-start justify-between gap-4">
+                    <div>
+                      <div class="text-lg font-semibold text-ink">{{ device.name }}</div>
+                      <div class="mt-2 text-sm text-muted">{{ device.category }}</div>
+                    </div>
+                    <span :class="deviceStatusClasses(device.status)">
+                      {{ deviceStatusLabel(device.status) }}
+                    </span>
+                  </div>
+
+                  <div class="mt-4 rounded-[20px] border border-black/[0.05] bg-white px-4 py-3 text-sm font-medium text-ink">
+                    {{ device.telemetry }}
+                  </div>
+
+                  <p class="mt-4 text-sm leading-7 text-[#4a4a4a]">{{ device.note }}</p>
+                </article>
+              </div>
+
+              <div
+                v-if="visibleDevices.length === 0"
+                class="rounded-[24px] border border-dashed border-black/[0.08] px-5 py-8 text-sm text-muted"
+              >
+                {{ emptyStateMessage || t("devices.empty.devices") }}
               </div>
             </div>
-          </section>
+          </div>
         </section>
-      </div>
 
-      <aside class="space-y-4">
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("devices.sections.policies") }}</div>
+        <aside class="rounded-[28px] border border-black/[0.05] bg-white p-5">
+          <div class="text-xs uppercase tracking-[0.24em] text-muted">
+            {{ t("devices.sections.anomalies") }}
+          </div>
+
           <div class="mt-4 space-y-3">
-            <div
-              v-for="policy in visiblePolicies"
-              :key="policy.id"
+            <article
+              v-for="anomaly in visibleAnomalies"
+              :key="anomaly.id"
               class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] px-4 py-4"
             >
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <div class="font-medium text-ink">{{ policy.target }}</div>
-                  <div class="mt-2 text-sm leading-7 text-[#4a4a4a]">{{ policy.condition }}</div>
+                  <div class="font-medium text-ink">{{ anomaly.title }}</div>
+                  <div class="mt-2 text-sm leading-7 text-[#4a4a4a]">{{ anomaly.body }}</div>
                 </div>
-                <span :class="policyDecisionClasses(policy.decision)">
-                  {{ policyDecisionLabel(policy.decision) }}
+                <span :class="anomalySeverityClasses(anomaly.severity)">
+                  {{ anomalySeverityLabel(anomaly.severity) }}
                 </span>
-              </div>
-              <div class="mt-3 text-sm leading-7 text-muted">{{ policy.rationale }}</div>
-            </div>
-          </div>
-
-          <div
-            v-if="visiblePolicies.length === 0"
-            class="mt-4 rounded-[22px] border border-dashed border-black/[0.08] bg-white/70 px-4 py-6 text-sm text-muted"
-          >
-            {{ t("devices.empty.policies") }}
-          </div>
-        </section>
-
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("devices.sections.anomalies") }}</div>
-          <div class="mt-4 space-y-3">
-            <div
-              v-for="alert in visibleAlerts"
-              :key="alert.id"
-              class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] px-4 py-4"
-            >
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <div class="font-medium text-ink">{{ alert.title }}</div>
-                  <div class="mt-2 text-sm leading-7 text-[#4a4a4a]">{{ alert.body }}</div>
-                </div>
-                <span :class="severityClasses(alert.severity)">{{ severityLabel(alert.severity) }}</span>
               </div>
 
               <div class="mt-3 text-xs uppercase tracking-[0.22em] text-muted">
                 {{ t("devices.anomaly.recommendation") }}
               </div>
-              <div class="mt-2 text-sm leading-7 text-[#4a4a4a]">{{ alert.recommendation }}</div>
-            </div>
+              <div class="mt-2 text-sm leading-7 text-[#4a4a4a]">
+                {{ anomaly.recommendation }}
+              </div>
+            </article>
           </div>
 
           <div
-            v-if="visibleAlerts.length === 0"
-            class="mt-4 rounded-[22px] border border-dashed border-black/[0.08] bg-white/70 px-4 py-6 text-sm text-muted"
+            v-if="visibleAnomalies.length === 0"
+            class="mt-4 rounded-[22px] border border-dashed border-black/[0.08] px-4 py-6 text-sm text-muted"
           >
-            {{ t("devices.empty.anomalies") }}
+            {{ emptyStateMessage || t("devices.empty.anomalies") }}
           </div>
-        </section>
-      </aside>
-    </section>
+        </aside>
+      </section>
+
+      <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
+        <div class="text-xs uppercase tracking-[0.24em] text-muted">
+          {{ t("devices.sections.policies") }}
+        </div>
+
+        <div class="mt-4 grid gap-4 lg:grid-cols-2">
+          <article
+            v-for="rule in visibleRules"
+            :key="rule.id"
+            class="rounded-[24px] border border-black/[0.05] bg-[#fcfcfc] p-5"
+          >
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="rounded-full border border-black/[0.06] bg-white px-3 py-1 text-xs font-semibold text-ink">
+                {{ rule.mode_label }}
+              </span>
+              <span :class="ruleDecisionClasses(rule.decision)">
+                {{ ruleDecisionLabel(rule.decision) }}
+              </span>
+            </div>
+
+            <div class="mt-4 text-lg font-semibold text-ink">{{ rule.target }}</div>
+            <div class="mt-3 text-sm leading-7 text-[#4a4a4a]">{{ rule.condition }}</div>
+            <div class="mt-4 rounded-[20px] border border-black/[0.05] bg-white px-4 py-4 text-sm leading-7 text-muted">
+              {{ rule.rationale }}
+            </div>
+          </article>
+        </div>
+
+        <div
+          v-if="visibleRules.length === 0"
+          class="mt-4 rounded-[22px] border border-dashed border-black/[0.08] px-4 py-6 text-sm text-muted"
+        >
+          {{ emptyStateMessage || t("devices.empty.policies") }}
+        </div>
+      </section>
+    </template>
   </div>
 </template>

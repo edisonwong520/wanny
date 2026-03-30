@@ -5,7 +5,13 @@ from django.views.decorators.csrf import csrf_exempt
 
 from utils.logger import logger
 
+from .auth_sessions import (
+    AuthorizationSessionStore,
+    WeChatAuthorizationService,
+    XiaomiAuthorizationService,
+)
 from .models import PlatformAuth
+from .services import XiaomiAuthService
 
 
 PLATFORM_CATALOG = {
@@ -13,12 +19,18 @@ PLATFORM_CATALOG = {
         "display_name": "WeChat",
         "display_name_zh": "微信",
         "category": "messaging",
+        "auth_mode": "link",
     },
-    "mijia": {
+    "xiaomi": {
         "display_name": "Mijia",
         "display_name_zh": "米家",
         "category": "iot",
+        "auth_mode": "qr",
     },
+}
+
+PLATFORM_ALIASES = {
+    "mijia": XiaomiAuthService.platform_name,
 }
 
 SENSITIVE_KEYWORDS = (
@@ -35,7 +47,27 @@ SENSITIVE_KEYWORDS = (
 
 
 def _normalize_platform_name(value) -> str:
-    return str(value or "").strip().lower()
+    normalized_name = str(value or "").strip().lower()
+    return PLATFORM_ALIASES.get(normalized_name, normalized_name)
+
+
+def _get_platform_lookup_names(platform_name: str) -> tuple[str, ...]:
+    if platform_name == XiaomiAuthService.platform_name:
+        return XiaomiAuthService.platform_aliases
+    return (platform_name,)
+
+
+def _get_platform_auth(platform_name: str) -> PlatformAuth | None:
+    normalized_name = _normalize_platform_name(platform_name)
+    if normalized_name == XiaomiAuthService.platform_name:
+        return XiaomiAuthService.get_auth_record()
+
+    return PlatformAuth.objects.filter(platform_name=normalized_name).first()
+
+
+def _get_platform_auth_queryset(platform_name: str):
+    normalized_name = _normalize_platform_name(platform_name)
+    return PlatformAuth.objects.filter(platform_name__in=_get_platform_lookup_names(normalized_name))
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -99,6 +131,7 @@ def _serialize_platform_auth(obj: PlatformAuth | None, platform_name: str | None
         "display_name": catalog_meta.get("display_name", normalized_name.title()),
         "display_name_zh": catalog_meta.get("display_name_zh", normalized_name),
         "category": catalog_meta.get("category", "custom"),
+        "auth_mode": catalog_meta.get("auth_mode", "custom"),
         "configured": obj is not None,
         "status": status,
         "is_active": is_active,
@@ -117,6 +150,15 @@ def _load_request_json(request):
         return None, JsonResponse({"error": "Invalid JSON mapping"}, status=400)
 
 
+def _serialize_authorization_session(platform_name: str):
+    session = AuthorizationSessionStore.get_latest(platform_name)
+    if session is None:
+        return None
+    if session.status == "completed" and _get_platform_auth(platform_name) is None:
+        return None
+    return session.to_dict()
+
+
 @csrf_exempt
 def handle_platform_auth(request):
     """
@@ -126,7 +168,8 @@ def handle_platform_auth(request):
     """
     if request.method == "GET":
         stored_records = {
-            obj.platform_name: obj for obj in PlatformAuth.objects.all().order_by("platform_name")
+            _normalize_platform_name(obj.platform_name): obj
+            for obj in PlatformAuth.objects.all().order_by("platform_name")
         }
         platform_names = list(PLATFORM_CATALOG.keys())
         for name in stored_records.keys():
@@ -178,6 +221,57 @@ def handle_platform_auth(request):
 
 
 @csrf_exempt
+def handle_platform_auth_authorize(request, platform_name: str):
+    """
+    平台交互式授权入口：
+    - GET /api/providers/auth/<platform>/authorize/
+    - POST /api/providers/auth/<platform>/authorize/
+    """
+    normalized_name = _normalize_platform_name(platform_name)
+    if normalized_name not in PLATFORM_CATALOG:
+        return JsonResponse({"error": f"Unknown platform: {normalized_name}"}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse(
+            {
+                "status": "success",
+                "provider": _serialize_platform_auth(_get_platform_auth(normalized_name), platform_name=normalized_name),
+                "session": _serialize_authorization_session(normalized_name),
+            },
+            status=200,
+        )
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method must be GET or POST"}, status=405)
+
+    data, error_response = _load_request_json(request)
+    if error_response:
+        return error_response
+
+    force = bool(data.get("force", False))
+
+    try:
+        if normalized_name == WeChatAuthorizationService.platform_name:
+            session = WeChatAuthorizationService.start_session(force=force)
+        elif normalized_name == XiaomiAuthorizationService.platform_name:
+            session = XiaomiAuthorizationService.start_session(force=force)
+        else:
+            return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
+
+        return JsonResponse(
+            {
+                "status": "success",
+                "provider": _serialize_platform_auth(_get_platform_auth(normalized_name), platform_name=normalized_name),
+                "session": session.to_dict(),
+            },
+            status=200,
+        )
+    except Exception as e:
+        logger.error(f"Error handling platform authorization for {normalized_name}: {str(e)}")
+        return JsonResponse({"error": "Platform authorization failed, please check backend logs."}, status=500)
+
+
+@csrf_exempt
 def handle_platform_auth_detail(request, platform_name: str):
     """
     单个平台授权管理：
@@ -186,7 +280,7 @@ def handle_platform_auth_detail(request, platform_name: str):
     - DELETE /api/providers/auth/<platform>/
     """
     normalized_name = _normalize_platform_name(platform_name)
-    auth_obj = PlatformAuth.objects.filter(platform_name=normalized_name).first()
+    auth_obj = _get_platform_auth(normalized_name)
 
     if request.method == "GET":
         if auth_obj is None and normalized_name not in PLATFORM_CATALOG:
@@ -220,9 +314,15 @@ def handle_platform_auth_detail(request, platform_name: str):
         if not updates:
             return JsonResponse({"error": "Nothing to update"}, status=400)
 
-        for field_name, field_value in updates.items():
-            setattr(auth_obj, field_name, field_value)
-        auth_obj.save(update_fields=[*updates.keys(), "updated_at"])
+        merged_payload = updates.get("auth_payload", auth_obj.auth_payload)
+        is_active = updates.get("is_active", auth_obj.is_active)
+        auth_obj, _ = PlatformAuth.objects.update_or_create(
+            platform_name=normalized_name,
+            defaults={
+                "auth_payload": merged_payload,
+                "is_active": is_active,
+            },
+        )
 
         logger.info(f"Platform auth patched for {normalized_name}. Fields: {sorted(updates.keys())}")
         return JsonResponse(
@@ -234,7 +334,8 @@ def handle_platform_auth_detail(request, platform_name: str):
         if auth_obj is None:
             return JsonResponse({"error": f"Platform auth not found: {normalized_name}"}, status=404)
 
-        auth_obj.delete()
+        _get_platform_auth_queryset(normalized_name).delete()
+        AuthorizationSessionStore.clear_latest(normalized_name)
         logger.info(f"Platform auth deleted for {normalized_name}")
         return JsonResponse(
             {"status": "success", "message": f"Authorization removed for {normalized_name}"},
@@ -242,3 +343,31 @@ def handle_platform_auth_detail(request, platform_name: str):
         )
 
     return JsonResponse({"error": "Method must be GET, PATCH or DELETE"}, status=405)
+
+
+@csrf_exempt
+def handle_platform_auth_login(request, platform_name: str):
+    """
+    触发特定平台的交互式授权流程：
+    - POST /api/providers/auth/<platform>/login/
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method must be POST"}, status=405)
+
+    normalized_name = _normalize_platform_name(platform_name)
+    if normalized_name != XiaomiAuthService.platform_name:
+        return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
+
+    try:
+        auth_obj = XiaomiAuthService.login_and_store()
+        return JsonResponse(
+            {
+                "status": "success",
+                "message": "Xiaomi authorization completed",
+                "provider": _serialize_platform_auth(auth_obj),
+            },
+            status=200,
+        )
+    except Exception as e:
+        logger.error(f"Error handling platform login for {normalized_name}: {str(e)}")
+        return JsonResponse({"error": "Platform login failed, please check backend logs."}, status=500)

@@ -67,11 +67,23 @@ class AIAgent:
                     return res.text.strip()
                 content = await asyncio.to_thread(_run_gemini)
                 
+            # 清理 DeepSeek 等推理模型可能附带的 <think>...</think> 思维链
+            import re
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+            
             # 清理可能附带的 markdown 格式头尾
             if content.startswith("```json"):
                 content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
             if content.endswith("```"):
                 content = content[:-3]
+            
+            # 尝试提取第一个完整的 JSON 对象
+            content = content.strip()
+            json_match = re.search(r'\{.*\}', content, flags=re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
             
             return json.loads(content.strip())
             

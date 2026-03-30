@@ -1,7 +1,23 @@
+"""
+测试脚本：插入 Brain 模块的 Mock 数据（HomeMode + HabitPolicy）。
+用法：uv run python tests/test_insert_mock_data.py
+"""
 import os
-import django
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
 
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+# 强制加载最新 .env
+load_dotenv(BACKEND_DIR / '.env', override=True)
+
+# 确保 Django 能找到项目模块
+sys.path.insert(0, str(BACKEND_DIR))
+sys.path.insert(0, str(BACKEND_DIR / 'apps'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wanny_server.settings')
+
+import django
 django.setup()
 
 from brain.models import HomeMode, HabitPolicy
@@ -26,7 +42,7 @@ def run():
         policy=HabitPolicy.PolicyChoices.ASK
     )
 
-    print("创测试测策略: 离家模式下，mocked_ac_002 的 power 必须为 off，策略是 ALWAYS (直接管)...")
+    print("创建测试策略: 离家模式下，mocked_ac_002 的 power 必须为 off，策略是 ALWAYS (直接管)...")
     HabitPolicy.objects.create(
         mode=away_mode,
         device_did="mocked_ac_002",

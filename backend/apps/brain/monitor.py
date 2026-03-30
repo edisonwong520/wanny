@@ -81,7 +81,8 @@ class MonitorService:
 
                 msg = f"检测到在 {active_mode.name} 时，您的 {dev_id} 设备还在开着。"
                 
-                if obs.success_count >= 3:
+                elevate_threshold = int(os.getenv("MONITOR_ELEVATE_THRESHOLD", 3))
+                if obs.success_count >= elevate_threshold:
                     msg = "Sir，" + msg + f"\n我已经连续帮您关了 {obs.success_count} 次，建议您这次回复“以后直接关”来让我永久自动接管好吗？"
                 else:
                     msg = "Sir，" + msg + "\n是否需要我现在关闭它？（您可以回复 同意/拒绝）"

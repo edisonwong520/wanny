@@ -12,34 +12,27 @@ const consoleData = computed(() => createConsoleMockData(t));
 const metricCards = computed(() => {
   const missions = consoleData.value.missions;
   const approvedCount = missions.filter((mission) => mission.status === "approved").length;
-  const failedCount = missions.filter((mission) => mission.status === "failed").length;
-  const pendingCount = missions.filter((mission) => mission.status === "pending").length;
 
   return [
     {
       label: t("overview.metrics.components"),
       value: t("overview.values.components"),
-      note: t("overview.notes.components"),
     },
     {
       label: t("overview.metrics.tasks"),
-      value: String(approvedCount),
-      note: t("overview.notes.tasks", { pending: pendingCount, failed: failedCount }),
+      value: t("overview.values.tasks", { approved: approvedCount }),
     },
     {
       label: t("overview.metrics.suggestions"),
       value: String(consoleData.value.proactiveCount),
-      note: t("overview.notes.suggestions"),
     },
     {
       label: t("overview.metrics.anomalies"),
       value: String(consoleData.value.anomalyCount),
-      note: t("overview.notes.anomalies"),
     },
     {
       label: t("overview.metrics.devices"),
       value: String(consoleData.value.devices.length),
-      note: t("overview.notes.devices", { rooms: consoleData.value.rooms.length }),
     },
   ];
 });
@@ -57,14 +50,16 @@ const recentEvents = computed(() => consoleData.value.recentEvents);
       >
         <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ item.label }}</div>
         <div class="mt-4 text-3xl font-semibold text-ink">{{ item.value }}</div>
-        <div class="mt-2 text-sm leading-6 text-muted">{{ item.note }}</div>
       </article>
     </section>
 
     <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
       <div class="flex items-center justify-between gap-3">
         <h2 class="text-2xl font-semibold text-ink">{{ t("overview.events.title") }}</h2>
-        <RouterLink class="text-sm font-medium text-brand transition hover:text-[#059651]" to="/console/manage">
+        <RouterLink
+          class="inline-flex h-10 items-center justify-center rounded-full border border-[#9AD5B1] bg-[#F1FFF7] px-4 text-sm font-semibold text-[#067A3C] transition hover:-translate-y-0.5 hover:border-[#07C160] hover:bg-[#E9FAF0]"
+          to="/console/manage"
+        >
           {{ t("overview.events.link") }}
         </RouterLink>
       </div>

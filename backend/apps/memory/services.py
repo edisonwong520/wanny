@@ -3,9 +3,89 @@
 对外暴露简洁的 API，内部协调 VectorStore 和 UserProfile 的读写。
 """
 import asyncio
+from datetime import datetime
+
 from asgiref.sync import sync_to_async
+from django.utils import timezone
+
 from utils.logger import logger
 from memory.vector_store import VectorStore
+
+PROFILE_SOURCE_REVIEW = "review"
+PROFILE_SOURCE_MANUAL = "manual"
+
+
+def _clamp_confidence(value: float | int | str | None, default: float = 0.5) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = default
+    return max(0.0, min(1.0, numeric))
+
+
+def build_profile_update(existing_profile, incoming: dict, source: str, now: datetime | None = None) -> dict:
+    """
+    统一处理画像写入规则：
+    - 手动修改永远优先，置信度视为用户确认；
+    - 定时复盘在遇到用户手动修改的字段时，不覆盖当前值，而是保留最新建议用于后续融合；
+    - 如果复盘结果和用户手动值一致，则提升置信度并清空冲突建议。
+    """
+    now = now or timezone.now()
+
+    normalized_category = str(incoming.get("category") or getattr(existing_profile, "category", "Other") or "Other")
+    normalized_value = str(incoming.get("value", "")).strip()
+    normalized_confidence = _clamp_confidence(incoming.get("confidence"), default=0.5)
+
+    if source == PROFILE_SOURCE_MANUAL:
+        previous_review_value = getattr(existing_profile, "last_review_value", "") or ""
+        previous_review_confidence = getattr(existing_profile, "last_review_confidence", None)
+        previous_review_at = getattr(existing_profile, "last_review_at", None)
+
+        if previous_review_value.strip() == normalized_value:
+            previous_review_value = ""
+            previous_review_confidence = None
+            previous_review_at = None
+
+        return {
+            "category": normalized_category,
+            "value": normalized_value,
+            "confidence": 1.0,
+            "source": PROFILE_SOURCE_MANUAL,
+            "is_user_edited": True,
+            "last_confirmed": now,
+            "last_review_value": previous_review_value,
+            "last_review_confidence": previous_review_confidence,
+            "last_review_at": previous_review_at,
+        }
+
+    if existing_profile and getattr(existing_profile, "is_user_edited", False):
+        current_value = str(getattr(existing_profile, "value", "")).strip()
+        same_value = current_value == normalized_value
+        current_confidence = _clamp_confidence(getattr(existing_profile, "confidence", 1.0), default=1.0)
+
+        return {
+            "category": getattr(existing_profile, "category", normalized_category),
+            "value": current_value,
+            "confidence": max(current_confidence, normalized_confidence) if same_value else current_confidence,
+            "source": PROFILE_SOURCE_MANUAL,
+            "is_user_edited": True,
+            "last_confirmed": getattr(existing_profile, "last_confirmed", None),
+            "last_review_value": "" if same_value else normalized_value,
+            "last_review_confidence": normalized_confidence,
+            "last_review_at": now,
+        }
+
+    return {
+        "category": normalized_category,
+        "value": normalized_value,
+        "confidence": normalized_confidence,
+        "source": PROFILE_SOURCE_REVIEW,
+        "is_user_edited": False,
+        "last_confirmed": getattr(existing_profile, "last_confirmed", None),
+        "last_review_value": "",
+        "last_review_confidence": None,
+        "last_review_at": now,
+    }
 
 
 class MemoryService:
@@ -16,6 +96,23 @@ class MemoryService:
     @classmethod
     def _store(cls) -> VectorStore:
         return VectorStore.get_instance()
+
+    @staticmethod
+    def _serialize_profile(profile) -> dict:
+        return {
+            "user_id": profile.user_id,
+            "category": profile.category,
+            "key": profile.key,
+            "value": profile.value,
+            "confidence": profile.confidence,
+            "source": profile.source,
+            "is_user_edited": profile.is_user_edited,
+            "last_confirmed": profile.last_confirmed.isoformat() if profile.last_confirmed else None,
+            "last_review_value": profile.last_review_value,
+            "last_review_confidence": profile.last_review_confidence,
+            "last_review_at": profile.last_review_at.isoformat() if profile.last_review_at else None,
+            "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
+        }
 
     @classmethod
     async def record_conversation(cls, user_id: str, role: str, content: str):
@@ -95,11 +192,20 @@ class MemoryService:
         try:
             from memory.models import UserProfile
             profiles = await sync_to_async(list)(
-                UserProfile.objects.filter(user_id=user_id, confidence__gte=0.5).order_by('-confidence')[:10]
+                UserProfile.objects.filter(user_id=user_id, confidence__gte=0.5)
+                .order_by('-is_user_edited', '-confidence', '-updated_at')[:10]
             )
             if not profiles:
                 return ""
-            return "\n".join([f"  - [{p.category}] {p.key} = {p.value} (置信度: {p.confidence})" for p in profiles])
+            lines = []
+            for profile in profiles:
+                if profile.is_user_edited:
+                    lines.append(f"  - [{profile.category}] {profile.key} = {profile.value} (用户已确认)")
+                else:
+                    lines.append(
+                        f"  - [{profile.category}] {profile.key} = {profile.value} (置信度: {profile.confidence})"
+                    )
+            return "\n".join(lines)
         except Exception as e:
             logger.error(f"[MemoryService] 读取画像失败: {e}")
             return ""
@@ -117,3 +223,97 @@ class MemoryService:
         except Exception as e:
             logger.error(f"[MemoryService] 获取近期记忆失败: {e}")
             return ""
+
+    @classmethod
+    async def get_active_user_ids(cls, hours: int = 24) -> list[str]:
+        """从向量记忆库中扫描最近活跃的用户，用于定时画像更新。"""
+        try:
+            return await asyncio.to_thread(cls._store().list_recent_user_ids, hours)
+        except Exception as e:
+            logger.error(f"[MemoryService] 获取活跃用户失败: {e}")
+            return []
+
+    @classmethod
+    async def list_profiles(cls, user_id: str) -> list[dict]:
+        """列出某个用户的所有画像，供前端展示和人工编辑。"""
+        try:
+            from memory.models import UserProfile
+
+            profiles = await sync_to_async(list)(
+                UserProfile.objects.filter(user_id=user_id).order_by("-is_user_edited", "-updated_at", "key")
+            )
+            return [cls._serialize_profile(profile) for profile in profiles]
+        except Exception as e:
+            logger.error(f"[MemoryService] 列出画像失败: {e}")
+            return []
+
+    @classmethod
+    async def upsert_manual_profile(
+        cls,
+        user_id: str,
+        key: str,
+        value: str,
+        category: str = "Other",
+    ) -> dict | None:
+        """用户手动新增或修改画像；一旦手动修改，后续定时任务必须以用户值为准。"""
+        try:
+            from memory.models import UserProfile
+
+            now = timezone.now()
+            existing = await sync_to_async(
+                lambda: UserProfile.objects.filter(user_id=user_id, key=key).first()
+            )()
+            defaults = build_profile_update(
+                existing,
+                {
+                    "category": category,
+                    "value": value,
+                    "confidence": 1.0,
+                },
+                source=PROFILE_SOURCE_MANUAL,
+                now=now,
+            )
+
+            profile, _ = await sync_to_async(UserProfile.objects.update_or_create)(
+                user_id=user_id,
+                key=key,
+                defaults=defaults,
+            )
+            logger.info(f"[MemoryService] 用户手动更新画像: user={user_id}, key={key}")
+            return cls._serialize_profile(profile)
+        except Exception as e:
+            logger.error(f"[MemoryService] 手动更新画像失败: {e}")
+            return None
+
+    @classmethod
+    async def apply_review_profile_update(cls, user_id: str, insight: dict) -> dict | None:
+        """定时复盘写入画像，自动处理与用户手动修改的融合策略。"""
+        try:
+            from memory.models import UserProfile
+
+            key = str(insight.get("key", "")).strip()
+            if not key:
+                return None
+
+            existing = await sync_to_async(
+                lambda: UserProfile.objects.filter(user_id=user_id, key=key).first()
+            )()
+            defaults = build_profile_update(
+                existing,
+                insight,
+                source=PROFILE_SOURCE_REVIEW,
+                now=timezone.now(),
+            )
+
+            profile, _ = await sync_to_async(UserProfile.objects.update_or_create)(
+                user_id=user_id,
+                key=key,
+                defaults=defaults,
+            )
+            logger.info(
+                f"[MemoryService] 复盘更新画像: user={user_id}, key={key}, source={profile.source}, user_edited={profile.is_user_edited}"
+            )
+            return cls._serialize_profile(profile)
+        except Exception as e:
+            logger.error(f"[MemoryService] 复盘更新画像失败: {e}")
+            return None

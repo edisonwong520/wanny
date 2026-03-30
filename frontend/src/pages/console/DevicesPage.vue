@@ -153,7 +153,7 @@ function deviceCardClasses(device: DeviceRecord) {
   return cn(
     "rounded-[28px] border p-5 text-left transition",
     selectedDeviceId.value === device.id
-      ? "border-brand/18 bg-glow/65 shadow-[0_16px_36px_rgba(7,193,96,0.08)]"
+      ? "border-brand/18 bg-glow/65"
       : "border-black/[0.05] bg-white hover:border-brand/10 hover:bg-[#fcfffd]",
   );
 }
@@ -183,7 +183,7 @@ function deviceCardClasses(device: DeviceRecord) {
                 cn(
                   'rounded-full border px-4 py-2 text-sm font-semibold transition',
                   activeRoomId === room.id
-                    ? 'border-2 border-[#07C160] bg-[#F1FFF7] text-[#067A3C] shadow-[0_10px_24px_rgba(7,193,96,0.10)]'
+                    ? 'border-2 border-[#07C160] bg-[#F1FFF7] text-[#067A3C]'
                     : 'border border-black/[0.06] bg-white text-muted hover:border-[#8ED9B0] hover:text-ink',
                 )
               "

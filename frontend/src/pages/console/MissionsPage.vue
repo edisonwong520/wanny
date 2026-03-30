@@ -105,7 +105,7 @@ function missionCardClasses(id: string) {
   return cn(
     "rounded-[28px] border p-5 transition",
     selectedMissionId.value === id
-      ? "border-brand/18 bg-glow/65 shadow-[0_16px_36px_rgba(7,193,96,0.08)]"
+      ? "border-brand/18 bg-glow/65"
       : "border-black/[0.05] bg-white hover:border-brand/10 hover:bg-[#fcfffd]",
   );
 }

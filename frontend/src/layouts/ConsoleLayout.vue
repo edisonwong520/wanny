@@ -40,7 +40,7 @@ function isActive(path: string) {
                 cn(
                   'inline-flex items-center rounded-full border px-5 py-2.5 text-sm font-semibold transition',
                   isActive(section.to)
-                    ? 'border-2 border-[#07C160] bg-[#F1FFF7] text-[#067A3C] shadow-[0_10px_24px_rgba(7,193,96,0.10)]'
+                    ? 'border-2 border-[#07C160] bg-[#F1FFF7] text-[#067A3C]'
                     : 'border border-black/[0.06] bg-white text-muted hover:border-[#8ED9B0] hover:text-ink',
                 )
               "

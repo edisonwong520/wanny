@@ -101,6 +101,7 @@ const messages = {
       },
       values: {
         components: "当前可用",
+        tasks: "{approved} 完成",
       },
       notes: {
         components: "全部正常",
@@ -665,6 +666,7 @@ const messages = {
       },
       values: {
         components: "Available",
+        tasks: "{approved} done",
       },
       notes: {
         components: "All healthy",

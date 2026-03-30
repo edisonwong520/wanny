@@ -13,6 +13,10 @@ class UserProfile(models.Model):
         DEVICE = 'Device', '设备偏好'
         OTHER = 'Other', '其他'
 
+    class SourceChoices(models.TextChoices):
+        REVIEW = 'review', '定时复盘'
+        MANUAL = 'manual', '用户手动修改'
+
     user_id = models.CharField(max_length=255, db_index=True, verbose_name="User ID")
     category = models.CharField(
         max_length=50,
@@ -26,8 +30,38 @@ class UserProfile(models.Model):
                              help_text="偏好值，如 24, 23:00")
     confidence = models.FloatField(default=0.5, verbose_name="Confidence",
                                    help_text="置信度 0.0 - 1.0")
+    source = models.CharField(
+        max_length=20,
+        choices=SourceChoices.choices,
+        default=SourceChoices.REVIEW,
+        verbose_name="Source",
+        help_text="当前画像值的来源：定时复盘或用户手动修改"
+    )
+    is_user_edited = models.BooleanField(
+        default=False,
+        verbose_name="Is User Edited",
+        help_text="是否由用户手动修改；若为 True，后续复盘应优先保留该值"
+    )
     last_confirmed = models.DateTimeField(null=True, blank=True, verbose_name="Last Confirmed",
                                           help_text="上次用户确认的时间")
+    last_review_value = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="Last Review Suggested Value",
+        help_text="当用户手动修改后，最近一次定时复盘建议的值会记录在这里，供后续融合或审计"
+    )
+    last_review_confidence = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name="Last Review Confidence",
+        help_text="最近一次复盘建议的置信度"
+    )
+    last_review_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Last Review At",
+        help_text="最近一次复盘处理该画像的时间"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

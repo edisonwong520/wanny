@@ -167,3 +167,28 @@ class VectorStore:
 
         logger.debug(f"[VectorStore] 获取最近 {hours}h 记忆: user={user_id}, 数量={len(memories)}")
         return memories
+
+    def list_recent_user_ids(self, hours: int = 24) -> list[str]:
+        """
+        扫描最近时间窗口内有记忆写入的用户。
+        用于定时复盘时发现“已有对话但尚未建立画像”的用户。
+        """
+        cutoff = int(time.time()) - (hours * 3600)
+        user_ids = set()
+
+        for collection in self._client.list_collections():
+            try:
+                if collection.count() == 0:
+                    continue
+
+                results = collection.get(where={"timestamp": {"$gte": cutoff}}, limit=1)
+                for metadata in results.get("metadatas") or []:
+                    user_id = (metadata or {}).get("user_id")
+                    if user_id:
+                        user_ids.add(user_id)
+            except Exception as e:
+                logger.error(f"[VectorStore] 扫描活跃用户失败: collection={collection.name}, error={e}")
+
+        ordered = sorted(user_ids)
+        logger.debug(f"[VectorStore] 获取最近 {hours}h 活跃用户: 数量={len(ordered)}")
+        return ordered

@@ -18,11 +18,14 @@ class Command(BaseCommand):
         
         # 1. 启动前，检查数据库里是否有之前存过的 credential，如果有则写入到本地给 SDK 使用
         try:
-            wechat_auth = PlatformAuth.objects.filter(platform_name="wechat").first()
+            wechat_auth = PlatformAuth.objects.filter(platform_name="wechat", is_active=True).first()
             if wechat_auth and wechat_auth.auth_payload:
                 with open(CRED_FILE, "w", encoding="utf-8") as f:
                     json.dump(wechat_auth.auth_payload, f)
                 logger.info("[WeChat Bot] 已从 PlatformAuth 数据库加载微信授权凭证到本地。")
+            elif os.path.exists(CRED_FILE):
+                os.remove(CRED_FILE)
+                logger.info("[WeChat Bot] 当前没有启用中的微信授权，已清理本地旧凭证文件。")
         except Exception as e:
             logger.error(f"[WeChat Bot] 从数据库读取微信凭证时出错: {e}")
 
@@ -40,6 +43,10 @@ class Command(BaseCommand):
                                 data = json.load(f)
                             # 如果为空，可能当时还在写入，尝试规避
                             if data:
+                                existing_auth = PlatformAuth.objects.filter(platform_name="wechat").first()
+                                if existing_auth and not existing_auth.is_active:
+                                    logger.info("[WeChat Bot] 微信授权当前处于停用状态，跳过凭证回写。")
+                                    continue
                                 PlatformAuth.objects.update_or_create(
                                     platform_name="wechat",
                                     defaults={"auth_payload": data, "is_active": True}

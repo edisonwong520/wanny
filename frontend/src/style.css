@@ -7,7 +7,7 @@
 :root {
   color-scheme: light;
   font-family: "Noto Sans SC", "Space Grotesk", sans-serif;
-  background-color: #f7f7f7;
+  background-color: #faf6e8;
 }
 
 html,
@@ -18,11 +18,11 @@ body,
 
 body {
   margin: 0;
-  background-color: #f7f7f7;
+  background-color: #faf6e8;
   background-image:
-    radial-gradient(circle at top left, rgba(7, 193, 96, 0.14), transparent 30%),
-    radial-gradient(circle at 85% 10%, rgba(225, 248, 234, 1), transparent 24%),
-    radial-gradient(circle at 50% 100%, rgba(7, 193, 96, 0.08), transparent 32%);
+    radial-gradient(circle at top left, rgba(244, 218, 158, 0.34), transparent 30%),
+    radial-gradient(circle at 85% 10%, rgba(255, 244, 210, 0.96), transparent 24%),
+    radial-gradient(circle at 50% 100%, rgba(232, 204, 148, 0.18), transparent 32%);
   color: #191919;
 }
 
@@ -37,13 +37,13 @@ a {
 
 @layer components {
   .glass-panel {
-    @apply border border-black/[0.05] bg-white/90 shadow-panel backdrop-blur-xl;
+    @apply border border-black/[0.05] bg-white/90 backdrop-blur-xl;
   }
 
   .soft-grid {
     background-image:
-      linear-gradient(rgba(7, 193, 96, 0.06) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(7, 193, 96, 0.06) 1px, transparent 1px);
+      linear-gradient(rgba(231, 199, 129, 0.16) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(231, 199, 129, 0.16) 1px, transparent 1px);
     background-size: 32px 32px;
   }
 
@@ -60,7 +60,7 @@ a {
     height: 420px;
     width: 420px;
     border-radius: 9999px;
-    background: radial-gradient(circle, rgba(225, 248, 234, 0.95) 0%, rgba(225, 248, 234, 0) 70%);
+    background: radial-gradient(circle, rgba(255, 244, 210, 0.98) 0%, rgba(255, 244, 210, 0) 70%);
     filter: blur(8px);
     opacity: 0.95;
     z-index: -1;
@@ -74,7 +74,7 @@ a {
     height: 360px;
     width: 360px;
     border-radius: 9999px;
-    background: radial-gradient(circle, rgba(7, 193, 96, 0.12) 0%, rgba(7, 193, 96, 0) 72%);
+    background: radial-gradient(circle, rgba(234, 202, 136, 0.24) 0%, rgba(234, 202, 136, 0) 72%);
     z-index: -1;
     animation: floatGlow 18s ease-in-out infinite reverse;
   }

@@ -26,7 +26,7 @@ const classes = computed(() =>
     "inline-flex items-center justify-center rounded-full border text-sm font-semibold transition duration-200 focus:outline-none focus:ring-2 focus:ring-brand/20",
     props.size === "default" ? "h-11 px-5" : "h-9 px-4 text-xs",
     props.variant === "default" &&
-      "border-brand bg-brand text-white shadow-[0_14px_28px_rgba(7,193,96,0.16)] hover:-translate-y-0.5 hover:shadow-[0_16px_32px_rgba(7,193,96,0.22)]",
+      "border-[#9AD5B1] bg-[#F1FFF7] text-[#067A3C] hover:-translate-y-0.5 hover:border-[#07C160] hover:bg-[#E9FAF0]",
     props.variant === "secondary" &&
       "border-black/[0.06] bg-surface text-ink hover:-translate-y-0.5 hover:bg-[#fcfcfc]",
     props.variant === "ghost" &&

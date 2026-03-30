@@ -65,7 +65,8 @@ class WeChatService:
                 PendingCommand.objects.filter(
                     Q(user_id=user_id) | Q(user_id="BROADCAST"),
                     is_approved=False,
-                    is_executed=False
+                    is_executed=False,
+                    is_cancelled=False
                 ).order_by('-created_at').first
             )()
             

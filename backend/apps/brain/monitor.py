@@ -71,7 +71,8 @@ class MonitorService:
                 already_asked = await sync_to_async(PendingCommand.objects.filter(
                     original_prompt__icontains=f"[MIJIA:{dev_id}]",
                     is_approved=False,
-                    is_executed=False
+                    is_executed=False,
+                    is_cancelled=False
                 ).exists)()
 
                 if already_asked:
@@ -95,8 +96,9 @@ class MonitorService:
                 # 将这条请求推送给微信去：
                 logger.warning(f"[主动推送给报警内容] ==============> \n{msg}\n")
                 if not bot or not getattr(bot, '_context_tokens', None):
-                    await sync_to_async(new_pending.delete)()
-                    logger.warning(f"[Brain Hook] 因缺少微信回复 Context Token，暂时无法向微信主动推流，这笔拦截作废，等您微信说话。当前bot的Tokens: {getattr(bot, '_context_tokens', 'None')}")
+                    new_pending.is_cancelled = True
+                    await sync_to_async(new_pending.save)()
+                    logger.warning(f"[Brain Hook] 因缺少微信回复 Context Token，暂时无法向微信主动推流，这笔拦截已软删除，等您微信说话。")
                     continue
 
                 sent_count = 0
@@ -114,5 +116,6 @@ class MonitorService:
                         logger.error(f"❌ 推送至微信 {wx_user_id} 发送级失败：{e}")
                 
                 if sent_count == 0:
-                    logger.warning(f"[Brain Hook] 所有可能目标均发送失败，销毁当前 PendingCommand 记录。")
-                    await sync_to_async(new_pending.delete)()
+                    logger.warning(f"[Brain Hook] 所有可能目标均发送失败，软删除当前 PendingCommand 记录。")
+                    new_pending.is_cancelled = True
+                    await sync_to_async(new_pending.save)()

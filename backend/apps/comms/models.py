@@ -17,6 +17,7 @@ class PendingCommand(models.Model):
     # 指令等待状态
     is_approved = models.BooleanField(default=False, verbose_name="Is Approved")
     is_executed = models.BooleanField(default=False, verbose_name="Is Executed")
+    is_cancelled = models.BooleanField(default=False, verbose_name="Is Cancelled", help_text="服务重启时自动软删除残留的僵尸工单")
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
     

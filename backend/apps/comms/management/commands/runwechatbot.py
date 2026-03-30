@@ -51,6 +51,14 @@ class Command(BaseCommand):
         sync_thread = threading.Thread(target=sync_credentials_to_db, daemon=True)
         sync_thread.start()
 
+        # 3. 启动前软删除残留的僵尸工单（未审批、未执行、未取消的）
+        from comms.models import PendingCommand
+        zombie_count = PendingCommand.objects.filter(
+            is_approved=False, is_executed=False, is_cancelled=False
+        ).update(is_cancelled=True)
+        if zombie_count:
+            logger.info(f"[WeChat Bot] 启动清理：已软删除 {zombie_count} 条残留僵尸工单 (is_cancelled=True)")
+
         logger.info("[WeChat Bot] 正在初始化底层的 wechatbot-sdk...")
         
         # 初始化 wechatbot-sdk 实例并应用凭证路径

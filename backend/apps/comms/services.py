@@ -1,5 +1,6 @@
 import asyncio
 import re
+from django.db.models import Q
 from asgiref.sync import sync_to_async
 from utils.logger import logger
 from comms.models import PendingCommand
@@ -15,13 +16,16 @@ class WeChatService:
     
     @classmethod
     async def process_incoming_message(cls, message, bot):
-        content = getattr(message, "content", "").strip()
+        # SDK 的 IncomingMessage 字段是 .text 而不是 .content
+        content = getattr(message, "text", "") or ""
+        content = content.strip()
         user_id = getattr(message, "user_id", "unknown_user")
         
         if not content:
+            logger.debug(f"[WeChat Service] 收到空消息，已忽略。user_id={user_id}")
             return
 
-        logger.info(f"[WeChat Target] {user_id} - {content[:20]}")
+        logger.info(f"[WeChat Service] 收到消息: user_id={user_id}, 内容='{content[:50]}'")
 
         try:
             # 无论什么话，一律送入超级大脑进行分类理解
@@ -56,18 +60,26 @@ class WeChatService:
             
             # 3. 针对 CONFIRM, PERMANENT_ALLOW, DENY 处理 (这些必然是对之前的某个拦截请求的回复)
             # 抓取用户最近一条还未批准的积压订单
+            # 注意：Monitor 创建时 user_id 可能是 "BROADCAST"（还未来得及绑定），所以需要同时匹配
             pending_cmd = await sync_to_async(
                 PendingCommand.objects.filter(
-                    user_id=user_id, 
+                    Q(user_id=user_id) | Q(user_id="BROADCAST"),
                     is_approved=False,
                     is_executed=False
                 ).order_by('-created_at').first
             )()
+            
+            logger.debug(f"[WeChat Service] 查找 PendingCommand: user_id={user_id}, 结果={'找到 ID=' + str(pending_cmd.id) if pending_cmd else '无'}")
 
             if not pending_cmd:
                 # 找不到任何积压的请求，但模型识别为了确认或拒绝 (大概率是上下文理解误区)
                 await bot.reply(message, intent_data.get("response", "Sir, 目前并没有找到需要您授权操作的挂起任务。"))
                 return
+            
+            # 如果是 BROADCAST 的，绑定到当前操作者
+            if pending_cmd.user_id == "BROADCAST":
+                pending_cmd.user_id = user_id
+                await sync_to_async(pending_cmd.save)()
                 
             # 4. 用户表示拒绝或不同意
             if intent_type == "DENY":

@@ -5,14 +5,16 @@
 """
 import os
 import time
+
 import chromadb
+
 from utils.logger import logger
 
 
 class VectorStore:
     """
     封装 ChromaDB 客户端，提供统一的记忆写入和检索接口。
-    如果配置了 GEMINI_API_KEY，使用 Google text-embedding-004 模型；
+    如果配置了 EMBEDDING_API_KEY，使用 Gemini embedding 模型；
     否则降级使用 ChromaDB 内置的 all-MiniLM-L6-v2。
     """
     _instance = None
@@ -29,18 +31,32 @@ class VectorStore:
         self._client = chromadb.PersistentClient(path=persist_dir)
 
         # 初始化 Embedding 函数
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        embedding_model = os.getenv("CHROMA_EMBEDDING_MODEL", "text-embedding-004")
-        if gemini_key:
-            from chromadb.utils.embedding_functions import GoogleGenerativeAiEmbeddingFunction
-            self._embedding_fn = GoogleGenerativeAiEmbeddingFunction(
-                api_key=gemini_key,
-                model_name=embedding_model
+        embedding_key = os.getenv("EMBEDDING_API_KEY")
+        embedding_model = os.getenv("CHROMA_EMBEDDING_MODEL", "gemini-embedding-2-preview")
+        self._document_embedding_fn = None
+        self._query_embedding_fn = None
+        if embedding_key:
+            from chromadb.utils.embedding_functions import GoogleGeminiEmbeddingFunction
+
+            shared_kwargs = {
+                "model_name": embedding_model,
+                "api_key_env_var": "EMBEDDING_API_KEY",
+            }
+            self._document_embedding_fn = GoogleGeminiEmbeddingFunction(
+                task_type="RETRIEVAL_DOCUMENT",
+                **shared_kwargs,
+            )
+            self._query_embedding_fn = GoogleGeminiEmbeddingFunction(
+                task_type="RETRIEVAL_QUERY",
+                **shared_kwargs,
             )
             logger.info(f"[VectorStore] 初始化完成，Embedding: Gemini/{embedding_model}，持久化: {persist_dir}")
         else:
-            self._embedding_fn = None  # 使用 ChromaDB 内置默认模型
+            # 使用 ChromaDB 内置默认模型。
             logger.info(f"[VectorStore] 初始化完成，Embedding: 内置 all-MiniLM-L6-v2，持久化: {persist_dir}")
+
+        # 兼容旧的属性名，collection 内仅使用文档向量函数。
+        self._embedding_fn = self._document_embedding_fn
 
     def _get_collection(self, user_id: str):
         """为每个用户创建独立的 collection，实现数据隔离。"""
@@ -50,8 +66,8 @@ class VectorStore:
             "name": collection_name,
             "metadata": {"hnsw:space": "cosine"}
         }
-        if self._embedding_fn:
-            kwargs["embedding_function"] = self._embedding_fn
+        if self._document_embedding_fn:
+            kwargs["embedding_function"] = self._document_embedding_fn
         return self._client.get_or_create_collection(**kwargs)
 
     def add_memory(self, user_id: str, text: str, metadata: dict = None):
@@ -98,10 +114,15 @@ class VectorStore:
         if collection.count() == 0:
             return []
 
-        results = collection.query(
-            query_texts=[query],
-            n_results=min(top_k, collection.count())
-        )
+        query_kwargs = {
+            "n_results": min(top_k, collection.count())
+        }
+        if self._query_embedding_fn:
+            query_kwargs["query_embeddings"] = self._query_embedding_fn([query])
+        else:
+            query_kwargs["query_texts"] = [query]
+
+        results = collection.query(**query_kwargs)
 
         memories = []
         if results and results.get("documents"):

@@ -2,9 +2,9 @@ from django.db import models
 
 class PlatformAuth(models.Model):
     """
-    模型用于统一存储从各平台代理授权（如 WeChat, Midea, Mijia 等）获取的三方认证凭证数据。
+    模型用于统一存储从各平台代理授权（如 WeChat、Mijia 等）获取的三方认证凭证数据。
     """
-    # 平台名称，如 'wechat', 'mijia', 'midea'
+    # 平台名称，如 'wechat', 'mijia'
     platform_name = models.CharField(max_length=50, unique=True, db_index=True, verbose_name="Platform Name")
     
     # 将包含不同结构的授权及身份配置均采用 JSON 格式进行保留

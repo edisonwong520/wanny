@@ -18,7 +18,7 @@ from wechatbot.types import Credentials
 
 from utils.logger import logger
 
-from .services import WeChatAuthService, XiaomiAuthService
+from .services import WeChatAuthService, MijiaAuthService
 
 SessionStatus = Literal["pending", "scanned", "completed", "expired", "failed"]
 AuthKind = Literal["link", "qr"]
@@ -264,8 +264,8 @@ class WeChatAuthorizationService:
             close_old_connections()
 
 
-class XiaomiAuthorizationService:
-    platform_name = XiaomiAuthService.platform_name
+class MijiaAuthorizationService:
+    platform_name = MijiaAuthService.platform_name
 
     @classmethod
     def start_session(cls, *, force: bool = False) -> AuthorizationSession:
@@ -274,10 +274,10 @@ class XiaomiAuthorizationService:
             return existing
 
         if not force:
-            auth_obj = XiaomiAuthService.get_auth_record(active_only=True)
-            payload = XiaomiAuthService._extract_payload(auth_obj)
+            auth_obj = MijiaAuthService.get_auth_record(active_only=True)
+            payload = MijiaAuthService._extract_payload(auth_obj)
             if payload:
-                XiaomiAuthService.write_auth_file_from_db()
+                MijiaAuthService.write_auth_file_from_db()
                 return AuthorizationSessionStore.create(
                     platform=cls.platform_name,
                     auth_kind="qr",
@@ -287,7 +287,7 @@ class XiaomiAuthorizationService:
                     detail="如果你需要切换账号，可以再次点击“重新授权”。",
                 )
 
-        auth_path = XiaomiAuthService.resolve_auth_file_path()
+        auth_path = MijiaAuthService.resolve_auth_file_path()
         if force and auth_path.exists():
             auth_path.unlink()
 
@@ -296,7 +296,7 @@ class XiaomiAuthorizationService:
         if location_data.get("code", -1) == 0 and location_data.get("message", "") == "刷新Token成功":
             api._save_auth_data()
             api._init_session()
-            XiaomiAuthService.sync_auth_file_to_db(auth_path, fallback_payload=api.auth_data)
+            MijiaAuthService.sync_auth_file_to_db(auth_path, fallback_payload=api.auth_data)
             return AuthorizationSessionStore.create(
                 platform=cls.platform_name,
                 auth_kind="qr",
@@ -374,7 +374,7 @@ class XiaomiAuthorizationService:
             )
             api._save_auth_data()
             api._init_session()
-            XiaomiAuthService.sync_auth_file_to_db(auth_path, fallback_payload=api.auth_data)
+            MijiaAuthService.sync_auth_file_to_db(auth_path, fallback_payload=api.auth_data)
             AuthorizationSessionStore.update(
                 session_id,
                 status="completed",
@@ -388,7 +388,7 @@ class XiaomiAuthorizationService:
                 detail="二维码已超时，请重新授权。",
             )
         except Exception as e:
-            logger.error(f"[Xiaomi Auth] 等待扫码确认失败: {e}")
+            logger.error(f"[Mijia Auth] 等待扫码确认失败: {e}")
             AuthorizationSessionStore.update(
                 session_id,
                 status="failed",

@@ -35,7 +35,7 @@
 - 回复消息使用 `bot.reply()`
 - 运行时由 bot 接管底层 WebSocket 事件循环
 
-### 4.2 小米 / 米家 API
+### 4.2 米家 API
 
 - 参考文档：https://github.com/Do1e/mijia-api
 - 主要包名：`mijiaAPI`

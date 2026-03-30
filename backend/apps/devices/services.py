@@ -151,11 +151,11 @@ class DeviceDashboardService:
     @classmethod
     def refresh(cls, *, trigger: str = "manual") -> dict:
         auth = None
-        from providers.services import XiaomiAuthService
+        from providers.services import MijiaAuthService
         try:
-            auth = XiaomiAuthService.get_auth_record(active_only=True)
+            auth = MijiaAuthService.get_auth_record(active_only=True)
         except Exception as e:
-            logger.error(f"[Device Sync] Failed to check Xiaomi auth state: {e}")
+            logger.error(f"[Device Sync] Failed to check Mijia auth state: {e}")
 
         if auth:
             payload = cls._build_mijia_snapshot()
@@ -288,10 +288,10 @@ class DeviceDashboardService:
 
     @classmethod
     def _build_mijia_snapshot(cls) -> dict:
-        from providers.services import XiaomiAuthService
+        from providers.services import MijiaAuthService
 
         try:
-            api = XiaomiAuthService.get_authenticated_api()
+            api = MijiaAuthService.get_authenticated_api()
             devices = api.get_devices_list()
             homes = api.get_homes_list()
         except Exception as e:

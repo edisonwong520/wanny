@@ -248,7 +248,7 @@ const messages = {
     },
     manage: {
       title: "管理",
-      summary: "统一查看与维护微信和小米的授权状态、重新绑定流程以及最新会话。",
+      summary: "统一查看与维护微信和米家的授权状态、重新绑定流程以及最新会话。",
       badges: {
         memory: "记忆与偏好",
         safety: "安全与权限",

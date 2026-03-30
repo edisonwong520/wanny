@@ -93,10 +93,10 @@ class WeChatAuthService:
         return path
 
 
-class XiaomiAuthService:
-    platform_name = "xiaomi"
-    platform_aliases = ("xiaomi", "mijia")
-    auth_file_name = "credentials/xiaomi_auth.json"
+class MijiaAuthService:
+    platform_name = "mijia"
+    platform_aliases = ("mijia", "xiaomi")
+    auth_file_name = "credentials/mijia_auth.json"
 
     @classmethod
     def resolve_auth_file_path(cls, auth_file_path=None) -> Path:
@@ -136,10 +136,10 @@ class XiaomiAuthService:
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
-            logger.info("[Xiaomi Auth] 已从 PlatformAuth 数据库加载小米授权凭证到本地。")
+            logger.info("[Mijia Auth] 已从 PlatformAuth 数据库加载米家授权凭证到本地。")
         elif path.exists():
             path.unlink()
-            logger.info("[Xiaomi Auth] 当前没有启用中的小米授权，已清理本地旧凭证文件。")
+            logger.info("[Mijia Auth] 当前没有启用中的米家授权，已清理本地旧凭证文件。")
 
         return path
 
@@ -154,7 +154,7 @@ class XiaomiAuthService:
             payload = fallback_payload or {}
 
         if not isinstance(payload, dict) or not payload:
-            raise ValueError("Xiaomi auth payload is empty or invalid")
+            raise ValueError("Mijia auth payload is empty or invalid")
 
         auth_obj, _ = PlatformAuth.objects.update_or_create(
             platform_name=cls.platform_name,
@@ -163,7 +163,7 @@ class XiaomiAuthService:
                 "is_active": True,
             },
         )
-        logger.info("[Xiaomi Auth] 已将小米授权凭证同步入库至 PlatformAuth。")
+        logger.info("[Mijia Auth] 已将米家授权凭证同步入库至 PlatformAuth。")
         return auth_obj
 
     @classmethod

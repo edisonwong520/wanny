@@ -8,10 +8,10 @@ from utils.logger import logger
 from .auth_sessions import (
     AuthorizationSessionStore,
     WeChatAuthorizationService,
-    XiaomiAuthorizationService,
+    MijiaAuthorizationService,
 )
 from .models import PlatformAuth
-from .services import XiaomiAuthService
+from .services import MijiaAuthService
 
 
 PLATFORM_CATALOG = {
@@ -21,7 +21,7 @@ PLATFORM_CATALOG = {
         "category": "messaging",
         "auth_mode": "link",
     },
-    "xiaomi": {
+    "mijia": {
         "display_name": "Mijia",
         "display_name_zh": "米家",
         "category": "iot",
@@ -30,7 +30,7 @@ PLATFORM_CATALOG = {
 }
 
 PLATFORM_ALIASES = {
-    "mijia": XiaomiAuthService.platform_name,
+    "xiaomi": MijiaAuthService.platform_name,
 }
 
 SENSITIVE_KEYWORDS = (
@@ -52,15 +52,15 @@ def _normalize_platform_name(value) -> str:
 
 
 def _get_platform_lookup_names(platform_name: str) -> tuple[str, ...]:
-    if platform_name == XiaomiAuthService.platform_name:
-        return XiaomiAuthService.platform_aliases
+    if platform_name == MijiaAuthService.platform_name:
+        return MijiaAuthService.platform_aliases
     return (platform_name,)
 
 
 def _get_platform_auth(platform_name: str) -> PlatformAuth | None:
     normalized_name = _normalize_platform_name(platform_name)
-    if normalized_name == XiaomiAuthService.platform_name:
-        return XiaomiAuthService.get_auth_record()
+    if normalized_name == MijiaAuthService.platform_name:
+        return MijiaAuthService.get_auth_record()
 
     return PlatformAuth.objects.filter(platform_name=normalized_name).first()
 
@@ -253,8 +253,8 @@ def handle_platform_auth_authorize(request, platform_name: str):
     try:
         if normalized_name == WeChatAuthorizationService.platform_name:
             session = WeChatAuthorizationService.start_session(force=force)
-        elif normalized_name == XiaomiAuthorizationService.platform_name:
-            session = XiaomiAuthorizationService.start_session(force=force)
+        elif normalized_name == MijiaAuthorizationService.platform_name:
+            session = MijiaAuthorizationService.start_session(force=force)
         else:
             return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
 
@@ -355,15 +355,15 @@ def handle_platform_auth_login(request, platform_name: str):
         return JsonResponse({"error": "Method must be POST"}, status=405)
 
     normalized_name = _normalize_platform_name(platform_name)
-    if normalized_name != XiaomiAuthService.platform_name:
+    if normalized_name != MijiaAuthService.platform_name:
         return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
 
     try:
-        auth_obj = XiaomiAuthService.login_and_store()
+        auth_obj = MijiaAuthService.login_and_store()
         return JsonResponse(
             {
                 "status": "success",
-                "message": "Xiaomi authorization completed",
+                "message": "Mijia authorization completed",
                 "provider": _serialize_platform_auth(auth_obj),
             },
             status=200,

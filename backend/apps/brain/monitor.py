@@ -12,11 +12,12 @@ class MonitorService:
         """
         纯异步死循环入口，与 WeChat 事件循环共生。
         """
-        logger.info("[Brain Monitor] 开启后台家室传感器定时轮询守护模式！")
         interval = int(os.getenv("MONITOR_POLL_INTERVAL", 30))
+        logger.info(f"[Brain Monitor] 开启后台定时轮询守护模式！当前间隔: {interval}秒")
         while True:
             try:
                 await asyncio.sleep(interval)
+                logger.debug("[Brain Monitor] 开始一轮设备状态检测...")
                 await cls._poll_and_judge(bot)
             except Exception as e:
                 logger.error(f"[Brain Monitor] 长青循环崩坏: {str(e)}")
@@ -74,6 +75,7 @@ class MonitorService:
                 ).exists)()
 
                 if already_asked:
+                    logger.debug(f"[Brain Hook] 发现设备 {dev_id} 已存在未审批的报警工单，本次轮询跳过发送，以防骚扰。")
                     continue  # 别问了等回复呢
 
                 msg = f"检测到在 {active_mode.name} 时，您的 {dev_id} 设备还在开着。"
@@ -91,16 +93,26 @@ class MonitorService:
                 )
 
                 # 将这条请求推送给微信去：
-                # 这里我们利用由于之前在微信上与 Bot 说过话所以留存下的上下文 Context Token 发送。
-                logger.warning(f"[主动推送给主人] ==============> \n{msg}\n")
+                logger.warning(f"[主动推送给报警内容] ==============> \n{msg}\n")
                 if not bot or not getattr(bot, '_context_tokens', None):
+                    await sync_to_async(new_pending.delete)()
+                    logger.warning(f"[Brain Hook] 因缺少微信回复 Context Token，暂时无法向微信主动推流，这笔拦截作废，等您微信说话。当前bot的Tokens: {getattr(bot, '_context_tokens', 'None')}")
                     continue
 
+                sent_count = 0
+                logger.info(f"[Brain Hook] 准备发往 {len(bot._context_tokens.keys())} 个活跃上下文(由于群发机制): {list(bot._context_tokens.keys())}")
                 for wx_user_id in list(bot._context_tokens.keys()):
                     try:
+                        logger.info(f"[Brain Hook] 正在调用底层 wechatbot.send，目标 ID: {wx_user_id} ...")
                         await bot.send(wx_user_id, msg)
-                        # 同时将 pending 的确切归属人更新，使得将来他回复时能匹配上
+                        logger.info(f"✅ 成功投递底层报文至 {wx_user_id}")
+                        
                         new_pending.user_id = wx_user_id
                         await sync_to_async(new_pending.save)()
+                        sent_count += 1
                     except Exception as e:
-                        logger.error(f"推送至微信 {wx_user_id} 失败：{e}")
+                        logger.error(f"❌ 推送至微信 {wx_user_id} 发送级失败：{e}")
+                
+                if sent_count == 0:
+                    logger.warning(f"[Brain Hook] 所有可能目标均发送失败，销毁当前 PendingCommand 记录。")
+                    await sync_to_async(new_pending.delete)()

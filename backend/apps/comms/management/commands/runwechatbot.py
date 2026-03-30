@@ -65,6 +65,7 @@ class Command(BaseCommand):
         bot = WeChatBot(cred_path=CRED_FILE)
 
         from brain.monitor import MonitorService
+        from memory.review import ReviewEngine
         import asyncio
         
         @bot.on_message
@@ -85,6 +86,8 @@ class Command(BaseCommand):
         async def main():
             # 开启大脑心跳监测并行协程
             asyncio.create_task(MonitorService.loop_start(bot))
+            # 开启每日复盘引擎并行协程
+            asyncio.create_task(ReviewEngine.loop_start(bot))
             # 配合 asyncio，调用真实的底层异步入口
             await bot._run_sync()
 

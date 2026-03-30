@@ -7,6 +7,7 @@ from comms.models import PendingCommand
 from brain.models import HabitPolicy, ObservationCounter
 from comms.ai import analyze_intent
 from comms.executor import ShellExecutor
+from memory.services import MemoryService
 
 class WeChatService:
     """
@@ -27,9 +28,15 @@ class WeChatService:
 
         logger.info(f"[WeChat Service] 收到消息: user_id={user_id}, 内容='{content[:50]}'")
 
+        # ✨ 记忆引擎：先将用户消息写入向量库
+        await MemoryService.record_conversation(user_id, "user", content)
+
         try:
+            # ✨ 检索与当前消息相关的历史记忆，作为上下文注入 AI
+            memory_context = await MemoryService.get_context_for_chat(user_id, content)
+
             # 无论什么话，一律送入超级大脑进行分类理解
-            intent_data = await analyze_intent(content)
+            intent_data = await analyze_intent(content, memory_context=memory_context)
             logger.info(f"[Intent Result] {intent_data.get('type')}")
             intent_type = intent_data.get("type")
 
@@ -37,6 +44,8 @@ class WeChatService:
             if intent_type == "CHAT" or not intent_type:
                 reply_text = intent_data.get("response", "Sir, 系统分析您的指令时遇到了一点困惑。")
                 await bot.reply(message, reply_text)
+                # ✨ 记录 AI 回复
+                await MemoryService.record_conversation(user_id, "assistant", reply_text)
                 return
             
             # --- 以下意图均与 Manual-Gate （PendingCommand） 强相关 ---

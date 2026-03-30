@@ -95,9 +95,10 @@ class AIAgent:
             return {"type": "simple", "response": f"[系统报错] 大脑管线离线异常：{str(e)}"}
 
 
-async def analyze_intent(user_msg: str) -> dict:
+async def analyze_intent(user_msg: str, memory_context: str = "") -> dict:
     """
     向外暴露的快速意图分析接口。
+    memory_context: 从向量记忆库检索到的相关上下文，拼接到 system prompt 中。
     """
     default_system_prompt = """
     你是 Wanny (Classic Jarvis)，一位专业、礼貌的智能管家。用户的消息可能包含对话、指令或对你之前提议的反馈。请根据上下文，分析用户的回复意图并严格返回 JSON 对象。
@@ -106,7 +107,7 @@ async def analyze_intent(user_msg: str) -> dict:
     1. `CHAT`: 普通的闲聊、问候、或者查询等可以直接通识回答的问题。
     2. `COMPLEX_SHELL`: 用户要求你执行诸如写文件、深度网络执行、下载等需要在宿主机环境执行的系统级复杂指令（不要带有危及底层系统的命令如sudo）。
     3. `CONFIRM`: 针对你之前的拦截提问（比如是否操作某设备，是否执行某指令），用户做出了单次的肯定答复（如：好的、同意、批准、关吧、麻烦你了）。
-    4. `PERMANENT_ALLOW`: 用户不但同意了你的提问，还主动表达了“一劳永逸”或“永久授权”的意向（如：以后都这样、以后你自己弄就行、以后直接关）。
+    4. `PERMANENT_ALLOW`: 用户不但同意了你的提问，还主动表达了"一劳永逸"或"永久授权"的意向（如：以后都这样、以后你自己弄就行、以后直接关）。
     5. `DENY`: 用户拒绝了你的提问或操作（如：不要、先别关、不批准、取消）。
 
     必须严格返回纯 JSON 对象（不要使用 Markdown `json` 块），格式规范：
@@ -119,5 +120,10 @@ async def analyze_intent(user_msg: str) -> dict:
     """
     
     system_prompt = os.getenv("AGENT_SYSTEM_PROMPT", default_system_prompt)
+    
+    # 注入记忆上下文
+    if memory_context:
+        system_prompt += f"\n\n--- 用户历史记忆（仅供参考，用于理解上下文） ---\n{memory_context}\n--- 记忆结束 ---"
+
     agent = AIAgent()
     return await agent.generate_json(system_prompt, user_msg)

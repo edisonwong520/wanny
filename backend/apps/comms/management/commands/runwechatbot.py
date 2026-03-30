@@ -56,6 +56,13 @@ class Command(BaseCommand):
         # 初始化 wechatbot-sdk 实例并应用凭证路径
         bot = WeChatBot(cred_path=CRED_FILE)
 
+        from brain.monitor import MonitorService
+        
+        # 为了兼容跨线程调用 bot.send()，我们捕获 bot_loop。
+        # 这里最安全的做法是在新线程中自己维持监控死循环，发消息时交由安全方法处理。
+        monitor_thread = threading.Thread(target=MonitorService.start_polling, daemon=True, args=(bot,))
+        monitor_thread.start()
+        
         @bot.on_message
         async def handle_message(message):
             """

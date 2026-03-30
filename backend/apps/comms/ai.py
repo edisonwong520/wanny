@@ -21,17 +21,18 @@ class AIAgent:
         self.api_key = os.getenv("AI_API_KEY")
         self.model = os.getenv("AI_MODEL", "gpt-4o")
 
-        if self.base_url and self.api_key:
-            self.provider = "openai"
-            self._openai_client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
-            logger.info(f"[AI Agent] 初始化完成，驱动源为 OpenAI Compatible 协议 ({self.base_url})")
-        elif self.gemini_api_key:
+        # 优先级：GEMINI_API_KEY > AI_BASE_URL+AI_API_KEY
+        if self.gemini_api_key:
             self.provider = "gemini"
             self._gemini_client = genai.Client(api_key=self.gemini_api_key)
-            logger.info(f"[AI Agent] 初始化完成，驱动源为原生 Google GenAI SDK")
+            logger.info(f"[AI Agent] 初始化完成，驱动源为原生 Google GenAI SDK (model={self.gemini_model_name})")
+        elif self.base_url and self.api_key:
+            self.provider = "openai"
+            self._openai_client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+            logger.info(f"[AI Agent] 初始化完成，驱动源为 OpenAI Compatible 协议 ({self.base_url}, model={self.model})")
         else:
             self.provider = "none"
-            logger.warning("[AI Agent] 未检测到有效的 AI 配置参数 (AI_API_KEY 或 GEMINI_API_KEY)。")
+            logger.warning("[AI Agent] 未检测到有效的 AI 配置参数 (GEMINI_API_KEY 或 AI_API_KEY)。")
 
     async def generate_json(self, system_prompt: str, user_prompt: str) -> dict:
         """

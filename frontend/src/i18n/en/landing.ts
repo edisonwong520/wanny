@@ -28,6 +28,17 @@ export default {
     device: { title: "Smart Linking", desc: "Mijia, Midea, total control." },
     memory: { title: "Smart Memory", desc: "Recall habits, care for you." },
   },
+  platformFeature: {
+    eyebrow: "Connected Universe",
+    slogan: "Connect Everything. Manage Intelligently.",
+    description: "From home devices and mobility services to messaging entry points, Wanny brings cross-platform control into one intelligent hub.",
+    platforms: [
+      { name: "Home Assistant", tag: "HA" },
+      { name: "Mercedes-Benz", tag: "AUTO" },
+      { name: "Mijia", tag: "IOT" },
+      { name: "WeChat", tag: "CHAT" },
+    ],
+  },
   titleLead: "Wanny, Your Jarvis Butler",
   titleAccent: "",
   primary: "Open Console",

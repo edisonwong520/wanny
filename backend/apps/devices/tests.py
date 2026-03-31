@@ -1,3 +1,4 @@
+import os
 from unittest.mock import patch
 
 from django.core.management import call_command
@@ -5,6 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from accounts.models import Account
+from providers.models import PlatformAuth
 from .models import DeviceDashboardState
 from .services import DeviceDashboardService
 
@@ -49,6 +51,67 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertIsNone(state.refresh_requested_at)
         self.assertIsNotNone(state.refreshed_at)
 
+    def test_get_dashboard_with_non_device_provider_auth_still_bootstraps(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="wechat",
+            auth_payload={"token": "wx-token"},
+            is_active=True,
+        )
+
+        payload = DeviceDashboardService.get_dashboard(self.account)
+
+        self.assertFalse(payload["snapshot"]["has_snapshot"])
+        self.assertTrue(payload["snapshot"]["pending_refresh"])
+
+    def test_refresh_uses_home_assistant_snapshot_when_authorized(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="home_assistant",
+            auth_payload={
+                "base_url": "http://ha.local:8123",
+                "access_token": "ha-token",
+                "instance_name": "My Home",
+            },
+            is_active=True,
+        )
+
+        with patch(
+            "devices.services.DeviceDashboardService._build_home_assistant_snapshot",
+            return_value={
+                "source": "home_assistant",
+                "rooms": [
+                    {
+                        "id": "home_assistant:default",
+                        "name": "My Home",
+                        "climate": "",
+                        "summary": "来自 Home Assistant 实例: My Home",
+                        "sort_order": 10,
+                    }
+                ],
+                "devices": [
+                    {
+                        "id": "home_assistant:light.living_room",
+                        "room_id": "home_assistant:default",
+                        "name": "客厅灯",
+                        "category": "灯光",
+                        "status": "attention",
+                        "telemetry": "on",
+                        "note": "Entity: light.living_room | Domain: light",
+                        "capabilities": ["light"],
+                        "last_seen": None,
+                        "sort_order": 10,
+                    }
+                ],
+                "anomalies": [],
+                "rules": [],
+            },
+        ):
+            payload = DeviceDashboardService.refresh(self.account, trigger="test")
+
+        self.assertEqual(payload["snapshot"]["source"], "home_assistant")
+        self.assertEqual(payload["snapshot"]["devices"][0]["name"], "客厅灯")
+
     def test_syncdevicesnapshot_command_refreshes_target_account(self):
         call_command("syncdevicesnapshot", "--email", self.account.email)
 
@@ -62,23 +125,30 @@ class DeviceDashboardServiceTest(TestCase):
             name="Other Device Test",
             password="pwd",
         )
+        class LoopExit(Exception):
+            pass
 
         call_order = []
 
         def fake_run_pending_refresh(*, account, sync_interval_seconds):
             call_order.append((account.email, sync_interval_seconds))
-            if account == other_account:
-                raise KeyboardInterrupt
             return False
 
-        with patch(
+        with patch.dict(os.environ, {"DEVICE_SYNC_INTERVAL": "300"}, clear=False), patch(
             "devices.management.commands.runworker.Account.objects.all",
             return_value=[self.account, other_account],
         ), patch(
+            "django.db.close_old_connections",
+            return_value=None,
+        ), patch(
             "devices.management.commands.runworker.DeviceDashboardService.run_pending_refresh",
             side_effect=fake_run_pending_refresh,
-        ) as run_pending_refresh:
-            call_command("runworker")
+        ) as run_pending_refresh, patch(
+            "devices.management.commands.runworker.time.sleep",
+            side_effect=LoopExit,
+        ):
+            with self.assertRaises(LoopExit):
+                call_command("runworker")
 
         self.assertEqual(run_pending_refresh.call_count, 2)
         self.assertEqual(

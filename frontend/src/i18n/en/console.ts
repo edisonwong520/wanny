@@ -154,7 +154,7 @@ export default {
   },
   manage: {
     title: "Manage",
-    summary: "Review provider authorization status, rebind flows and the latest active session from one place.",
+    summary: "Review WeChat, Mijia, and Home Assistant authorization status, rebind flows, and the latest active session from one place.",
     badges: {
       memory: "Memory and preferences",
       safety: "Safety and permissions",
@@ -196,7 +196,20 @@ export default {
         viewSession: "View Authorization",
         disconnect: "Disconnect",
         openLink: "Open Link",
+        authorize: "Authorize",
+        save: "Save and Verify",
       },
+      fields: {
+        baseUrl: "Instance URL",
+        accessToken: "Long-Lived Access Token",
+        accessTokenPlaceholder: "Paste a Home Assistant long-lived access token",
+      },
+      hint: {
+        mijia: "Scan the QR code with the Mijia app to finish authorization.",
+        wechat: "After the WeChat authorization completes, return to this page.",
+        home_assistant: "Enter the Home Assistant instance URL and a long-lived access token. Wanny will verify the connection immediately.",
+      },
+      currentInstance: "Current instance",
       providerStatus: {
         connected: "Connected",
         not_connected: "Not connected",
@@ -216,7 +229,6 @@ export default {
         action: "The authorization action failed. Please check backend logs.",
       },
       confirmDisconnect: "Disconnect authorization for this provider?",
-      wechatHint: "Due to WeChat restrictions, open the link below to scan and authorize, then return to this page.",
     },
   },
   memory: {

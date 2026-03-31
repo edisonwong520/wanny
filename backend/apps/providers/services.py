@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from accounts.models import Account
 
+import requests
 from mijiaAPI import mijiaAPI
 from wechatbot.auth import save_credentials
 from wechatbot.types import Credentials
@@ -204,3 +205,123 @@ class MijiaAuthService:
             auth_file_path=path,
             fallback_payload=getattr(api, "auth_data", {}),
         )
+
+
+class HomeAssistantAuthService:
+    platform_name = "home_assistant"
+    platform_aliases = ("home_assistant", "homeassistant", "ha")
+    default_timeout_seconds = 10
+
+    @classmethod
+    def get_auth_record(cls, account: Account, active_only: bool = False) -> PlatformAuth | None:
+        queryset = PlatformAuth.objects.filter(account=account, platform_name__in=cls.platform_aliases)
+        if active_only:
+            queryset = queryset.filter(is_active=True)
+
+        records = list(queryset.order_by("platform_name"))
+        for record in records:
+            if record.platform_name == cls.platform_name:
+                return record
+        return records[0] if records else None
+
+    @classmethod
+    def _extract_payload(cls, auth_obj: PlatformAuth | None) -> dict:
+        payload = getattr(auth_obj, "auth_payload", None)
+        return payload if isinstance(payload, dict) else {}
+
+    @classmethod
+    def _normalize_base_url(cls, base_url: str) -> str:
+        normalized = str(base_url or "").strip().rstrip("/")
+        if not normalized.startswith(("http://", "https://")):
+            raise ValueError("Home Assistant base_url must start with http:// or https://")
+        return normalized
+
+    @classmethod
+    def _build_headers(cls, access_token: str) -> dict[str, str]:
+        token = str(access_token or "").strip()
+        if not token:
+            raise ValueError("Home Assistant access_token is required")
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+    @classmethod
+    def validate_payload(cls, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("Home Assistant payload must be a JSON object")
+
+        base_url = cls._normalize_base_url(payload.get("base_url", ""))
+        access_token = str(payload.get("access_token", "")).strip()
+        headers = cls._build_headers(access_token)
+
+        response = requests.get(
+            f"{base_url}/api/",
+            headers=headers,
+            timeout=cls.default_timeout_seconds,
+        )
+        response.raise_for_status()
+        api_status = response.json()
+        if api_status.get("message") != "API running.":
+            raise ValueError("Home Assistant API did not return the expected health response")
+
+        config_response = requests.get(
+            f"{base_url}/api/config",
+            headers=headers,
+            timeout=cls.default_timeout_seconds,
+        )
+        config_response.raise_for_status()
+        config_payload = config_response.json() or {}
+
+        return {
+            "base_url": base_url,
+            "access_token": access_token,
+            "instance_name": config_payload.get("location_name") or config_payload.get("location") or "Home Assistant",
+            "unit_system": config_payload.get("unit_system", {}),
+            "time_zone": config_payload.get("time_zone", ""),
+            "version": response.headers.get("X-HA-Version", ""),
+        }
+
+    @classmethod
+    def validate_and_store(cls, account: Account, payload: dict) -> PlatformAuth:
+        validated_payload = cls.validate_payload(payload)
+        auth_obj, _ = PlatformAuth.objects.update_or_create(
+            account=account,
+            platform_name=cls.platform_name,
+            defaults={
+                "auth_payload": validated_payload,
+                "is_active": True,
+            },
+        )
+        logger.info(f"[Home Assistant Auth] 已校验并保存账户 {account.email} 的授权配置。")
+        return auth_obj
+
+    @classmethod
+    def get_states(cls, account: Account) -> tuple[dict, list[dict]]:
+        auth_obj = cls.get_auth_record(account=account, active_only=True)
+        payload = cls._extract_payload(auth_obj)
+        if not payload:
+            raise ValueError("No active Home Assistant authorization found")
+
+        base_url = cls._normalize_base_url(payload.get("base_url", ""))
+        headers = cls._build_headers(payload.get("access_token", ""))
+
+        config_response = requests.get(
+            f"{base_url}/api/config",
+            headers=headers,
+            timeout=cls.default_timeout_seconds,
+        )
+        config_response.raise_for_status()
+
+        states_response = requests.get(
+            f"{base_url}/api/states",
+            headers=headers,
+            timeout=cls.default_timeout_seconds,
+        )
+        states_response.raise_for_status()
+
+        states_payload = states_response.json()
+        if not isinstance(states_payload, list):
+            raise ValueError("Home Assistant states response is invalid")
+
+        return (config_response.json() or {}), states_payload

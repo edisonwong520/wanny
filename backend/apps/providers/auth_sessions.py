@@ -21,7 +21,7 @@ from utils.logger import logger
 from .services import WeChatAuthService, MijiaAuthService
 
 SessionStatus = Literal["pending", "scanned", "completed", "expired", "failed"]
-AuthKind = Literal["link", "qr"]
+AuthKind = Literal["link", "qr", "form"]
 
 
 def _now_iso() -> str:

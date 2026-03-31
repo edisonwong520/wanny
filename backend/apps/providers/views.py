@@ -12,6 +12,7 @@ from .auth_sessions import (
 )
 from .models import PlatformAuth
 from .services import MijiaAuthService, WeChatAuthService
+from .services import HomeAssistantAuthService
 
 
 PLATFORM_CATALOG = {
@@ -27,10 +28,18 @@ PLATFORM_CATALOG = {
         "category": "iot",
         "auth_mode": "qr",
     },
+    "home_assistant": {
+        "display_name": "Home Assistant",
+        "display_name_zh": "Home Assistant",
+        "category": "iot",
+        "auth_mode": "form",
+    },
 }
 
 PLATFORM_ALIASES = {
     "xiaomi": MijiaAuthService.platform_name,
+    "ha": HomeAssistantAuthService.platform_name,
+    "homeassistant": HomeAssistantAuthService.platform_name,
 }
 
 SENSITIVE_KEYWORDS = (
@@ -268,6 +277,17 @@ def handle_platform_auth_authorize(request, platform_name: str):
             session = WeChatAuthorizationService.start_session(account=account, force=force)
         elif normalized_name == MijiaAuthorizationService.platform_name:
             session = MijiaAuthorizationService.start_session(account=account, force=force)
+        elif normalized_name == HomeAssistantAuthService.platform_name:
+            auth_payload = data.get("payload", {})
+            auth_obj = HomeAssistantAuthService.validate_and_store(account=account, payload=auth_payload)
+            session = AuthorizationSessionStore.create(
+                platform=normalized_name,
+                auth_kind="form",
+                status="completed",
+                title="Home Assistant 已连接",
+                instruction="已完成 Home Assistant 服务校验并保存授权信息。",
+                detail=f"实例 {auth_obj.auth_payload.get('instance_name') or 'Home Assistant'} 已可用于设备同步。",
+            )
         else:
             return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
 
@@ -358,13 +378,13 @@ def handle_platform_auth_detail(request, platform_name: str):
 
         # 触发各平台本地与业务业务数据清理
         if normalized_name == MijiaAuthService.platform_name:
-            # 1. 清理本地 .json 凭证文件
             MijiaAuthService.write_auth_file_from_db(account)
-            # 2. 清除业务数据库中的设备、房间、规则等数据
             from devices.services import DeviceDashboardService
-            DeviceDashboardService.clear_all_data(account)
+            DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_mijia")
+        elif normalized_name == HomeAssistantAuthService.platform_name:
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_home_assistant")
         elif normalized_name == WeChatAuthService.platform_name:
-            # 清理微信凭证文件
             WeChatAuthService.clear_cred_file(account=account)
 
         logger.info(f"Platform auth and related data records deleted for {normalized_name}")

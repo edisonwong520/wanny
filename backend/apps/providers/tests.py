@@ -9,7 +9,7 @@ from django.urls import reverse
 from accounts.models import Account
 from .auth_sessions import AuthorizationSessionStore
 from .models import PlatformAuth
-from .services import MijiaAuthService
+from .services import HomeAssistantAuthService, MijiaAuthService
 
 
 class PlatformAuthAPITest(TestCase):
@@ -83,6 +83,7 @@ class PlatformAuthAPITest(TestCase):
         providers = {provider["platform"]: provider for provider in payload["providers"]}
         self.assertIn("wechat", providers)
         self.assertIn("mijia", providers)
+        self.assertIn("home_assistant", providers)
         self.assertEqual(providers["wechat"]["status"], "connected")
         self.assertTrue(providers["wechat"]["configured"])
         self.assertNotEqual(
@@ -269,6 +270,39 @@ class PlatformAuthAPITest(TestCase):
         self.assertEqual(payload["session"]["auth_kind"], "qr")
         self.assertEqual(payload["session"]["image_url"], "https://mijia.example/qr.png")
 
+    def test_authorize_home_assistant_endpoint_validates_and_stores_payload(self):
+        auth_obj = PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="home_assistant",
+            auth_payload={
+                "base_url": "http://ha.local:8123",
+                "access_token": "ha-token",
+                "instance_name": "My HA",
+            },
+            is_active=True,
+        )
+
+        with patch("providers.views.HomeAssistantAuthService.validate_and_store", return_value=auth_obj):
+            response = self.client.post(
+                self.authorize_url("ha"),
+                data=json.dumps(
+                    {
+                        "payload": {
+                            "base_url": "http://ha.local:8123",
+                            "access_token": "ha-token",
+                        }
+                    }
+                ),
+                content_type="application/json",
+                **self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"]["platform"], "home_assistant")
+        self.assertEqual(payload["session"]["auth_kind"], "form")
+        self.assertEqual(payload["session"]["status"], "completed")
+
     def test_authorize_get_returns_latest_session_for_platform(self):
         AuthorizationSessionStore.create(
             platform="wechat",
@@ -340,3 +374,44 @@ class MijiaAuthServiceTest(TestCase):
         self.assertTrue(auth_obj.is_active)
         self.assertEqual(auth_obj.account, self.account)
         self.assertEqual(auth_obj.auth_payload["serviceToken"], "mi-token-123")
+
+
+class HomeAssistantAuthServiceTest(TestCase):
+    def setUp(self):
+        self.account = Account.objects.create(
+            email="ha-test@example.com",
+            name="HA Test",
+            password="pwd",
+        )
+
+    def test_validate_and_store_persists_home_assistant_payload(self):
+        class FakeResponse:
+            def __init__(self, payload, headers=None):
+                self._payload = payload
+                self.headers = headers or {}
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self._payload
+
+        with patch(
+            "providers.services.requests.get",
+            side_effect=[
+                FakeResponse({"message": "API running."}, headers={"X-HA-Version": "2026.3.0"}),
+                FakeResponse({"location_name": "My Home", "time_zone": "Asia/Shanghai", "unit_system": {"temperature": "C"}}),
+            ],
+        ):
+            auth_obj = HomeAssistantAuthService.validate_and_store(
+                self.account,
+                {
+                    "base_url": "http://ha.local:8123/",
+                    "access_token": "ha-token",
+                },
+            )
+
+        self.assertEqual(auth_obj.platform_name, "home_assistant")
+        self.assertEqual(auth_obj.auth_payload["base_url"], "http://ha.local:8123")
+        self.assertEqual(auth_obj.auth_payload["instance_name"], "My Home")
+        self.assertEqual(auth_obj.auth_payload["version"], "2026.3.0")

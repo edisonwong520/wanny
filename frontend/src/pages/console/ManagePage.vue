@@ -28,6 +28,8 @@ const busyAction = ref("");
 const pollingTimers = new Map<string, number>();
 const modalPlatform = ref<string | null>(null);
 const modalLoading = ref(false);
+const homeAssistantBaseUrl = ref("");
+const homeAssistantAccessToken = ref("");
 
 const modalProvider = computed(() =>
   modalPlatform.value
@@ -51,6 +53,14 @@ const modalQrImageUrl = computed(() => {
     return url;
   }
   return null;
+});
+
+const isHomeAssistantModal = computed(() => modalProvider.value?.platform === "home_assistant");
+
+const homeAssistantInstanceName = computed(() => {
+  const preview = modalProvider.value?.payload_preview ?? {};
+  const value = preview.instance_name;
+  return typeof value === "string" ? value : "";
 });
 
 function stopPolling(platform: string) {
@@ -131,11 +141,19 @@ function providerStyle(provider: ProviderRecord) {
 
 function openModal(platform: string) {
   modalPlatform.value = platform;
+  const provider = providers.value.find((p) => p.platform === platform);
+  if (platform === "home_assistant") {
+    const preview = provider?.payload_preview ?? {};
+    homeAssistantBaseUrl.value =
+      typeof preview.base_url === "string" ? preview.base_url : "";
+    homeAssistantAccessToken.value = "";
+  }
 }
 
 function closeModal() {
   modalPlatform.value = null;
   modalLoading.value = false;
+  homeAssistantAccessToken.value = "";
 }
 
 function handleDialogOpenChange(open: boolean) {
@@ -167,6 +185,33 @@ async function handleClick(provider: ProviderRecord) {
     return;
   }
   await handleAuthorize(provider, provider.status === "connected");
+}
+
+async function handleHomeAssistantAuthorize() {
+  const provider = modalProvider.value;
+  if (!provider || provider.platform !== "home_assistant") return;
+
+  modalLoading.value = true;
+  busyAction.value = `${provider.platform}:connect`;
+  errorMessage.value = "";
+
+  try {
+    const response = await startAuthorization(provider.platform, {
+      payload: {
+        base_url: homeAssistantBaseUrl.value.trim(),
+        access_token: homeAssistantAccessToken.value.trim(),
+      },
+    });
+    updateProvider(response.provider);
+    sessions.value = { ...sessions.value, [provider.platform]: response.session };
+    homeAssistantAccessToken.value = "";
+    closeModal();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : t("manage.auth.errors.action");
+  } finally {
+    busyAction.value = "";
+    modalLoading.value = false;
+  }
 }
 
 async function handleDisconnect(provider: ProviderRecord) {
@@ -257,6 +302,44 @@ onBeforeUnmount(() => stopAllPolling());
           <h3 class="text-lg font-medium text-[#333333]">
             {{ locale === "zh-CN" ? modalProvider.display_name_zh : modalProvider.display_name }} {{ $t("manage.auth.actions.authorize") }}
           </h3>
+
+          <div v-if="isHomeAssistantModal" class="space-y-3">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.baseUrl") }}
+              </label>
+              <input
+                v-model="homeAssistantBaseUrl"
+                type="url"
+                placeholder="http://homeassistant.local:8123"
+                class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.accessToken") }}
+              </label>
+              <input
+                v-model="homeAssistantAccessToken"
+                type="password"
+                :placeholder="$t('manage.auth.fields.accessTokenPlaceholder')"
+                class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
+              />
+            </div>
+            <div class="rounded-2xl border border-[#E8F1EA] bg-[#F5FBF7] px-4 py-3 text-sm text-[#4E6A57]">
+              <div>{{ $t("manage.auth.hint.home_assistant") }}</div>
+              <div v-if="homeAssistantInstanceName" class="mt-1 text-xs text-[#6C8373]">
+                {{ $t("manage.auth.currentInstance") }}: {{ homeAssistantInstanceName }}
+              </div>
+            </div>
+            <button
+              :disabled="modalLoading || !homeAssistantBaseUrl.trim() || !homeAssistantAccessToken.trim()"
+              class="w-full rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+              @click="handleHomeAssistantAuthorize"
+            >
+              {{ $t("manage.auth.actions.save") }}
+            </button>
+          </div>
 
           <!-- 米家：只显示二维码 -->
           <div v-if="modalProvider.platform === 'mijia' && modalQrImageUrl" class="flex justify-center">

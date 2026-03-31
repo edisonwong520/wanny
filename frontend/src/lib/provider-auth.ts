@@ -17,7 +17,7 @@ export interface ProviderRecord {
 export interface AuthorizationSession {
   id: string;
   platform: string;
-  auth_kind: "link" | "qr";
+  auth_kind: "link" | "qr" | "form";
   status: "pending" | "scanned" | "completed" | "expired" | "failed";
   title: string;
   instruction: string;
@@ -78,10 +78,19 @@ export async function fetchAuthorizationSession(platform: string) {
   return requestJson<ProviderAuthorizationResponse>(`/api/providers/auth/${platform}/authorize/`);
 }
 
-export async function startAuthorization(platform: string, force = false) {
+export async function startAuthorization(
+  platform: string,
+  options: {
+    force?: boolean;
+    payload?: Record<string, unknown>;
+  } = {},
+) {
   return requestJson<ProviderAuthorizationResponse>(`/api/providers/auth/${platform}/authorize/`, {
     method: "POST",
-    body: JSON.stringify({ force }),
+    body: JSON.stringify({
+      force: options.force ?? false,
+      payload: options.payload ?? undefined,
+    }),
   });
 }
 

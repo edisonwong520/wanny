@@ -1,4 +1,6 @@
 from __future__ import annotations
+import hashlib
+import re
 from typing import TYPE_CHECKING
 
 from providers.models import PlatformAuth
@@ -25,6 +27,7 @@ from .models import (
 class DeviceDashboardService:
     state_key = "default"
     default_sync_interval_seconds = 300
+    device_provider_names = ("mijia", "home_assistant")
 
     @classmethod
     def _get_state(cls, account: Account) -> DeviceDashboardState:
@@ -124,25 +127,6 @@ class DeviceDashboardService:
         state = cls._get_state(account)
         has_snapshot = cls._has_snapshot(account)
 
-        # 检查是否有任何激活的平台授权
-        has_active_auth = PlatformAuth.objects.filter(
-            account=account,
-            is_active=True
-        ).exists()
-
-        # 如果没有任何激活的授权，返回空数据（不管数据库是否有历史记录）
-        if not has_active_auth:
-            return {
-                "status": "success",
-                "snapshot": cls._serialize_snapshot(
-                    state=state,
-                    rooms=[],
-                    devices=[],
-                    anomalies=[],
-                    rules=[],
-                ),
-            }
-
         if not has_snapshot and not state.refresh_requested_at:
             cls._queue_refresh(state, trigger="bootstrap")
             state.refresh_from_db()
@@ -195,21 +179,29 @@ class DeviceDashboardService:
             state.last_error = ""
             state.save(update_fields=["source", "refreshed_at", "last_trigger", "refresh_requested_at", "last_error", "updated_at"])
 
-            logger.info(f"[Device Data] 已清理账户 {account.email} 下的所有米家业务数据。")
+            logger.info(f"[Device Data] 已清理账户 {account.email} 下的所有设备平台业务数据。")
 
     @classmethod
     def refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
-        auth = None
-        from providers.services import MijiaAuthService
-        try:
-            auth = MijiaAuthService.get_auth_record(account=account, active_only=True)
-        except Exception as e:
-            logger.error(f"[Device Sync] Failed to check Mijia auth state for user {account.email}: {e}")
+        provider_payloads: list[dict] = []
+        from providers.services import HomeAssistantAuthService, MijiaAuthService
 
-        if auth:
-            payload = cls._build_mijia_snapshot(account)
+        try:
+            if MijiaAuthService.get_auth_record(account=account, active_only=True):
+                provider_payloads.append(cls._build_mijia_snapshot(account))
+        except Exception as error:
+            logger.error(f"[Device Sync] Failed to check Mijia auth state for user {account.email}: {error}")
+
+        try:
+            if HomeAssistantAuthService.get_auth_record(account=account, active_only=True):
+                provider_payloads.append(cls._build_home_assistant_snapshot(account))
+        except Exception as error:
+            logger.error(f"[Device Sync] Failed to check Home Assistant auth state for user {account.email}: {error}")
+
+        if provider_payloads:
+            payload = cls._merge_snapshots(provider_payloads)
         else:
-            payload = cls._build_empty_snapshot()
+            payload = cls._build_demo_snapshot()
 
         with transaction.atomic():
             state = cls._get_state(account)
@@ -294,6 +286,21 @@ class DeviceDashboardService:
         return cls.get_dashboard(account)
 
     @classmethod
+    def has_active_device_provider_auth(cls, account: Account) -> bool:
+        return PlatformAuth.objects.filter(
+            account=account,
+            is_active=True,
+            platform_name__in=cls.device_provider_names,
+        ).exists()
+
+    @classmethod
+    def sync_after_provider_change(cls, account: Account, *, trigger: str) -> None:
+        if cls.has_active_device_provider_auth(account):
+            cls.refresh(account, trigger=trigger)
+            return
+        cls.clear_all_data(account)
+
+    @classmethod
     def run_pending_refresh(cls, account: Account, *, sync_interval_seconds: int | None = None) -> bool:
         state = cls._get_state(account)
         interval_seconds = sync_interval_seconds or cls.default_sync_interval_seconds
@@ -347,7 +354,7 @@ class DeviceDashboardService:
         for h_id, h_name in home_map.items():
             rooms_data.append(
                 {
-                    "id": h_id,
+                    "id": f"mijia:{h_id}",
                     "name": h_name,
                     "climate": "已连接",
                     "summary": f"来自米家家庭: {h_name}",
@@ -359,7 +366,7 @@ class DeviceDashboardService:
         if not rooms_data:
             rooms_data.append(
                 {
-                    "id": "mijia-default",
+                    "id": "mijia:default",
                     "name": "默认家庭",
                     "climate": "未知",
                     "summary": "未检测到明确的米家家庭分组",
@@ -370,14 +377,14 @@ class DeviceDashboardService:
         devices_data = []
         for dev in devices:
             is_online = dev.get("isOnline", False)
-            h_id = str(dev.get("home_id", "mijia-default"))
-            if h_id not in home_map and h_id != "mijia-default":
-                h_id = "mijia-default"
+            raw_home_id = str(dev.get("home_id", "default"))
+            if raw_home_id not in home_map and raw_home_id != "default":
+                raw_home_id = "default"
 
             devices_data.append(
                 {
-                    "id": dev["did"],
-                    "room_id": h_id,
+                    "id": f"mijia:{dev['did']}",
+                    "room_id": f"mijia:{raw_home_id}",
                     "name": dev["name"],
                     "category": cls._map_model_to_category(dev["model"]),
                     "status": "online" if is_online else "offline",
@@ -397,6 +404,104 @@ class DeviceDashboardService:
             "anomalies": [],
             "rules": [],
         }
+
+    @classmethod
+    def _build_home_assistant_snapshot(cls, account: Account) -> dict:
+        from providers.services import HomeAssistantAuthService
+
+        config, states = HomeAssistantAuthService.get_states(account=account)
+        default_room_name = config.get("location_name") or "Home Assistant"
+        room_bucket_id = cls._make_room_id("home_assistant", "default")
+        room_map = {
+            room_bucket_id: {
+                "id": room_bucket_id,
+                "name": default_room_name,
+                "climate": config.get("time_zone", ""),
+                "summary": f"来自 Home Assistant 实例: {default_room_name}",
+                "sort_order": 10,
+            }
+        }
+
+        devices_data = []
+        for index, entity in enumerate(states, start=1):
+            entity_id = str(entity.get("entity_id", "")).strip()
+            if not entity_id:
+                continue
+
+            domain = entity_id.split(".", 1)[0]
+            if domain not in {
+                "light",
+                "switch",
+                "fan",
+                "climate",
+                "sensor",
+                "binary_sensor",
+                "cover",
+                "lock",
+                "camera",
+                "media_player",
+                "humidifier",
+                "vacuum",
+            }:
+                continue
+
+            attributes = entity.get("attributes") or {}
+            room_name = (
+                attributes.get("room")
+                or attributes.get("area_name")
+                or attributes.get("floor_name")
+                or default_room_name
+            )
+            room_id = cls._make_room_id("home_assistant", room_name)
+            if room_id not in room_map:
+                room_map[room_id] = {
+                    "id": room_id,
+                    "name": str(room_name),
+                    "climate": "",
+                    "summary": f"来自 Home Assistant 分组: {room_name}",
+                    "sort_order": 10 + len(room_map) * 10,
+                }
+
+            state = str(entity.get("state", "")).strip()
+            devices_data.append(
+                {
+                    "id": f"home_assistant:{entity_id}",
+                    "room_id": room_id,
+                    "name": attributes.get("friendly_name") or entity_id,
+                    "category": cls._map_home_assistant_domain_to_category(domain),
+                    "status": cls._map_home_assistant_status(state),
+                    "telemetry": cls._describe_home_assistant_telemetry(state, attributes),
+                    "note": f"Entity: {entity_id} | Domain: {domain}",
+                    "capabilities": cls._extract_home_assistant_capabilities(domain, attributes),
+                    "last_seen": timezone.now(),
+                    "sort_order": index * 10,
+                    "source_payload": entity,
+                }
+            )
+
+        return {
+            "source": "home_assistant",
+            "rooms": list(room_map.values()),
+            "devices": devices_data,
+            "anomalies": [],
+            "rules": [],
+        }
+
+    @classmethod
+    def _merge_snapshots(cls, payloads: list[dict]) -> dict:
+        merged = cls._build_empty_snapshot()
+        source_names = []
+        for payload in payloads:
+            source = payload.get("source")
+            if source:
+                source_names.append(source)
+            merged["rooms"].extend(payload.get("rooms", []))
+            merged["devices"].extend(payload.get("devices", []))
+            merged["anomalies"].extend(payload.get("anomalies", []))
+            merged["rules"].extend(payload.get("rules", []))
+
+        merged["source"] = "+".join(source_names) if source_names else "none"
+        return merged
 
     @staticmethod
     def _map_model_to_category(model: str) -> str:
@@ -418,6 +523,63 @@ class DeviceDashboardService:
         if "camera" in model:
             return "监控"
         return "其他设备"
+
+    @staticmethod
+    def _make_room_id(provider: str, raw_value: str) -> str:
+        normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(raw_value or "").strip()).strip("-").lower()
+        if normalized:
+            return f"{provider}:{normalized}"
+
+        digest = hashlib.md5(str(raw_value or provider).encode("utf-8")).hexdigest()[:8]
+        return f"{provider}:{digest}"
+
+    @staticmethod
+    def _map_home_assistant_domain_to_category(domain: str) -> str:
+        mapping = {
+            "light": "灯光",
+            "switch": "开关",
+            "fan": "风扇",
+            "climate": "空调",
+            "sensor": "传感器",
+            "binary_sensor": "传感器",
+            "cover": "窗帘",
+            "lock": "门锁",
+            "camera": "监控",
+            "media_player": "媒体设备",
+            "humidifier": "空气护理",
+            "vacuum": "清洁设备",
+        }
+        return mapping.get(domain, "其他设备")
+
+    @staticmethod
+    def _map_home_assistant_status(state: str) -> str:
+        normalized = (state or "").lower()
+        if normalized in {"unavailable", "unknown", "offline"}:
+            return "offline"
+        if normalized in {"on", "open", "unlocking", "locking", "jammed", "problem"}:
+            return "attention"
+        return "online"
+
+    @staticmethod
+    def _describe_home_assistant_telemetry(state: str, attributes: dict) -> str:
+        candidates = [
+            attributes.get("current_temperature"),
+            attributes.get("temperature"),
+            attributes.get("humidity"),
+            attributes.get("power"),
+            attributes.get("brightness"),
+        ]
+        details = [str(item) for item in candidates if item not in (None, "", [])]
+        return " / ".join([state] + details[:2]) if details else state
+
+    @staticmethod
+    def _extract_home_assistant_capabilities(domain: str, attributes: dict) -> list[str]:
+        capabilities = [domain]
+        for key in ("supported_color_modes", "hvac_modes", "preset_modes", "effect_list"):
+            value = attributes.get(key)
+            if isinstance(value, list) and value:
+                capabilities.extend(str(item) for item in value[:4])
+        return capabilities
 
     @staticmethod
     def _build_empty_snapshot() -> dict:

@@ -20,6 +20,13 @@ const features = computed(() => {
   ];
 });
 
+const platformFeature = computed(() => tm("landing.platformFeature") as {
+  eyebrow: string;
+  slogan: string;
+  description: string;
+  platforms: Array<{ name: string; tag: string }>;
+});
+
 // 从 i18n 获取翻译后的列表
 const localizedPrompts = computed(() => tm("landing.prompts") as string[]);
 const displayPrompts = computed(() => [...localizedPrompts.value, localizedPrompts.value[0]]);
@@ -104,6 +111,29 @@ onMounted(() => {
           <div class="text-sm text-[#888888]">{{ feature.desc }}</div>
         </div>
       </div>
+
+      <section class="mt-20 text-left">
+        <div class="rounded-[32px] border border-[#E4EFE7] bg-[linear-gradient(180deg,#FCFFFD_0%,#F5FBF7_100%)] px-6 py-8 shadow-[0_20px_60px_rgba(7,193,96,0.06)] md:px-8 md:py-10">
+          <h2 class="text-center text-3xl font-semibold tracking-tight text-[#1F2A22] md:text-4xl">
+            {{ platformFeature.slogan }}
+          </h2>
+
+          <div class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div
+              v-for="platform in platformFeature.platforms"
+              :key="platform.name"
+              class="rounded-3xl border border-[#DDEEE2] bg-white px-4 py-4 text-center transition-all duration-200 hover:-translate-y-1 hover:border-[#07C160]/30 hover:shadow-[0_14px_30px_rgba(7,193,96,0.12)]"
+            >
+              <div class="flex aspect-[4/3] items-center justify-center rounded-2xl border border-dashed border-[#C9DDCF] bg-[#F8FCF9] text-xs font-medium uppercase tracking-[0.24em] text-[#A0B1A6]">
+                {{ platform.tag }}
+              </div>
+              <div class="mt-3 text-sm font-medium text-[#223126] md:text-base">
+                {{ platform.name }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <footer class="border-t border-[#EDEDED] py-4 text-center text-sm text-[#888888]">

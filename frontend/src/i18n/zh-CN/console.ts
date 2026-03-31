@@ -157,7 +157,7 @@ export default {
   },
   manage: {
     title: "管理",
-    summary: "统一查看与维护微信和米家的授权状态、重新绑定流程以及最新会话。",
+    summary: "统一查看与维护微信、米家和 Home Assistant 的授权状态、重新绑定流程以及最新会话。",
     badges: {
       memory: "记忆与偏好",
       safety: "安全与权限",
@@ -200,11 +200,19 @@ export default {
         disconnect: "断开",
         openLink: "点击打开授权链接",
         authorize: "授权",
+        save: "保存并验证",
+      },
+      fields: {
+        baseUrl: "实例地址",
+        accessToken: "长期访问令牌",
+        accessTokenPlaceholder: "填入 Home Assistant Long-Lived Access Token",
       },
       hint: {
         mijia: "使用米家 App 扫描二维码完成授权",
         wechat: "扫码授权完成后请回到本页",
+        home_assistant: "输入 Home Assistant 实例地址和长期访问令牌，系统会立即校验连接并启用设备同步。",
       },
+      currentInstance: "当前实例",
       providerStatus: {
         connected: "已连接",
         not_connected: "未连接",

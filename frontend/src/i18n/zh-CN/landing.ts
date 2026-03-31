@@ -28,6 +28,17 @@ export default {
     device: { title: "家电联动", desc: "米家、美的、样样都行" },
     memory: { title: "主动记忆", desc: "懂你、想你、回回契合" },
   },
+  platformFeature: {
+    eyebrow: "Connected Universe",
+    slogan: "连接万物，智能管理",
+    description: "从家庭设备到出行服务，再到通信入口，Wanny 把跨平台控制收拢到同一个智能中枢里。",
+    platforms: [
+      { name: "Home Assistant", tag: "HA" },
+      { name: "梅赛德斯-奔驰", tag: "AUTO" },
+      { name: "米家", tag: "IOT" },
+      { name: "微信", tag: "CHAT" },
+    ],
+  },
   titleLead: "Wanny, 你的 Jarvis 智能管家",
   titleAccent: "",
   primary: "进入控制台",

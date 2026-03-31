@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from providers.models import PlatformAuth
+
 if TYPE_CHECKING:
     from accounts.models import Account
 
@@ -122,6 +124,25 @@ class DeviceDashboardService:
         state = cls._get_state(account)
         has_snapshot = cls._has_snapshot(account)
 
+        # 检查是否有任何激活的平台授权
+        has_active_auth = PlatformAuth.objects.filter(
+            account=account,
+            is_active=True
+        ).exists()
+
+        # 如果没有任何激活的授权，返回空数据（不管数据库是否有历史记录）
+        if not has_active_auth:
+            return {
+                "status": "success",
+                "snapshot": cls._serialize_snapshot(
+                    state=state,
+                    rooms=[],
+                    devices=[],
+                    anomalies=[],
+                    rules=[],
+                ),
+            }
+
         if not has_snapshot and not state.refresh_requested_at:
             cls._queue_refresh(state, trigger="bootstrap")
             state.refresh_from_db()
@@ -151,6 +172,30 @@ class DeviceDashboardService:
                 rules=rules,
             ),
         }
+
+    @classmethod
+    def clear_all_data(cls, account: Account) -> None:
+        """
+        彻底清理指定账户下所有的房间、设备快照、异常记录和自动化规则。
+        通常在断开平台（如米家）授权时调用，以确保隐私与数据一致性。
+        """
+        with transaction.atomic():
+            # 1. 删除所有关联业务数据
+            DeviceAnomaly.objects.filter(account=account).delete()
+            DeviceAutomationRule.objects.filter(account=account).delete()
+            DeviceSnapshot.objects.filter(account=account).delete()
+            DeviceRoom.objects.filter(account=account).delete()
+
+            # 2. 重置总览状态
+            state = cls._get_state(account)
+            state.source = "none"
+            state.refreshed_at = None
+            state.last_trigger = "clear"
+            state.refresh_requested_at = None
+            state.last_error = ""
+            state.save(update_fields=["source", "refreshed_at", "last_trigger", "refresh_requested_at", "last_error", "updated_at"])
+
+            logger.info(f"[Device Data] 已清理账户 {account.email} 下的所有米家业务数据。")
 
     @classmethod
     def refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
@@ -299,14 +344,6 @@ class DeviceDashboardService:
         home_map = {str(h["id"]): h["name"] for h in homes}
 
         rooms_data = []
-        auth_obj, _ = PlatformAuth.objects.update_or_create(
-            account=account,
-            platform_name=cls.platform_name,
-            defaults={
-                "auth_payload": {"homes": homes},
-                "is_active": True,
-            },
-        )
         for h_id, h_name in home_map.items():
             rooms_data.append(
                 {
@@ -344,9 +381,9 @@ class DeviceDashboardService:
                     "name": dev["name"],
                     "category": cls._map_model_to_category(dev["model"]),
                     "status": "online" if is_online else "offline",
-                    "telemetry": f"模型: {dev.get('model', 'unknown')}",
-                    "note": f"DID: {dev['did']} | IP: {dev.get('localip', 'N/A')}",
-                    "capabilities": [dev.get("model", "unknown")],
+                    "telemetry": "已连接" if is_online else "离线",
+                    "note": f"DID: {dev['did']} | IP: {dev.get('localip', 'N/A')} | 模型: {dev.get('model', 'unknown')}",
+                    "capabilities": [],
                     "last_seen": timezone.now(),
                     "sort_order": 10,
                     "source_payload": dev,

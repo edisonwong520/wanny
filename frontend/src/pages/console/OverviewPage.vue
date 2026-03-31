@@ -1,70 +1,141 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { RouterLink } from "vue-router";
-import { useI18n } from "vue-i18n";
 
-import { createConsoleMockData } from "@/data/console";
+import { fetchDeviceDashboard, type DeviceDashboardSnapshot } from "@/lib/devices";
+import { formatDateTime } from "@/lib/utils";
 
-const { t } = useI18n();
+const snapshot = ref<DeviceDashboardSnapshot | null>(null);
+const loading = ref(true);
+const error = ref<string | null>(null);
 
-const consoleData = computed(() => createConsoleMockData(t));
+onMounted(async () => {
+  try {
+    const response = await fetchDeviceDashboard();
+    snapshot.value = response.snapshot;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "加载失败";
+  } finally {
+    loading.value = false;
+  }
+});
 
 const metrics = computed(() => {
-  const missions = consoleData.value.missions;
-  const approvedCount = missions.filter((mission) => mission.status === "approved").length;
+  if (!snapshot.value) {
+    return [
+      { label: "在线设备", value: 0, color: "#07C160", bg: "#E8F8EC" },
+      { label: "离线设备", value: 0, color: "#888888", bg: "#F7F7F7" },
+    ];
+  }
+
+  const devices = snapshot.value.devices;
+  const onlineCount = devices.filter((d) => d.status === "online").length;
+  const offlineCount = devices.filter((d) => d.status === "offline").length;
 
   return [
-    { label: "在线设备", value: consoleData.value.devices.length, color: "#07C160", bg: "#E8F8EC" },
-    { label: "待处理任务", value: missions.filter((m) => m.status === "pending").length, color: "#E8A223", bg: "#FFF7E6" },
-    { label: "异常设备", value: consoleData.value.anomalyCount, color: "#E84343", bg: "#FFE8E8" },
-    { label: "主动建议", value: consoleData.value.proactiveCount, color: "#07C160", bg: "#E8F8EC" },
+    { label: "在线设备", value: onlineCount, color: "#07C160", bg: "#E8F8EC" },
+    { label: "离线设备", value: offlineCount, color: "#888888", bg: "#F7F7F7" },
   ];
 });
 
-const events = computed(() => consoleData.value.recentEvents.slice(0, 4));
+const recentEvents = computed(() => {
+  if (!snapshot.value || !snapshot.value.has_snapshot) {
+    return [];
+  }
+
+  // 从离线设备生成最近动态事件（如果没有异常可用）
+  const offlineDevices = snapshot.value.devices.filter((d) => d.status === "offline");
+  const offlineEvents = offlineDevices.slice(0, 4).map((device) => ({
+    id: `offline-${device.id}`,
+    title: `${device.name} 已离线`,
+    body: `状态: ${device.telemetry}`,
+    time: formatDateTime(device.last_seen || new Date().toISOString()),
+    route: "/console/devices",
+  }));
+
+  return offlineEvents;
+});
+
+const hasDevices = computed(() => {
+  return snapshot.value && snapshot.value.devices.length > 0;
+});
+
+const hasAuth = computed(() => {
+  return snapshot.value && snapshot.value.source !== "none";
+});
 </script>
 
 <template>
   <div class="space-y-5">
-    <section class="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <div
-        v-for="metric in metrics"
-        :key="metric.label"
-        class="p-4 rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
-        :style="{ background: metric.bg }"
+    <!-- 加载状态 -->
+    <div v-if="loading" class="text-center py-10 text-[#888888]">加载中...</div>
+
+    <!-- 错误状态 -->
+    <div v-else-if="error" class="text-center py-10 text-[#E84343]">{{ error }}</div>
+
+    <!-- 无授权状态 -->
+    <div v-else-if="!hasAuth" class="text-center py-10">
+      <div class="text-[#888888] mb-4">暂无已授权的平台</div>
+      <RouterLink
+        to="/console/manage"
+        class="inline-block px-4 py-2 bg-[#07C160] text-white rounded-lg hover:bg-[#06AD56] transition-colors"
       >
-        <div class="text-sm text-[#888888]">{{ metric.label }}</div>
-        <div class="mt-2 text-2xl font-semibold" :style="{ color: metric.color }">
-          {{ metric.value }}
-        </div>
-      </div>
-    </section>
+        去授权平台
+      </RouterLink>
+    </div>
 
-    <section>
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-medium text-[#333333]">最近动态</h2>
-        <RouterLink
-          to="/console/manage"
-          class="text-xs text-[#07C160] hover:underline"
+    <!-- 正常状态 -->
+    <template v-else>
+      <section class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div
+          v-for="metric in metrics"
+          :key="metric.label"
+          class="p-4 rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
+          :style="{ background: metric.bg }"
         >
-          查看全部
-        </RouterLink>
-      </div>
-
-      <div class="space-y-2">
-        <RouterLink
-          v-for="event in events"
-          :key="event.id"
-          :to="event.route"
-          class="flex items-center justify-between p-4 rounded-2xl border border-[#EDEDED] transition-all duration-200 hover:border-[#07C160]/30 hover:bg-[#E8F8EC]/30 hover:shadow-sm"
-        >
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-[#333333] truncate">{{ event.title }}</div>
-            <div class="text-xs text-[#888888] truncate mt-1">{{ event.body }}</div>
+          <div class="text-sm text-[#888888]">{{ metric.label }}</div>
+          <div class="mt-2 text-2xl font-semibold" :style="{ color: metric.color }">
+            {{ metric.value }}
           </div>
-          <span class="text-xs text-[#888888] ml-3 flex-shrink-0">{{ event.time }}</span>
-        </RouterLink>
-      </div>
-    </section>
+        </div>
+      </section>
+
+      <section>
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-medium text-[#333333]">最近动态</h2>
+          <RouterLink
+            to="/console/devices"
+            class="text-xs text-[#07C160] hover:underline"
+          >
+            查看全部
+          </RouterLink>
+        </div>
+
+        <!-- 无设备时 -->
+        <div v-if="!hasDevices" class="text-center py-8 text-[#888888]">
+          已授权但暂无设备数据，请等待同步完成
+        </div>
+
+        <!-- 有设备时 -->
+        <div v-else class="space-y-2">
+          <RouterLink
+            v-for="event in recentEvents"
+            :key="event.id"
+            :to="event.route"
+            class="flex items-center justify-between p-4 rounded-2xl border border-[#EDEDED] transition-all duration-200 hover:border-[#07C160]/30 hover:bg-[#E8F8EC]/30 hover:shadow-sm"
+          >
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-[#333333] truncate">{{ event.title }}</div>
+                </div>
+            <span class="text-xs text-[#888888] ml-3 flex-shrink-0">{{ event.time }}</span>
+          </RouterLink>
+
+          <!-- 无异常时显示最近设备 -->
+          <div v-if="recentEvents.length === 0" class="text-center py-4 text-[#888888]">
+            设备运行正常，无异常动态
+          </div>
+        </div>
+      </section>
+    </template>
   </div>
 </template>

@@ -11,7 +11,7 @@ from .auth_sessions import (
     MijiaAuthorizationService,
 )
 from .models import PlatformAuth
-from .services import MijiaAuthService
+from .services import MijiaAuthService, WeChatAuthService
 
 
 PLATFORM_CATALOG = {
@@ -158,7 +158,8 @@ def _serialize_authorization_session(request, platform_name: str):
     session = AuthorizationSessionStore.get_latest(platform_name)
     if session is None:
         return None
-    if session.status == "completed" and _get_platform_auth(request, platform_name) is None:
+    # 只在过期或失败且没有授权记录时返回 null
+    if session.status in ("expired", "failed") and _get_platform_auth(request, platform_name) is None:
         return None
     return session.to_dict()
 
@@ -354,9 +355,21 @@ def handle_platform_auth_detail(request, platform_name: str):
 
         _get_platform_auth_queryset(request, normalized_name).delete()
         AuthorizationSessionStore.clear_latest(normalized_name)
-        logger.info(f"Platform auth deleted for {normalized_name}")
+
+        # 触发各平台本地与业务业务数据清理
+        if normalized_name == MijiaAuthService.platform_name:
+            # 1. 清理本地 .json 凭证文件
+            MijiaAuthService.write_auth_file_from_db(account)
+            # 2. 清除业务数据库中的设备、房间、规则等数据
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.clear_all_data(account)
+        elif normalized_name == WeChatAuthService.platform_name:
+            # 清理微信凭证文件
+            WeChatAuthService.clear_cred_file(account=account)
+
+        logger.info(f"Platform auth and related data records deleted for {normalized_name}")
         return JsonResponse(
-            {"status": "success", "message": f"Authorization removed for {normalized_name}"},
+            {"status": "success", "message": f"Authorization and related data removed for {normalized_name}"},
             status=200,
         )
 

@@ -21,6 +21,9 @@ class Command(BaseCommand):
 
         while True:
             try:
+                from django import db
+                db.close_old_connections()
+                
                 refreshed_accounts = 0
                 for account in Account.objects.all():
                     refreshed = DeviceDashboardService.run_pending_refresh(

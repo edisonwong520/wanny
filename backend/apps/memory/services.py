@@ -116,19 +116,27 @@ class MemoryService:
         }
 
     @classmethod
-    async def record_conversation(cls, account: Account, role: str, content: str):
+    async def record_conversation(cls, account: Account, role: str, content: str, platform_user_id: str = "unknown", source: str = "wechat"):
         """
-        记录一条对话到向量库。
-
-        Args:
-            account: 关联账户
-            role: 角色 ("user" 或 "assistant")
-            content: 对话内容
+        将一条对话记录同时保存到向量库（用于语义检索）和数据库表（用于归档审计）。
         """
         try:
+            # 1. 写入向量库 (ChromaDB)
             text = f"[{role}] {content}"
-            metadata = {"role": role, "source": "wechat_chat"}
+            metadata = {"role": role, "source": f"{source}_chat", "platform_user_id": platform_user_id}
             await asyncio.to_thread(cls._store().add_memory, account.email, text, metadata)
+
+            # 2. 写入数据库表 (PostgreSQL/SQLite)
+            from comms.models import ChatMessage
+            await sync_to_async(ChatMessage.objects.create)(
+                account=account,
+                platform_user_id=platform_user_id,
+                source=source,
+                role=role,
+                content=content
+            )
+            logger.debug(f"[MemoryService] 对话已持久化: role={role}, account={account.email if account else 'None'}")
+
         except Exception as e:
             logger.error(f"[MemoryService] 记录对话失败: {e}")
 
@@ -153,34 +161,43 @@ class MemoryService:
     @classmethod
     async def get_context_for_chat(cls, account: Account, current_msg: str, top_k: int = 5) -> str:
         """
-        检索与当前消息语义相关的历史记忆，组装成 system prompt 增补片段。
-
-        Args:
-            account: 关联账户
-            current_msg: 当前用户消息
-            top_k: 检索条数
-
-        Returns:
-            格式化的记忆上下文字符串，可直接拼接到 system prompt
+        检索历史记忆，并结合最近的几条消息作为即时上下文。
         """
         try:
-            memories = await asyncio.to_thread(cls._store().search_memory, account.email, current_msg, top_k)
-            if not memories:
+            # 1. 语义搜索 (RAG)
+            semantic_mems = await asyncio.to_thread(cls._store().search_memory, account.email, current_msg, top_k)
+            # 2. 最近消息 (Immediate History)
+            recent_mems = await asyncio.to_thread(cls._store().get_last_n_memories, account.email, 3)
+            
+            if not semantic_mems and not recent_mems:
                 return ""
+
+            # 合并、去重（按文本）
+            seen_texts = set()
+            combined_lines = []
+            
+            # 优先放最近的消息 (时间顺序)
+            if recent_mems:
+                combined_lines.append("--- 最近的对话记录 ---")
+                for mem in reversed(recent_mems): # 恢复正序显示给 AI
+                    combined_lines.append(f"  {mem['text']}")
+                    seen_texts.add(mem['text'])
+
+            # 再放相关的语义记忆
+            relevant_mems = [m for m in semantic_mems if m['text'] not in seen_texts]
+            if relevant_mems:
+                combined_lines.append("\n--- 与当前话题相关的历史记忆 ---")
+                for i, mem in enumerate(relevant_mems, 1):
+                    combined_lines.append(f"  {i}. {mem['text']}")
 
             # 获取用户画像作为补充
             profile_context = await cls._get_profile_context(account)
-
-            lines = ["以下是与用户之前的互动记忆（按相关性排序），请参考它们来理解上下文："]
-            for i, mem in enumerate(memories, 1):
-                lines.append(f"  {i}. {mem['text']}")
-
             if profile_context:
-                lines.append("\n用户的已知偏好画像：")
-                lines.append(profile_context)
+                combined_lines.append("\n用户的已知偏好画像：")
+                combined_lines.append(profile_context)
 
-            context = "\n".join(lines)
-            logger.debug(f"[MemoryService] 生成上下文: account={account.email}, 记忆数={len(memories)}, 长度={len(context)}")
+            context = "\n".join(combined_lines)
+            logger.debug(f"[MemoryService] 生成上下文: account={account.email}, 总行数={len(combined_lines)}")
             return context
 
         except Exception as e:

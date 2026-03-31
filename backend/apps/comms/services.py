@@ -23,9 +23,10 @@ class WeChatService:
         try:
             auth = await sync_to_async(
                 lambda: PlatformAuth.objects.filter(
-                    platform_name="wechat",
-                    is_active=True,
-                    auth_payload__user_id=wechat_user_id
+                    Q(platform_name="wechat"),
+                    Q(is_active=True),
+                    Q(account__isnull=False),
+                    Q(auth_payload__user_id=wechat_user_id) | Q(auth_payload__userId=wechat_user_id)
                 ).select_related('account').first()
             )()
             return auth.account if auth else None
@@ -53,7 +54,7 @@ class WeChatService:
 
         # ✨ 记忆引擎：将用户消息写入向量库（仅当账户存在时）
         if account:
-            await MemoryService.record_conversation(account, "user", content)
+            await MemoryService.record_conversation(account, "user", content, platform_user_id=wechat_user_id)
 
         try:
             # ✨ 检索与当前消息相关的历史记忆，作为上下文注入 AI
@@ -72,7 +73,7 @@ class WeChatService:
                 await bot.reply(message, reply_text)
                 # ✨ 记录 AI 回复
                 if account:
-                    await MemoryService.record_conversation(account, "assistant", reply_text)
+                    await MemoryService.record_conversation(account, "assistant", reply_text, platform_user_id=wechat_user_id)
                 return
             
             # --- 以下意图均与 Manual-Gate （PendingCommand） 强相关 ---
@@ -80,7 +81,7 @@ class WeChatService:
             # 2. 从头发起复杂的底层控制指令
             if intent_type == "COMPLEX_SHELL":
                 shell_cmd = intent_data.get("shell_prompt")
-                confirm_txt = intent_data.get("confirm_text", "Sir, 准备进行该底壳操作，请指示：")
+                confirm_txt = intent_data.get("confirm_text", "Sir, 准备进行 Shell 操作，请指示：")
                 
                 # 存入数据库排队缓存区待批阅
                 new_mission = await sync_to_async(Mission.objects.create)(
@@ -93,8 +94,10 @@ class WeChatService:
                 )
                 logger.info(f"[WeChat Service] 挂起一条待审批任务 (ID: {new_mission.id})")
                 
-                alert_text = f"🛡【系统核心拦截】🛡\n\n{confirm_txt}\n\n预期底层操作：\n{shell_cmd[:100]}...\n\n(请回复同意/执行/以后都直接弄 等确认指令)"
+                alert_text = f"🛡注意 \n\n{confirm_txt}\n\n预期底层操作：\n{shell_cmd[:100]}...\n\n(请回复同意/执行/以后直接弄 等确认指令)"
                 await bot.reply(message, alert_text)
+                if account:
+                    await MemoryService.record_conversation(account, "assistant", alert_text, platform_user_id=wechat_user_id)
                 return
             
             # 3. 针对 CONFIRM, PERMANENT_ALLOW, DENY 处理 (这些必然是对之前的某个任务请求的回复)
@@ -106,18 +109,30 @@ class WeChatService:
                 mission_filter &= Q(user_id=wechat_user_id)
 
             mission = await sync_to_async(
-                lambda: Mission.objects.filter(mission_filter).order_by('-created_at').first()
+                lambda: Mission.objects.filter(mission_filter).select_related('account').order_by('-created_at').first()
             )()
             
             logger.debug(f"[WeChat Service] 查找任务: wechat_user_id={wechat_user_id}, 结果={'找到 ID=' + str(mission.id) if mission else '无'}")
 
             if not mission:
-                # 找不到任何积压的请求，但模型识别为了确认或拒绝 (大概率是上下文理解误区)
-                await bot.reply(message, intent_data.get("response", "Sir, 目前并没有找到需要您授权操作的挂起任务。"))
+                # 兜底逻辑：如果找不到挂起的，查查最近一个任务的状态，看是否已完成
+                base_filter = Q(account=account) | Q(user_id="BROADCAST") if account else Q(user_id=wechat_user_id)
+                recent_any = await sync_to_async(
+                    lambda: Mission.objects.filter(base_filter).order_by('-created_at').first()
+                )()
+                
+                if recent_any and recent_any.status != Mission.StatusChoices.PENDING:
+                    reply_txt = f"Sir, 刚才的任务 (ID: {recent_any.id}) 已经处理过了，当前状态为【{recent_any.get_status_display()}】。"
+                else:
+                    reply_txt = intent_data.get("response") or "Sir, 目前并没有找到需要您授权操作的任务。"
+                
+                await bot.reply(message, reply_txt)
+                if account:
+                    await MemoryService.record_conversation(account, "assistant", reply_txt, platform_user_id=wechat_user_id)
                 return
             
             # 若任务尚未绑定账户（从 Monitor 广播产生），将其绑定到当前响应的账户
-            if not mission.account and account:
+            if not mission.account_id and account:
                 mission.account = account
                 mission.user_id = wechat_user_id
                 await sync_to_async(mission.save)()
@@ -127,8 +142,10 @@ class WeChatService:
                 mission.status = Mission.StatusChoices.REJECTED # 标记拒绝
                 await sync_to_async(mission.save)()
                 
-                reply_txt = intent_data.get("response", "好的 Sir，已将此任务作废。")
+                reply_txt = intent_data.get("response", "好的，已将此任务作废。")
                 await bot.reply(message, reply_txt)
+                if account:
+                    await MemoryService.record_conversation(account, "assistant", reply_txt, platform_user_id=wechat_user_id)
                 
                 # 如果这个指令是后台米家感知器抛出的，还需要重置掉耐心忍让计数器！
                 await cls._reset_counter_if_mijia(mission.original_prompt)
@@ -136,7 +153,10 @@ class WeChatService:
 
             # 5. 用户表示放行
             if intent_type in ["CONFIRM", "PERMANENT_ALLOW"]:
-                await bot.reply(message, "🫡  Sir, 系统锁已被你解除，正在全力执行，请稍候...")
+                msg_ack = "🫡  Sir, 正在全力执行，请稍候..."
+                await bot.reply(message, msg_ack)
+                if account:
+                    await MemoryService.record_conversation(account, "assistant", msg_ack, platform_user_id=wechat_user_id)
                 
                 mission.status = Mission.StatusChoices.APPROVED
                 await sync_to_async(mission.save)()
@@ -160,13 +180,15 @@ class WeChatService:
                 # 特别：如果是感知模式过来的，且用户本次回复是永久放权
                 if intent_type == "PERMANENT_ALLOW":
                     await cls._elevate_policy_if_mijia(mission.original_prompt)
-                    result_msg += "\n\n💡 Sir, 已将您针对此情景下的偏好永久化存储 [HabitPolicy->ALWAYS]，以后将默认自动帮您代劳而不必费心。"
+                    result_msg += "\n\n💡 Sir, 已将您针对此情景下的偏好永久化存储，以后将默认自动帮您代劳而不必费心。"
                 
                 # 特别：普通授权米家动作时增加其计数器
                 elif intent_type == "CONFIRM":
                     await cls._increment_counter_if_mijia(mission.original_prompt)
 
                 await bot.reply(message, result_msg)
+                if account:
+                    await MemoryService.record_conversation(account, "assistant", result_msg, platform_user_id=wechat_user_id)
                 logger.info(f"[WeChat Target] 任务彻底完成 (ID: {mission.id})")
                 return
 

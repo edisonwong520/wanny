@@ -9,6 +9,7 @@ import {
   fetchMissions,
   rejectMission,
 } from "@/lib/missions";
+import { formatDateTime } from "@/lib/utils";
 
 const { t, locale } = useI18n();
 
@@ -124,74 +125,70 @@ async function handleReject() {
           </button>
         </div>
 
-        <div class="space-y-2">
+        <div class="space-y-4">
           <template v-if="filteredMissions.length > 0">
-            <div
-              v-for="mission in filteredMissions"
-              :key="mission.id"
-              class="p-4 rounded-2xl cursor-pointer transition-all duration-200 border"
-              :class="selectedMissionId === mission.id
-                ? 'border-[#07C160] bg-[#E8F8EC]/50 shadow-sm'
-                : 'border-[#EDEDED] hover:border-[#07C160]/30 hover:bg-[#F7F7F7]'"
-              @click="selectMission(mission.id)"
-            >
-              <div class="flex items-center gap-2 mb-2">
-                <span
-                  class="px-2.5 py-1 rounded-full text-xs font-medium"
-                  :style="{ background: statusStyle(mission.status).bg, color: statusStyle(mission.status).text }"
-                >
-                  {{ t(`missions.status.${mission.status}`) }}
-                </span>
-                <span class="text-xs text-[#888888]">{{ mission.createdAt }}</span>
+            <div v-for="mission in filteredMissions" :key="mission.id" class="space-y-2">
+              <!-- 任务卡片 -->
+              <div
+                class="p-4 rounded-2xl cursor-pointer transition-all duration-200 border"
+                :class="selectedMissionId === mission.id
+                  ? 'border-[#07C160] bg-[#E8F8EC]/50 shadow-sm'
+                  : 'border-[#EDEDED] hover:border-[#07C160]/30 hover:bg-[#F7F7F7]'"
+                @click="selectMission(mission.id)"
+              >
+                <div class="flex items-center gap-2 mb-2">
+                  <span
+                    class="px-2.5 py-1 rounded-full text-xs font-medium"
+                    :style="{ background: statusStyle(mission.status).bg, color: statusStyle(mission.status).text }"
+                  >
+                    {{ t(`missions.status.${mission.status}`) }}
+                  </span>
+                  <span class="text-xs text-[#888888]">{{ formatDateTime(mission.createdAt) }}</span>
+                </div>
+                <div class="text-sm font-medium text-[#333333]">{{ mission.title }}</div>
               </div>
-              <div class="text-sm font-medium text-[#333333]">{{ mission.title }}</div>
-              <div class="text-xs text-[#888888] mt-1">{{ mission.source }}</div>
+
+              <!-- 详情区域 (仅在选中时展示在该任务下方) -->
+              <div v-if="selectedMissionId === mission.id" class="p-5 rounded-2xl bg-[#f0f9f2] border border-[#07C160]/20 ml-2 mr-2 mb-4 animate-in fade-in slide-in-from-top-1 duration-300">
+
+                <p class="text-sm text-[#555555] mb-5 leading-relaxed">{{ mission.summary }}</p>
+
+                <!-- 仅待处理状态展示按钮 -->
+                <div v-if="mission.status === 'pending'" class="flex gap-2 mb-5">
+                  <button
+                    :disabled="processing"
+                    class="px-5 py-2 rounded-full bg-[#07C160] text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    @click="handleApprove"
+                  >
+                    {{ processing ? "..." : "通过" }}
+                  </button>
+                  <button
+                    :disabled="processing"
+                    class="px-5 py-2 rounded-full border border-[#dce6dd] bg-white text-[#888888] text-sm font-medium transition-all duration-200 hover:border-[#E84343]/30 hover:text-[#E84343] hover:bg-[#FFE8E8]/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    @click="handleReject"
+                  >
+                    {{ processing ? "..." : "拒绝" }}
+                  </button>
+                </div>
+
+                <div class="space-y-4 text-sm bg-white/50 p-4 rounded-xl">
+                  <div>
+                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">用户消息</div>
+                    <div class="text-[#333333] bg-white/80 p-2 rounded-lg border border-[#07C160]/5">{{ mission.rawMessage }}</div>
+                  </div>
+                  <div v-if="mission.commandPreview">
+                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">预期执行指令</div>
+                    <div class="font-mono text-[11px] text-[#07C160] bg-[#1e1e1e] p-3 rounded-lg overflow-x-auto shadow-inner">
+                      {{ mission.commandPreview }}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </template>
-          <div v-else class="py-8 text-center text-sm text-[#888888]">
-            暂无任务
-          </div>
-        </div>
-      </div>
-
-      <div v-if="selectedMission" class="p-5 rounded-2xl bg-[#F7F7F7]">
-        <div class="flex items-center gap-2 mb-3">
-          <span
-            class="px-2.5 py-1 rounded-full text-xs font-medium"
-            :style="{ background: statusStyle(selectedMission.status).bg, color: statusStyle(selectedMission.status).text }"
-          >
-            {{ t(`missions.status.${selectedMission.status}`) }}
-          </span>
-        </div>
-
-        <h3 class="text-lg font-medium text-[#333333] mb-2">{{ selectedMission.title }}</h3>
-        <p class="text-sm text-[#888888] mb-5">{{ selectedMission.summary }}</p>
-
-        <div class="flex gap-2 mb-5">
-          <button
-            :disabled="selectedMission.status !== 'pending' || processing"
-            class="px-5 py-2 rounded-full bg-[#07C160] text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
-            @click="handleApprove"
-          >
-            {{ processing ? "..." : "通过" }}
-          </button>
-          <button
-            :disabled="selectedMission.status !== 'pending' || processing"
-            class="px-5 py-2 rounded-full border border-[#EDEDED] bg-white text-[#888888] text-sm font-medium transition-all duration-200 hover:border-[#E84343]/30 hover:text-[#E84343] hover:bg-[#FFE8E8]/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
-            @click="handleReject"
-          >
-            {{ processing ? "..." : "拒绝" }}
-          </button>
-        </div>
-
-        <div class="space-y-4 text-sm">
-          <div>
-            <div class="text-[#888888] mb-1.5">用户消息</div>
-            <div class="text-[#333333]">{{ selectedMission.rawMessage }}</div>
-          </div>
-          <div>
-            <div class="text-[#888888] mb-1.5">执行命令</div>
-            <div class="font-mono text-[#07C160] bg-white p-3 rounded-xl">{{ selectedMission.commandPreview }}</div>
+          <div v-else class="py-12 text-center">
+            <div class="text-3xl mb-2">🍃</div>
+            <div class="text-sm text-[#888888]">暂无该状态下的任务</div>
           </div>
         </div>
       </div>

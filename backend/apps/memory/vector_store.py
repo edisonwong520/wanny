@@ -139,19 +139,12 @@ class VectorStore:
     def get_recent_memories(self, user_id: str, hours: int = 24, limit: int = 50) -> list[dict]:
         """
         获取指定时间窗口内的最近记忆（用于 Daily Review）。
-        
-        Args:
-            user_id: 用户唯一标识
-            hours: 时间窗口（小时）
-            limit: 最大返回条数
         """
         collection = self._get_collection(user_id)
-        
         if collection.count() == 0:
             return []
 
         cutoff = int(time.time()) - (hours * 3600)
-        
         results = collection.get(
             where={"timestamp": {"$gte": cutoff}},
             limit=limit
@@ -164,9 +157,32 @@ class VectorStore:
                     "text": doc,
                     "metadata": results["metadatas"][i] if results.get("metadatas") else {},
                 })
-
-        logger.debug(f"[VectorStore] 获取最近 {hours}h 记忆: user={user_id}, 数量={len(memories)}")
         return memories
+
+    def get_last_n_memories(self, user_id: str, n: int = 5) -> list[dict]:
+        """
+        获取最近的 N 条记忆记录（不考虑语义相关性，纯粹按时间顺序）。
+        """
+        collection = self._get_collection(user_id)
+        if collection.count() == 0:
+            return []
+
+        # 获取所有，然后在 Python 中按 ID（包含时间戳）排序
+        results = collection.get()
+        
+        memories = []
+        if results and results.get("documents"):
+            for i, doc in enumerate(results["documents"]):
+                memories.append({
+                    "text": doc,
+                    "metadata": results["metadatas"][i] if results.get("metadatas") else {},
+                    "id": results["ids"][i]
+                })
+            
+            # 按 ID 降序排列 (id 里包含毫秒级时间戳)
+            memories.sort(key=lambda x: x["id"], reverse=True)
+            return memories[:n]
+        return []
 
     def list_recent_user_ids(self, hours: int = 24) -> list[str]:
         """

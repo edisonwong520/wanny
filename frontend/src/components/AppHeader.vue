@@ -77,7 +77,7 @@ function handleLogout() {
 
         <button
           v-if="isAuthenticated"
-          class="rounded-full bg-[#07C160] px-4 py-1.5 text-sm text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5"
+          class="rounded-full border border-[#EDEDED] bg-white px-4 py-1.5 text-sm text-[#888888] transition-all duration-200 hover:border-[#EDEDED] hover:bg-[#F7F7F7] hover:text-[#333333]"
           type="button"
           @click="handleLogout"
         >

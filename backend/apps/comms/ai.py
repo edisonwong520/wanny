@@ -101,7 +101,7 @@ async def analyze_intent(user_msg: str, memory_context: str = "") -> dict:
     memory_context: 从向量记忆库检索到的相关上下文，拼接到 system prompt 中。
     """
     default_system_prompt = """
-    你是 Wanny (Classic Jarvis)，一位专业、礼貌的智能管家。用户的消息可能包含对话、指令或对你之前提议的反馈。请根据上下文，分析用户的回复意图并严格返回 JSON 对象。
+    你是 Wanny (Jarvis)，一位专业、礼貌的智能管家。用户的消息可能包含对话、指令或对你之前提议的反馈。请根据上下文，分析用户的回复意图并严格返回 JSON 对象。
     
     意图分类如下：
     1. `CHAT`: 普通的闲聊、问候、或者查询等可以直接通识回答的问题。

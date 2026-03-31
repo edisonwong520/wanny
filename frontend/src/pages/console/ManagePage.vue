@@ -42,7 +42,14 @@ const modalSession = computed(() =>
 const modalQrImageUrl = computed(() => {
   const session = modalSession.value;
   if (!session) return null;
-  if (session.image_url?.startsWith("data:image/")) return session.image_url;
+  // 只对米家平台显示二维码图片
+  if (modalProvider.value?.platform !== "mijia") return null;
+  const url = session.image_url;
+  if (!url) return null;
+  // 支持 base64 和 HTTP URL
+  if (url.startsWith("data:image/") || url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
   return null;
 });
 
@@ -77,7 +84,7 @@ async function loadSession(platform: string, shouldRefresh = false) {
   sessions.value = { ...sessions.value, [platform]: response.session };
   updateProvider(response.provider);
   if (modalPlatform.value === platform && response.session?.status === "completed") {
-    closeAuthorizationModal();
+    closeModal();
   }
   if (response.session?.is_terminal) {
     stopPolling(platform);
@@ -249,7 +256,8 @@ onBeforeUnmount(() => stopAllPolling());
         <div class="space-y-4">
           <h3 class="text-lg font-medium text-[#333333]">{{ modalProvider.display_name_zh }} 授权</h3>
 
-          <div v-if="modalQrImageUrl" class="flex justify-center">
+          <!-- 米家：只显示二维码 -->
+          <div v-if="modalProvider.platform === 'mijia' && modalQrImageUrl" class="flex justify-center">
             <img
               :src="modalQrImageUrl"
               :alt="modalProvider.display_name_zh"
@@ -257,7 +265,8 @@ onBeforeUnmount(() => stopAllPolling());
             />
           </div>
 
-          <div v-if="modalSession?.action_url">
+          <!-- 微信：只显示链接按钮（居中） -->
+          <div v-if="modalProvider.platform === 'wechat' && modalSession?.action_url" class="flex justify-center">
             <a
               :href="modalSession.action_url"
               target="_blank"
@@ -270,9 +279,11 @@ onBeforeUnmount(() => stopAllPolling());
               </svg>
             </a>
           </div>
-
+          <div v-if="modalProvider.platform === 'mijia'" class="text-sm text-[#888888] text-center">
+            使用米家 App 扫描二维码完成授权
+          </div>
           <div v-if="modalProvider.platform === 'wechat'" class="text-sm text-[#888888] text-center">
-            使用微信扫描二维码完成授权
+            扫码授权完成后请回到本页
           </div>
         </div>
       </DialogContent>

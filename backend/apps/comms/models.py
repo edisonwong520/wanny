@@ -55,3 +55,49 @@ class Mission(models.Model):
 
     def __str__(self):
         return f"Mission {self.id} ({self.get_status_display()}) - User: {self.user_id}"
+
+class ChatMessage(models.Model):
+    """
+    通用对话消息记录表。
+    记录用户与 AI 之间的每一次沟通细节（WeChat, API 等）。
+    """
+    class RoleChoices(models.TextChoices):
+        USER = 'user', '用户'
+        ASSISTANT = 'assistant', '助手'
+        SYSTEM = 'system', '系统'
+
+    # 账户关联
+    account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.CASCADE,
+        related_name='chat_messages',
+        null=True,
+        blank=True,
+        verbose_name="所属账户"
+    )
+
+    # 发起者唯一标识 (例如微信 OpenID)
+    platform_user_id = models.CharField(max_length=255, db_index=True, verbose_name="发起人标识")
+    
+    # 消息来源平台标识 (wechat, api, etc.)
+    source = models.CharField(max_length=50, default='wechat', verbose_name="来源平台")
+
+    role = models.CharField(
+        max_length=20,
+        choices=RoleChoices.choices,
+        default=RoleChoices.USER,
+        verbose_name="角色"
+    )
+
+    content = models.TextField(verbose_name="消息内容")
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name="发送时间")
+
+    class Meta:
+        db_table = "comms_chat_message"
+        ordering = ['-created_at']
+        verbose_name = "对话记录"
+        verbose_name_plural = "对话记录"
+
+    def __str__(self):
+        return f"[{self.get_role_display()}] {self.content[:30]}... ({self.platform_user_id})"

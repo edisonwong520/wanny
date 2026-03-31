@@ -11,12 +11,17 @@ from providers.models import PlatformAuth
 
 class Command(BaseCommand):
     help = "启动微信消息监听代理守护进程"
-    auth_poll_interval_seconds = 5
-    auth_wait_log_interval_seconds = 60
     credential_sync_interval_seconds = 5
+    target_account_id = None
+
+    def add_arguments(self, parser):
+        parser.add_argument("--account", "-a", type=int, help="要启动的特定账户 ID (可选)")
 
     def _get_active_wechat_auth(self):
-        return PlatformAuth.objects.filter(platform_name="wechat", is_active=True).first()
+        query = PlatformAuth.objects.filter(platform_name="wechat", is_active=True, account__isnull=False)
+        if self.target_account_id:
+            query = query.filter(account_id=self.target_account_id)
+        return query.order_by("-updated_at").first()
 
     def _extract_auth_payload(self, auth_obj):
         payload = getattr(auth_obj, "auth_payload", None)
@@ -33,48 +38,53 @@ class Command(BaseCommand):
             logger.info("[WeChat Bot] 当前没有启用中的微信授权，已清理本地旧凭证文件。")
 
     def _wait_for_active_wechat_auth(self):
+        """等待用户完成微信授权，不主动加载旧数据"""
+        # 先清理可能存在的旧凭证文件
+        cred_file = os.path.join("credentials", "wechat_credentials.json")
+        self._clear_credentials_file(cred_file)
+
         last_wait_log_at = 0.0
 
         while True:
             try:
                 wechat_auth = self._get_active_wechat_auth()
-                if self._extract_auth_payload(wechat_auth):
+                payload = self._extract_auth_payload(wechat_auth)
+                # 必须有有效的 payload（包含必要字段）才认为授权完成
+                if payload and payload.get("token") and (payload.get("userId") or payload.get("user_id")):
+                    logger.info(f"[WeChat Bot] 检测到新的微信授权 (Account: {wechat_auth.account_id})，开始初始化。")
                     return wechat_auth
             except Exception as e:
                 logger.error(f"[WeChat Bot] 轮询微信授权状态时出错: {e}")
 
             now = time.monotonic()
             if last_wait_log_at == 0.0 or now - last_wait_log_at >= self.auth_wait_log_interval_seconds:
-                logger.debug("[WeChat Bot] 尚未检测到启用中的微信授权，继续待命，不初始化 SDK。")
+                logger.info("[WeChat Bot] 等待用户完成微信授权，暂不初始化 SDK。")
                 last_wait_log_at = now
 
             time.sleep(self.auth_poll_interval_seconds)
 
     def _prepare_wechat_credentials(self, cred_file):
-        try:
-            wechat_auth = self._get_active_wechat_auth()
-        except Exception as e:
-            logger.error(f"[WeChat Bot] 从数据库读取微信凭证时出错: {e}")
-            wechat_auth = None
-
-        payload = self._extract_auth_payload(wechat_auth)
-        if payload:
-            self._write_credentials_file(cred_file, payload)
-            logger.info("[WeChat Bot] 已从 PlatformAuth 数据库加载微信授权凭证到本地。")
-            return
-
-        self._clear_credentials_file(cred_file)
-
+        """等待授权完成后再准备凭证文件"""
+        # 不从数据库加载旧数据，直接等待
         wechat_auth = self._wait_for_active_wechat_auth()
         payload = self._extract_auth_payload(wechat_auth)
         self._write_credentials_file(cred_file, payload)
-        logger.info("[WeChat Bot] 已检测到微信授权，开始初始化底层 SDK。")
+        logger.info("[WeChat Bot] 已从 PlatformAuth 数据库加载微信授权凭证到本地。")
 
     def _start_credentials_sync_thread(self, cred_file):
         def sync_credentials_to_db():
+            from django import db
             last_mtime = 0
             while True:
                 time.sleep(self.credential_sync_interval_seconds)
+                db.close_old_connections()
+
+                # 先检查是否有激活的微信授权，没有则跳过
+                active_auth = self._get_active_wechat_auth()
+                if not active_auth:
+                    logger.debug("[WeChat Bot] 未检测到激活的微信授权，跳过凭证同步。")
+                    continue
+
                 if os.path.exists(cred_file):
                     try:
                         mtime = os.path.getmtime(cred_file)
@@ -84,15 +94,12 @@ class Command(BaseCommand):
                                 data = json.load(f)
                             # 如果为空，可能当时还在写入，尝试规避
                             if data:
-                                existing_auth = PlatformAuth.objects.filter(platform_name="wechat").first()
-                                if existing_auth and not existing_auth.is_active:
-                                    logger.info("[WeChat Bot] 微信授权当前处于停用状态，跳过凭证回写。")
-                                    continue
                                 PlatformAuth.objects.update_or_create(
                                     platform_name="wechat",
+                                    account=active_auth.account,
                                     defaults={"auth_payload": data, "is_active": True}
                                 )
-                                logger.info("[WeChat Bot] SDK 更新了 Token，已同步入库至 PlatformAuth。")
+                                logger.info(f"[WeChat Bot] SDK 更新了 Token，已同步入库至 PlatformAuth (Account: {active_auth.account_id})。")
                     except Exception as e:
                         logger.error(f"[WeChat Bot] 同步凭证到数据库发生错误: {e}")
 
@@ -147,9 +154,13 @@ class Command(BaseCommand):
         asyncio.run(main())
 
     def handle(self, *args, **options):
+        self.target_account_id = options.get("account")
         logger.info("========== Wanny WeChat Bot Agent 启动 ==========")
 
-        cred_file = os.path.join("credentials", "wechat_credentials.json")
+        # 首先查询一次，确定路径名
+        wechat_auth = self._get_active_wechat_auth()
+        account_id_suffix = f"_{wechat_auth.account_id}" if wechat_auth and wechat_auth.account_id else ""
+        cred_file = os.path.join("credentials", f"wechat_credentials{account_id_suffix}.json")
 
         try:
             self._prepare_wechat_credentials(cred_file)

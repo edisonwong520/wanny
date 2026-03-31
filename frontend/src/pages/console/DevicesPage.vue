@@ -7,6 +7,7 @@ import {
   type DeviceSnapshotRecord,
   fetchDeviceDashboard,
 } from "@/lib/devices";
+import { formatDateTime } from "@/lib/utils";
 
 const { t } = useI18n();
 
@@ -31,10 +32,8 @@ const visibleDevices = computed<DeviceSnapshotRecord[]>(() => {
   return devices.filter((d) => d.room_id === activeRoomId.value);
 });
 
-const visibleAnomalies = computed(() => {
-  const anomalies = dashboard.value?.anomalies ?? [];
-  if (activeRoomId.value === "all") return anomalies;
-  return anomalies.filter((a) => a.room_id === activeRoomId.value);
+const visibleOfflineDevices = computed(() => {
+  return visibleDevices.value.filter((d) => d.status === "offline");
 });
 
 function selectRoom(id: string) {
@@ -107,6 +106,7 @@ onBeforeUnmount(() => stopPolling());
         </button>
       </div>
 
+      <!-- 设备网格 -->
       <div class="grid gap-3 md:grid-cols-2">
         <div
           v-for="device in visibleDevices"
@@ -122,22 +122,7 @@ onBeforeUnmount(() => stopPolling());
               {{ t(`devices.status.${device.status}`) }}
             </span>
           </div>
-          <div class="text-xs text-[#888888]">{{ device.category }}</div>
-          <div class="mt-2 text-sm text-[#333333]">{{ device.telemetry }}</div>
-        </div>
-      </div>
-
-      <div v-if="visibleAnomalies.length" class="mt-5">
-        <h3 class="text-sm font-medium text-[#333333] mb-3">异常提醒</h3>
-        <div class="space-y-2">
-          <div
-            v-for="anomaly in visibleAnomalies"
-            :key="anomaly.id"
-            class="p-4 rounded-2xl bg-[#FFE8E8] transition-all duration-200 hover:shadow-sm"
-          >
-            <div class="font-medium text-[#E84343] text-sm">{{ anomaly.title }}</div>
-            <div class="text-xs text-[#888888] mt-1">{{ anomaly.body }}</div>
-          </div>
+          <div class="mt-2 text-sm text-[#333333]">状态: {{ device.telemetry }}</div>
         </div>
       </div>
 

@@ -5,8 +5,20 @@ from asgiref.sync import sync_to_async
 from utils.logger import logger
 from brain.models import HomeMode, HabitPolicy, ObservationCounter
 from comms.models import Mission
+from providers.models import PlatformAuth
+
 
 class MonitorService:
+    @classmethod
+    async def _has_active_mijia_auth(cls) -> bool:
+        """检查是否有激活的米家授权"""
+        return await sync_to_async(
+            lambda: PlatformAuth.objects.filter(
+                platform_name__in=("mijia", "xiaomi"),
+                is_active=True
+            ).exists()
+        )()
+
     @classmethod
     async def loop_start(cls, bot):
         """
@@ -25,16 +37,22 @@ class MonitorService:
 
     @classmethod
     async def _poll_and_judge(cls, bot):
-        # 1. 尝试寻找当前系统中活跃的 Mode 
+        # 0. 检查是否有激活的米家授权，如果没有则跳过
+        has_mijia = await cls._has_active_mijia_auth()
+        if not has_mijia:
+            logger.debug("[Brain Monitor] 未检测到激活的米家授权，跳过设备状态检测。")
+            return
+
+        # 1. 尝试寻找当前系统中活跃的 Mode
         active_mode = await sync_to_async(HomeMode.objects.filter(is_active=True).first)()
         if not active_mode:
             return # 当家宅无明确状态标示时休眠
-            
+
         # 2. 从米家抓取所有的实际设备状态
         # (在此处做逻辑封装：因未实现真实网络交互我们在此造出假设设备离家时还开着)
         # 例如你调用 mijiaApi.get_device_list() 获取全量 dict
         current_devices_status = {
-            "mocked_light_001": {"power": "on"}, 
+            "mocked_light_001": {"power": "on"},
             "mocked_ac_002": {"power": "off"}
         }
 

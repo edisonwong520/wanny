@@ -22,11 +22,15 @@ class WeChatAuthService:
     cred_file_name = "credentials/wechat_credentials.json"
 
     @classmethod
-    def resolve_cred_file_path(cls, cred_file_path=None) -> Path:
+    def resolve_cred_file_path(cls, cred_file_path=None, account: Account | None = None) -> Path:
         if cred_file_path:
             path = Path(cred_file_path)
         else:
             path = Path(__file__).resolve().parents[2] / cls.cred_file_name
+
+        # 如果提供了账户且未指定路径，则使用账户专属文件名
+        if account and not cred_file_path:
+            path = path.parent / f"wechat_credentials_{account.id}.json"
 
         if path.is_dir():
             return path / "credentials.json"
@@ -46,7 +50,7 @@ class WeChatAuthService:
 
     @classmethod
     def write_cred_file_from_db(cls, account: Account, cred_file_path=None) -> Path:
-        path = cls.resolve_cred_file_path(cred_file_path)
+        path = cls.resolve_cred_file_path(cred_file_path, account=account)
         auth_obj = cls.get_auth_record(account=account, active_only=True)
         payload = cls._extract_payload(auth_obj)
 
@@ -62,8 +66,8 @@ class WeChatAuthService:
         return path
 
     @classmethod
-    def clear_cred_file(cls, cred_file_path=None):
-        path = cls.resolve_cred_file_path(cred_file_path)
+    def clear_cred_file(cls, account: Account | None = None, cred_file_path=None):
+        path = cls.resolve_cred_file_path(cred_file_path, account=account)
         if path.exists():
             path.unlink()
             logger.info("[WeChat Auth] 已清理本地微信凭证文件。")
@@ -71,7 +75,7 @@ class WeChatAuthService:
 
     @classmethod
     def sync_cred_file_to_db(cls, account: Account, cred_file_path=None, fallback_payload=None) -> PlatformAuth:
-        path = cls.resolve_cred_file_path(cred_file_path)
+        path = cls.resolve_cred_file_path(cred_file_path, account=account)
 
         if path.exists():
             with open(path, "r", encoding="utf-8") as f:
@@ -94,8 +98,8 @@ class WeChatAuthService:
         return auth_obj
 
     @classmethod
-    def save_credentials_to_file(cls, creds: Credentials, cred_file_path=None) -> Path:
-        path = cls.resolve_cred_file_path(cred_file_path)
+    def save_credentials_to_file(cls, account: Account, creds: Credentials, cred_file_path=None) -> Path:
+        path = cls.resolve_cred_file_path(cred_file_path, account=account)
         asyncio.run(save_credentials(creds, path))
         return path
 
@@ -106,11 +110,15 @@ class MijiaAuthService:
     auth_file_name = "credentials/mijia_auth.json"
 
     @classmethod
-    def resolve_auth_file_path(cls, auth_file_path=None) -> Path:
+    def resolve_auth_file_path(cls, auth_file_path=None, account: Account | None = None) -> Path:
         if auth_file_path:
             path = Path(auth_file_path)
         else:
             path = Path(__file__).resolve().parents[2] / cls.auth_file_name
+
+        # 如果提供了账户且未指定路径，则使用账户专属文件名
+        if account and not auth_file_path:
+            path = path.parent / f"mijia_auth_{account.id}.json"
 
         if path.is_dir():
             return path / "auth.json"
@@ -135,10 +143,8 @@ class MijiaAuthService:
 
     @classmethod
     def write_auth_file_from_db(cls, account: Account, auth_file_path=None) -> Path:
-        # 为不同用户使用不同的文件名，以防冲突
-        path = cls.resolve_auth_file_path(auth_file_path)
-        if not auth_file_path:
-             path = path.parent / f"mijia_auth_{account.id}.json"
+        # 始终解析为账户专属路径
+        path = cls.resolve_auth_file_path(auth_file_path, account=account)
         
         auth_obj = cls.get_auth_record(account=account, active_only=True)
         payload = cls._extract_payload(auth_obj)
@@ -156,7 +162,7 @@ class MijiaAuthService:
 
     @classmethod
     def sync_auth_file_to_db(cls, account: Account, auth_file_path=None, fallback_payload=None) -> PlatformAuth:
-        path = cls.resolve_auth_file_path(auth_file_path)
+        path = cls.resolve_auth_file_path(auth_file_path, account=account)
 
         if path.exists():
             with open(path, "r", encoding="utf-8") as f:
@@ -191,7 +197,7 @@ class MijiaAuthService:
 
     @classmethod
     def login_and_store(cls, account: Account, auth_file_path=None) -> PlatformAuth:
-        path = cls.resolve_auth_file_path(auth_file_path)
+        path = cls.resolve_auth_file_path(auth_file_path, account=account)
         api = cls.get_authenticated_api(account=account, auth_file_path=path, require_login=True)
         return cls.sync_auth_file_to_db(
             account=account,

@@ -169,7 +169,7 @@ class WeChatAuthorizationService:
                     detail="如果你需要更换账号，可以再次点击“重新授权”。",
                 )
 
-        WeChatAuthService.clear_cred_file()
+        WeChatAuthService.clear_cred_file(account=account)
 
         api = ILinkApi()
         qr_payload = asyncio.run(api.get_qr_code(DEFAULT_BASE_URL))
@@ -181,7 +181,7 @@ class WeChatAuthorizationService:
             auth_kind="link",
             status="pending",
             title="微信授权进行中",
-            instruction="请在微信中打开授权链接，完成扫码并确认登录。",
+            instruction="请在微信中打开授权链接，完成扫码并在授权完成后回到本页。",
             detail="确认完成后，页面会自动刷新为已连接状态。",
             action_url=qr_url,
             image_url=image_url,
@@ -233,7 +233,7 @@ class WeChatAuthorizationService:
                         user_id=user_id,
                         saved_at=_now_iso(),
                     )
-                    cred_path = WeChatAuthService.save_credentials_to_file(creds)
+                    cred_path = WeChatAuthService.save_credentials_to_file(account=account, creds=creds)
                     WeChatAuthService.sync_cred_file_to_db(
                         account=account,
                         cred_file_path=cred_path,
@@ -242,6 +242,7 @@ class WeChatAuthorizationService:
                             "baseUrl": creds.base_url,
                             "accountId": creds.account_id,
                             "userId": creds.user_id,
+                            "user_id": creds.user_id,
                             "savedAt": creds.saved_at,
                         },
                     )
@@ -288,9 +289,14 @@ class MijiaAuthorizationService:
                     detail="如果你需要切换账号，可以再次点击“重新授权”。",
                 )
 
-        auth_path = MijiaAuthService.resolve_auth_file_path()
-        if force and auth_path.exists():
-            auth_path.unlink()
+        auth_path = MijiaAuthService.resolve_auth_file_path(account=account)
+        if force:
+            if auth_path.exists():
+                auth_path.unlink()
+                logger.info(f"[Mijia Auth] 强制重新授权：已清理账户 {account.email} 的本地凭证文件。")
+        else:
+            # 尝试从数据库同步回本地
+            MijiaAuthService.write_auth_file_from_db(account=account)
 
         api = mijiaAPI(auth_data_path=str(auth_path))
         location_data = api._get_location()
@@ -330,6 +336,10 @@ class MijiaAuthorizationService:
         login_ret = requests.get(login_url, headers=headers)
         login_data = api._handle_ret(login_ret)
 
+        qr_content = login_data.get("qr")
+        if qr_content and not str(qr_content).startswith(("http://", "https://", "data:image/")):
+            qr_content = f"data:image/png;base64,{qr_content}"
+
         session = AuthorizationSessionStore.create(
             platform=cls.platform_name,
             auth_kind="qr",
@@ -337,8 +347,8 @@ class MijiaAuthorizationService:
             title="米家授权进行中",
             instruction="请使用米家 App 扫描下方二维码并完成确认。",
             detail="确认完成后，页面会自动刷新为已连接状态。",
-            image_url=login_data.get("qr"),
-            verification_url=login_data.get("loginUrl"),
+            image_url=qr_content,
+            action_url=login_data.get("loginUrl"),
         )
 
         monitor_thread = threading.Thread(

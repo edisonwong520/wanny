@@ -1,63 +1,115 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink, useRoute } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { clearAuth, currentUser, isAuthenticated } from "@/lib/auth";
 
 const route = useRoute();
-const { locale, t } = useI18n();
+const router = useRouter();
+const { locale } = useI18n();
 
-const navItems = computed(() => [
-  { to: "/console", label: t("nav.console") },
-  { to: "/landing", label: t("nav.landing") },
-]);
+const isConsoleRoute = computed(() => route.path.startsWith("/console"));
 
 function toggleLocale() {
   locale.value = locale.value === "zh-CN" ? "en" : "zh-CN";
   document.documentElement.lang = locale.value;
 }
+
+function handleLogout() {
+  clearAuth();
+  router.push("/landing");
+}
 </script>
 
 <template>
-  <header class="sticky top-4 z-30 mx-auto mb-8 max-w-7xl">
-    <div class="glass-panel flex flex-col gap-4 rounded-[28px] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <RouterLink class="flex items-center gap-3" to="/console">
-        <div class="flex h-11 w-11 items-center justify-center rounded-2xl border border-brand/15 bg-brand/10 text-xs font-bold tracking-[0.3em] text-brand">
-          WA
+  <header class="sticky top-0 z-40 bg-white border-b border-[#EDEDED]">
+    <div class="mx-auto max-w-6xl flex items-center justify-between px-4 py-3">
+      <RouterLink class="flex items-center gap-2" to="/landing">
+        <div class="w-8 h-8 rounded-lg bg-[#07C160] flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.1c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+          </svg>
         </div>
-        <div>
-          <div class="font-display text-lg font-bold text-ink">Wanny</div>
-          <div class="text-xs uppercase tracking-[0.28em] text-muted">
-            {{ t("brand.subtitle") }}
-          </div>
-        </div>
+        <span class="font-semibold text-[#333333]">Wanny</span>
       </RouterLink>
 
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <nav class="flex items-center gap-2 rounded-full border border-black/[0.05] bg-white/75 p-1">
-          <RouterLink
-            v-for="item in navItems"
-            :key="item.to"
-            :to="item.to"
-            :class="
-              cn(
-                'rounded-full px-4 py-2 text-sm transition',
-                route.path === item.to
-                  ? 'bg-glow text-brand'
-                  : 'text-muted hover:text-ink',
-              )
-            "
-          >
-            {{ item.label }}
-          </RouterLink>
-        </nav>
+      <nav class="hidden md:flex items-center gap-1">
+        <RouterLink
+          to="/landing"
+          class="px-4 py-2 rounded-full text-sm transition-all duration-200"
+          :class="route.path === '/landing'
+            ? 'bg-[#E8F8EC] text-[#07C160]'
+            : 'text-[#888888] hover:bg-[#F7F7F7] hover:text-[#333333]'"
+        >
+          首页
+        </RouterLink>
+        <RouterLink
+          to="/console"
+          class="px-4 py-2 rounded-full text-sm transition-all duration-200"
+          :class="isConsoleRoute
+            ? 'bg-[#E8F8EC] text-[#07C160]'
+            : 'text-[#888888] hover:bg-[#F7F7F7] hover:text-[#333333]'"
+        >
+          控制台
+        </RouterLink>
+      </nav>
 
-        <Button size="sm" variant="ghost" @click="toggleLocale">
+      <div class="flex items-center gap-3">
+        <span v-if="isAuthenticated && currentUser" class="text-sm text-[#888888]">
+          {{ currentUser.name }}
+        </span>
+        <RouterLink
+          v-else
+          to="/login"
+          class="text-sm text-[#888888] hover:text-[#07C160] transition-colors"
+        >
+          登录
+        </RouterLink>
+
+        <button
+          class="text-sm text-[#888888] hover:text-[#07C160] transition-colors px-2"
+          type="button"
+          @click="toggleLocale"
+        >
           {{ locale === "zh-CN" ? "EN" : "中文" }}
-        </Button>
+        </button>
+
+        <button
+          v-if="isAuthenticated"
+          class="rounded-full bg-[#07C160] px-4 py-1.5 text-sm text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5"
+          type="button"
+          @click="handleLogout"
+        >
+          退出
+        </button>
+        <RouterLink
+          v-else
+          class="rounded-full bg-[#07C160] px-4 py-1.5 text-sm text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5"
+          to="/register"
+        >
+          注册
+        </RouterLink>
       </div>
+    </div>
+
+    <div class="md:hidden border-t border-[#EDEDED] px-4 py-2">
+      <nav class="flex gap-2">
+        <RouterLink
+          to="/landing"
+          class="px-3 py-1.5 rounded-full text-sm"
+          :class="route.path === '/landing' ? 'bg-[#E8F8EC] text-[#07C160]' : 'text-[#888888]'"
+        >
+          首页
+        </RouterLink>
+        <RouterLink
+          to="/console"
+          class="px-3 py-1.5 rounded-full text-sm"
+          :class="isConsoleRoute ? 'bg-[#E8F8EC] text-[#07C160]' : 'text-[#888888]'"
+        >
+          控制台
+        </RouterLink>
+      </nav>
     </div>
   </header>
 </template>

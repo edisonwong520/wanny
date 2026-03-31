@@ -9,77 +9,60 @@ const { t } = useI18n();
 
 const consoleData = computed(() => createConsoleMockData(t));
 
-const metricCards = computed(() => {
+const metrics = computed(() => {
   const missions = consoleData.value.missions;
   const approvedCount = missions.filter((mission) => mission.status === "approved").length;
 
   return [
-    {
-      label: t("overview.metrics.components"),
-      value: t("overview.values.components"),
-    },
-    {
-      label: t("overview.metrics.tasks"),
-      value: t("overview.values.tasks", { approved: approvedCount }),
-    },
-    {
-      label: t("overview.metrics.suggestions"),
-      value: String(consoleData.value.proactiveCount),
-    },
-    {
-      label: t("overview.metrics.anomalies"),
-      value: String(consoleData.value.anomalyCount),
-    },
-    {
-      label: t("overview.metrics.devices"),
-      value: String(consoleData.value.devices.length),
-    },
+    { label: "在线设备", value: consoleData.value.devices.length, color: "#07C160", bg: "#E8F8EC" },
+    { label: "待处理任务", value: missions.filter((m) => m.status === "pending").length, color: "#E8A223", bg: "#FFF7E6" },
+    { label: "异常设备", value: consoleData.value.anomalyCount, color: "#E84343", bg: "#FFE8E8" },
+    { label: "主动建议", value: consoleData.value.proactiveCount, color: "#07C160", bg: "#E8F8EC" },
   ];
 });
 
-const recentEvents = computed(() => consoleData.value.recentEvents);
+const events = computed(() => consoleData.value.recentEvents.slice(0, 4));
 </script>
 
 <template>
   <div class="space-y-5">
-    <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-      <article
-        v-for="item in metricCards"
-        :key="item.label"
-        class="rounded-[26px] border border-black/[0.05] bg-white p-5"
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div
+        v-for="metric in metrics"
+        :key="metric.label"
+        class="p-4 rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
+        :style="{ background: metric.bg }"
       >
-        <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ item.label }}</div>
-        <div class="mt-4 text-3xl font-semibold text-ink">{{ item.value }}</div>
-      </article>
+        <div class="text-sm text-[#888888]">{{ metric.label }}</div>
+        <div class="mt-2 text-2xl font-semibold" :style="{ color: metric.color }">
+          {{ metric.value }}
+        </div>
+      </div>
     </section>
 
-    <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-      <div class="flex items-center justify-between gap-3">
-        <h2 class="text-2xl font-semibold text-ink">{{ t("overview.events.title") }}</h2>
+    <section>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-medium text-[#333333]">最近动态</h2>
         <RouterLink
-          class="inline-flex h-10 items-center justify-center rounded-full border border-[#9AD5B1] bg-[#F1FFF7] px-4 text-sm font-semibold text-[#067A3C] transition hover:-translate-y-0.5 hover:border-[#07C160] hover:bg-[#E9FAF0]"
           to="/console/manage"
+          class="text-xs text-[#07C160] hover:underline"
         >
-          {{ t("overview.events.link") }}
+          查看全部
         </RouterLink>
       </div>
 
-      <div class="mt-5 space-y-3">
+      <div class="space-y-2">
         <RouterLink
-          v-for="event in recentEvents"
+          v-for="event in events"
           :key="event.id"
           :to="event.route"
-          class="block rounded-[24px] border border-black/[0.05] bg-[#fcfcfc] px-4 py-4 text-sm leading-7 text-[#4a4a4a] transition hover:border-brand/10 hover:bg-glow"
+          class="flex items-center justify-between p-4 rounded-2xl border border-[#EDEDED] transition-all duration-200 hover:border-[#07C160]/30 hover:bg-[#E8F8EC]/30 hover:shadow-sm"
         >
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <div class="font-medium text-ink">{{ event.title }}</div>
-              <div class="mt-2 text-sm leading-7 text-[#4a4a4a]">{{ event.body }}</div>
-            </div>
-            <div class="rounded-full border border-brand/10 bg-glow px-3 py-1 text-xs font-semibold text-brand">
-              {{ event.time }}
-            </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-[#333333] truncate">{{ event.title }}</div>
+            <div class="text-xs text-[#888888] truncate mt-1">{{ event.body }}</div>
           </div>
+          <span class="text-xs text-[#888888] ml-3 flex-shrink-0">{{ event.time }}</span>
         </RouterLink>
       </div>
     </section>

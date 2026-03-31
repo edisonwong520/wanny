@@ -25,9 +25,7 @@ const handleLogin = async () => {
   try {
     const response = await fetch(`${apiBaseUrl}/api/accounts/login/`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         identifier: identifier.value,
         password: password.value,
@@ -40,7 +38,6 @@ const handleLogin = async () => {
       throw new Error(data.error || "登录失败");
     }
 
-    // 更新全局状态并跳转
     setAuth(data.data);
     router.push("/console");
   } catch (err: any) {
@@ -52,74 +49,56 @@ const handleLogin = async () => {
 </script>
 
 <template>
-  <div class="ambient-shell min-h-screen bg-canvas px-4 pb-14 pt-4 sm:px-6 lg:px-10">
+  <div class="min-h-screen bg-[#F7F7F7]">
     <AppHeader />
 
-    <main class="mx-auto mt-10 max-w-lg">
-      <div class="glass-panel relative overflow-hidden rounded-[34px] p-8 sm:p-10">
-        <div class="relative z-10 space-y-8">
-          <div class="text-center">
-            <h1 class="font-display text-3xl font-bold tracking-tight text-ink sm:text-4xl">
-              欢迎回来
-            </h1>
-            <p class="mt-3 text-sm text-muted">
-              请登录以访问您的 Wanny 控制台
-            </p>
+    <main class="mx-auto max-w-sm px-4 py-12">
+      <div class="bg-white rounded-2xl p-6 shadow-sm">
+        <h1 class="text-xl font-semibold text-[#333333] mb-1">登录</h1>
+        <p class="text-sm text-[#888888] mb-6">
+          登录以访问控制台
+        </p>
+
+        <form @submit.prevent="handleLogin" class="space-y-4">
+          <div>
+            <input
+              v-model="identifier"
+              type="text"
+              placeholder="昵称或邮箱"
+              required
+              class="w-full rounded-xl border border-[#EDEDED] px-4 py-3 text-sm outline-none transition-all duration-200 focus:border-[#07C160] focus:ring-2 focus:ring-[#07C160]/20"
+            />
           </div>
 
-          <form @submit.prevent="handleLogin" class="space-y-6">
-            <div class="space-y-2">
-              <label for="identifier" class="ml-1 text-xs font-semibold uppercase tracking-widest text-muted">
-                昵称或邮箱
-              </label>
-              <input
-                id="identifier"
-                v-model="identifier"
-                type="text"
-                placeholder="请输入您的昵称或注册邮箱"
-                required
-                class="w-full rounded-2xl border border-black/[0.05] bg-white/50 px-5 py-4 text-ink outline-none transition-all focus:border-brand focus:ring-4 focus:ring-brand/10"
-              />
-            </div>
+          <div>
+            <input
+              v-model="password"
+              type="password"
+              placeholder="密码"
+              required
+              class="w-full rounded-xl border border-[#EDEDED] px-4 py-3 text-sm outline-none transition-all duration-200 focus:border-[#07C160] focus:ring-2 focus:ring-[#07C160]/20"
+            />
+          </div>
 
-            <div class="space-y-2">
-              <div class="flex items-center justify-between px-1">
-                <label for="password" class="text-xs font-semibold uppercase tracking-widest text-muted">
-                  账户密码
-                </label>
-              </div>
-              <input
-                id="password"
-                v-model="password"
-                type="password"
-                placeholder="请输入您的密码"
-                required
-                class="w-full rounded-2xl border border-black/[0.05] bg-white/50 px-5 py-4 text-ink outline-none transition-all focus:border-brand focus:ring-4 focus:ring-brand/10"
-              />
-            </div>
+          <div v-if="errorMessage" class="px-4 py-3 rounded-xl bg-[#FFE8E8] text-sm text-[#E84343]">
+            {{ errorMessage }}
+          </div>
 
-            <div v-if="errorMessage" class="rounded-2xl bg-red-50 p-4 text-sm text-red-500 border border-red-100">
-              ⚠️ {{ errorMessage }}
-            </div>
+          <button
+            type="submit"
+            :disabled="isLoading"
+            class="w-full rounded-full bg-[#07C160] py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
+          >
+            <span v-if="isLoading" class="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></span>
+            {{ isLoading ? '登录中...' : '登录' }}
+          </button>
+        </form>
 
-            <button
-              type="submit"
-              :disabled="isLoading"
-              class="group relative flex w-full items-center justify-center overflow-hidden rounded-full bg-brand py-4 font-semibold text-white transition-all hover:shadow-[0_12px_24px_rgba(7,193,96,0.2)]"
-            >
-              <span v-if="isLoading" class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></span>
-              {{ isLoading ? '登录中...' : '立即登录' }}
-            </button>
-          </form>
-
-          <footer class="text-center">
-            <p class="text-sm text-muted">
-              还没有账号？
-              <router-link to="/register" class="font-semibold text-brand hover:underline">
-                立即注册
-              </router-link>
-            </p>
-          </footer>
+        <div class="mt-5 text-sm text-center text-[#888888]">
+          还没有账号？
+          <router-link to="/register" class="text-[#07C160] hover:underline">
+            注册
+          </router-link>
         </div>
       </div>
     </main>

@@ -2,11 +2,8 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import {
   type MissionRecord,
-  type MissionRisk,
   type MissionStatus,
   approveMission,
   fetchMissions,
@@ -23,9 +20,7 @@ const errorMessage = ref("");
 const processing = ref(false);
 
 async function loadMissions(options: { silent?: boolean } = {}) {
-  if (!options.silent) {
-    loading.value = true;
-  }
+  if (!options.silent) loading.value = true;
   errorMessage.value = "";
   try {
     const data = await fetchMissions();
@@ -36,96 +31,38 @@ async function loadMissions(options: { silent?: boolean } = {}) {
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : t("missions.errors.load");
   } finally {
-    if (!options.silent) {
-      loading.value = false;
-    }
+    if (!options.silent) loading.value = false;
   }
 }
 
-onMounted(() => {
-  void loadMissions();
-});
-
-watch(
-  () => locale.value,
-  () => {
-    void loadMissions();
-  },
-);
+onMounted(() => void loadMissions());
+watch(() => locale.value, () => void loadMissions());
 
 const filters = computed(() => [
-  {
-    id: "pending" as const,
-    label: `${t("missions.filters.pending")} ${missions.value.filter((m) => m.status === "pending").length}`,
-  },
-  {
-    id: "failed" as const,
-    label: `${t("missions.filters.failed")} ${missions.value.filter((m) => m.status === "failed").length}`,
-  },
-  {
-    id: "approved" as const,
-    label: `${t("missions.filters.approved")} ${missions.value.filter((m) => m.status === "approved").length}`,
-  },
-  { id: "all" as const, label: `${t("missions.filters.all")} ${missions.value.length}` },
+  { id: "pending" as const, label: "待处理", count: missions.value.filter((m) => m.status === "pending").length },
+  { id: "approved" as const, label: "已通过", count: missions.value.filter((m) => m.status === "approved").length },
+  { id: "failed" as const, label: "已拒绝", count: missions.value.filter((m) => m.status === "failed").length },
 ]);
 
 const filteredMissions = computed(() => {
-  if (activeFilter.value === "all") {
-    return missions.value;
-  }
+  if (activeFilter.value === "all") return missions.value;
   return missions.value.filter((mission) => mission.status === activeFilter.value);
 });
 
-watch(
-  filteredMissions,
-  (items) => {
-    if (!items.some((mission) => mission.id === selectedMissionId.value)) {
-      selectedMissionId.value = items[0]?.id ?? "";
-    }
-  },
-  { immediate: true },
+watch(filteredMissions, (items) => {
+  if (!items.some((mission) => mission.id === selectedMissionId.value)) {
+    selectedMissionId.value = items[0]?.id ?? "";
+  }
+}, { immediate: true });
+
+const selectedMission = computed(() =>
+  filteredMissions.value.find((mission) => mission.id === selectedMissionId.value) ?? filteredMissions.value[0] ?? null
 );
 
-const selectedMission = computed(
-  () =>
-    filteredMissions.value.find((mission) => mission.id === selectedMissionId.value) ??
-    filteredMissions.value[0] ??
-    null,
-);
-
-function statusLabel(status: MissionStatus) {
-  return t(`missions.status.${status}`);
-}
-
-function riskLabel(risk: MissionRisk) {
-  return t(`missions.risk.${risk}`);
-}
-
-function statusClasses(status: MissionStatus) {
-  return cn(
-    "rounded-full border px-3 py-1 text-xs font-semibold",
-    status === "pending" && "border-[#E3C784]/30 bg-[#FFF7DF] text-[#8B6A16]",
-    status === "approved" && "border-brand/10 bg-glow text-brand",
-    status === "failed" && "border-[#EBA5A5]/30 bg-[#FFF1F1] text-[#B64B4B]",
-  );
-}
-
-function riskClasses(risk: MissionRisk) {
-  return cn(
-    "rounded-full border px-3 py-1 text-xs font-semibold",
-    risk === "high" && "border-[#EBA5A5]/30 bg-[#FFF1F1] text-[#B64B4B]",
-    risk === "medium" && "border-[#E3C784]/30 bg-[#FFF7DF] text-[#8B6A16]",
-    risk === "low" && "border-brand/10 bg-glow text-brand",
-  );
-}
-
-function missionCardClasses(id: string) {
-  return cn(
-    "rounded-[28px] border p-5 transition cursor-pointer",
-    selectedMissionId.value === id
-      ? "border-brand/18 bg-glow/65"
-      : "border-black/[0.05] bg-white hover:border-brand/10 hover:bg-[#fcfffd]",
-  );
+function statusStyle(status: MissionStatus) {
+  if (status === "pending") return { bg: "#FFF7E6", text: "#E8A223" };
+  if (status === "approved") return { bg: "#E8F8EC", text: "#07C160" };
+  return { bg: "#FFE8E8", text: "#E84343" };
 }
 
 function selectMission(id: string) {
@@ -135,13 +72,12 @@ function selectMission(id: string) {
 async function handleApprove() {
   const mission = selectedMission.value;
   if (!mission || processing.value) return;
-
   processing.value = true;
   try {
     await approveMission(mission.id);
     await loadMissions({ silent: true });
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : "Approval failed";
+    errorMessage.value = err instanceof Error ? err.message : "操作失败";
   } finally {
     processing.value = false;
   }
@@ -150,13 +86,12 @@ async function handleApprove() {
 async function handleReject() {
   const mission = selectedMission.value;
   if (!mission || processing.value) return;
-
   processing.value = true;
   try {
     await rejectMission(mission.id);
     await loadMissions({ silent: true });
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : "Rejection failed";
+    errorMessage.value = err instanceof Error ? err.message : "操作失败";
   } finally {
     processing.value = false;
   }
@@ -164,177 +99,101 @@ async function handleReject() {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <section v-if="errorMessage" class="rounded-[24px] border border-[#F0C8C8] bg-[#FFF4F4] px-4 py-4 text-sm leading-7 text-[#A44545]">
+  <div class="space-y-4">
+    <div v-if="errorMessage" class="px-4 py-3 rounded-2xl bg-[#FFE8E8] text-sm text-[#E84343]">
       {{ errorMessage }}
-    </section>
+    </div>
 
-    <section v-if="loading" class="rounded-[28px] border border-black/[0.05] bg-white p-8 text-sm text-muted">
-      {{ t("missions.loading") || "Loading missions..." }}
-    </section>
+    <div v-if="loading" class="py-8 text-center text-sm text-[#888888]">
+      加载中...
+    </div>
 
-
-    <section v-if="!loading" class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-      <div class="space-y-4">
-        <div class="flex flex-wrap gap-3">
+    <div v-else class="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+      <div class="space-y-3">
+        <div class="flex gap-2">
           <button
             v-for="filter in filters"
             :key="filter.id"
-            :class="
-              cn(
-                'rounded-full border px-4 py-2 text-sm font-medium transition w-28 sm:w-32 text-center',
-                activeFilter === filter.id
-                  ? 'border-brand/12 bg-glow text-brand'
-                  : 'border-black/[0.06] bg-white text-muted hover:border-brand/10 hover:text-ink',
-              )
-            "
-            type="button"
+            class="px-4 py-2 rounded-full text-sm transition-all duration-200"
+            :class="activeFilter === filter.id
+              ? 'bg-[#07C160] text-white shadow-sm'
+              : 'bg-[#F7F7F7] text-[#888888] hover:bg-[#EDEDED]'"
             @click="activeFilter = filter.id"
           >
-            {{ filter.label }}
+            {{ filter.label }} ({{ filter.count }})
           </button>
         </div>
 
-        <article
-          v-for="mission in filteredMissions"
-          :key="mission.id"
-          :class="missionCardClasses(mission.id)"
-          @click="selectMission(mission.id)"
-        >
-          <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div class="flex flex-wrap items-center gap-2">
-                <span :class="statusClasses(mission.status)">{{ statusLabel(mission.status) }}</span>
-                <span :class="riskClasses(mission.risk)">{{ riskLabel(mission.risk) }}</span>
-                <span class="text-xs uppercase tracking-[0.24em] text-muted">{{ mission.createdAt }}</span>
-              </div>
-              <h2 class="mt-4 text-lg font-semibold text-ink">{{ mission.title }}</h2>
-              <p class="mt-2 text-sm text-muted">{{ mission.source }}</p>
+        <div class="space-y-2">
+          <div
+            v-for="mission in filteredMissions"
+            :key="mission.id"
+            class="p-4 rounded-2xl cursor-pointer transition-all duration-200 border"
+            :class="selectedMissionId === mission.id
+              ? 'border-[#07C160] bg-[#E8F8EC]/50 shadow-sm'
+              : 'border-[#EDEDED] hover:border-[#07C160]/30 hover:bg-[#F7F7F7]'"
+            @click="selectMission(mission.id)"
+          >
+            <div class="flex items-center gap-2 mb-2">
+              <span
+                class="px-2.5 py-1 rounded-full text-xs font-medium"
+                :style="{ background: statusStyle(mission.status).bg, color: statusStyle(mission.status).text }"
+              >
+                {{ t(`missions.status.${mission.status}`) }}
+              </span>
+              <span class="text-xs text-[#888888]">{{ mission.createdAt }}</span>
             </div>
-            <button
-              class="rounded-full border border-black/[0.06] bg-white px-4 py-2 text-sm font-medium text-ink transition hover:border-brand/10 hover:bg-glow"
-              type="button"
-              @click.stop="selectMission(mission.id)"
-            >
-              {{ t("missions.actions.inspect") }}
-            </button>
+            <div class="text-sm font-medium text-[#333333]">{{ mission.title }}</div>
+            <div class="text-xs text-[#888888] mt-1">{{ mission.source }}</div>
           </div>
 
-          <p class="mt-4 text-sm leading-7 text-[#4a4a4a]">{{ mission.summary }}</p>
-        </article>
-
-        <div
-          v-if="filteredMissions.length === 0"
-          class="rounded-[28px] border border-dashed border-black/[0.08] bg-white/70 px-5 py-8 text-sm text-muted"
-        >
-          {{ t("missions.empty") }}
+          <div v-if="filteredMissions.length === 0" class="py-8 text-center text-sm text-[#888888]">
+            暂无任务
+          </div>
         </div>
       </div>
 
-      <aside class="space-y-4" v-if="selectedMission">
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="flex flex-wrap items-center gap-2">
-            <span :class="statusClasses(selectedMission.status)">{{ statusLabel(selectedMission.status) }}</span>
-            <span :class="riskClasses(selectedMission.risk)">{{ riskLabel(selectedMission.risk) }}</span>
+      <div v-if="selectedMission" class="p-5 rounded-2xl bg-[#F7F7F7]">
+        <div class="flex items-center gap-2 mb-3">
+          <span
+            class="px-2.5 py-1 rounded-full text-xs font-medium"
+            :style="{ background: statusStyle(selectedMission.status).bg, color: statusStyle(selectedMission.status).text }"
+          >
+            {{ t(`missions.status.${selectedMission.status}`) }}
+          </span>
+        </div>
+
+        <h3 class="text-lg font-medium text-[#333333] mb-2">{{ selectedMission.title }}</h3>
+        <p class="text-sm text-[#888888] mb-5">{{ selectedMission.summary }}</p>
+
+        <div class="flex gap-2 mb-5">
+          <button
+            :disabled="selectedMission.status !== 'pending' || processing"
+            class="px-5 py-2 rounded-full bg-[#07C160] text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+            @click="handleApprove"
+          >
+            {{ processing ? "..." : "通过" }}
+          </button>
+          <button
+            :disabled="selectedMission.status !== 'pending' || processing"
+            class="px-5 py-2 rounded-full border border-[#EDEDED] bg-white text-[#888888] text-sm font-medium transition-all duration-200 hover:border-[#E84343]/30 hover:text-[#E84343] hover:bg-[#FFE8E8]/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+            @click="handleReject"
+          >
+            {{ processing ? "..." : "拒绝" }}
+          </button>
+        </div>
+
+        <div class="space-y-4 text-sm">
+          <div>
+            <div class="text-[#888888] mb-1.5">用户消息</div>
+            <div class="text-[#333333]">{{ selectedMission.rawMessage }}</div>
           </div>
-
-          <h2 class="mt-4 text-2xl font-semibold text-ink">{{ selectedMission.title }}</h2>
-          <p class="mt-3 text-sm leading-7 text-[#4a4a4a]">{{ selectedMission.summary }}</p>
-
-          <div class="mt-5 grid gap-3 sm:grid-cols-2">
-            <div class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] p-4">
-              <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("missions.detail.created") }}</div>
-              <div class="mt-3 text-sm font-medium text-ink">{{ selectedMission.createdAt }}</div>
-            </div>
-            <div class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] p-4">
-              <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("missions.detail.source") }}</div>
-              <div class="mt-3 text-sm font-medium text-ink">{{ selectedMission.source }}</div>
-            </div>
+          <div>
+            <div class="text-[#888888] mb-1.5">执行命令</div>
+            <div class="font-mono text-[#07C160] bg-white p-3 rounded-xl">{{ selectedMission.commandPreview }}</div>
           </div>
-
-          <div class="mt-5 flex flex-wrap gap-3">
-            <Button
-              :disabled="selectedMission.status !== 'pending' || processing"
-              @click="handleApprove"
-            >
-              {{ processing ? "..." : t("missions.actions.approve") }}
-            </Button>
-            <Button
-              variant="secondary"
-              :disabled="selectedMission.status !== 'pending' || processing"
-              @click="handleReject"
-            >
-              {{ processing ? "..." : t("missions.actions.reject") }}
-            </Button>
-          </div>
-        </section>
-
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("missions.detail.userMessage") }}</div>
-          <div class="mt-4 rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] p-4 text-sm leading-7 text-[#4a4a4a]">
-            {{ selectedMission.rawMessage }}
-          </div>
-        </section>
-
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("missions.detail.intent") }}</div>
-          <div class="mt-4 text-sm leading-7 text-[#4a4a4a]">{{ selectedMission.intent }}</div>
-
-          <div class="mt-5 text-xs uppercase tracking-[0.24em] text-muted">{{ t("missions.detail.command") }}</div>
-          <div class="mt-3 rounded-[22px] border border-brand/10 bg-glow/70 p-4 font-mono text-sm leading-7 text-brand">
-            {{ selectedMission.commandPreview }}
-          </div>
-        </section>
-
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("missions.detail.plan") }}</div>
-          <div class="mt-4 space-y-3">
-            <div
-              v-for="step in selectedMission.plan"
-              :key="step"
-              class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] px-4 py-4 text-sm leading-7 text-[#4a4a4a]"
-            >
-              {{ step }}
-            </div>
-          </div>
-        </section>
-
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("missions.detail.context") }}</div>
-          <div class="mt-4 space-y-3">
-            <div
-              v-for="item in selectedMission.context"
-              :key="item"
-              class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] px-4 py-4 text-sm leading-7 text-[#4a4a4a]"
-            >
-              {{ item }}
-            </div>
-          </div>
-        </section>
-
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("missions.detail.reply") }}</div>
-          <div class="mt-4 text-sm leading-7 text-[#4a4a4a]">
-            {{ selectedMission.suggestedReply }}
-          </div>
-        </section>
-
-        <section class="rounded-[28px] border border-black/[0.05] bg-white p-5">
-          <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ t("missions.detail.timeline") }}</div>
-          <div class="mt-4 space-y-3">
-            <div
-              v-for="entry in selectedMission.timeline"
-              :key="entry.id"
-              class="rounded-[22px] border border-black/[0.05] bg-[#fcfcfc] px-4 py-4"
-            >
-              <div class="flex items-center justify-between gap-4">
-                <div class="text-sm leading-7 text-[#4a4a4a]">{{ entry.message }}</div>
-                <div class="text-xs uppercase tracking-[0.22em] text-muted">{{ entry.time }}</div>
-              </div>
-            </div>
-          </div>
-        </section>
-      </aside>
-    </section>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

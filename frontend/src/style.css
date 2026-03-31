@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -6,8 +6,13 @@
 
 :root {
   color-scheme: light;
-  font-family: "Noto Sans SC", "Space Grotesk", sans-serif;
-  background-color: #faf6e8;
+  font-family: "Noto Sans SC", system-ui, sans-serif;
+  --bg: #FFFFFF;
+  --bg-secondary: #EDEDED;
+  --ink: #333333;
+  --muted: #888888;
+  --accent: #07C160;
+  --accent-light: #9CDA62;
 }
 
 html,
@@ -18,12 +23,8 @@ body,
 
 body {
   margin: 0;
-  background-color: #faf6e8;
-  background-image:
-    radial-gradient(circle at top left, rgba(244, 218, 158, 0.34), transparent 30%),
-    radial-gradient(circle at 85% 10%, rgba(255, 244, 210, 0.96), transparent 24%),
-    radial-gradient(circle at 50% 100%, rgba(232, 204, 148, 0.18), transparent 32%);
-  color: #191919;
+  background-color: var(--bg);
+  color: var(--ink);
 }
 
 * {
@@ -33,59 +34,4 @@ body {
 a {
   color: inherit;
   text-decoration: none;
-}
-
-@layer components {
-  .glass-panel {
-    @apply border border-black/[0.05] bg-white/90 backdrop-blur-xl;
-  }
-
-  .soft-grid {
-    background-image:
-      linear-gradient(rgba(231, 199, 129, 0.16) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(231, 199, 129, 0.16) 1px, transparent 1px);
-    background-size: 32px 32px;
-  }
-
-  .ambient-shell {
-    position: relative;
-    isolation: isolate;
-    overflow: hidden;
-  }
-
-  .ambient-shell::before {
-    content: "";
-    position: absolute;
-    inset: -18% auto auto -12%;
-    height: 420px;
-    width: 420px;
-    border-radius: 9999px;
-    background: radial-gradient(circle, rgba(255, 244, 210, 0.98) 0%, rgba(255, 244, 210, 0) 70%);
-    filter: blur(8px);
-    opacity: 0.95;
-    z-index: -1;
-    animation: floatGlow 14s ease-in-out infinite;
-  }
-
-  .ambient-shell::after {
-    content: "";
-    position: absolute;
-    inset: auto -10% 2% auto;
-    height: 360px;
-    width: 360px;
-    border-radius: 9999px;
-    background: radial-gradient(circle, rgba(234, 202, 136, 0.24) 0%, rgba(234, 202, 136, 0) 72%);
-    z-index: -1;
-    animation: floatGlow 18s ease-in-out infinite reverse;
-  }
-}
-
-@keyframes floatGlow {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  50% {
-    transform: translate3d(18px, 14px, 0) scale(1.04);
-  }
 }

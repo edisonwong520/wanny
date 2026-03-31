@@ -1,172 +1,69 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
-import { useI18n } from "vue-i18n";
 
 import AppHeader from "@/components/AppHeader.vue";
+import { isAuthenticated } from "@/lib/auth";
 
-const { t } = useI18n();
+const primaryAction = computed(() => (isAuthenticated.value ? "/console" : "/register"));
+const primaryLabel = computed(() => (isAuthenticated.value ? "进入控制台" : "开始使用"));
 
-const capabilityCards = computed(() => [
-  {
-    kicker: "01",
-    title: t("landing.capabilityA.title"),
-    body: t("landing.capabilityA.body"),
-  },
-  {
-    kicker: "02",
-    title: t("landing.capabilityB.title"),
-    body: t("landing.capabilityB.body"),
-  },
-  {
-    kicker: "03",
-    title: t("landing.capabilityC.title"),
-    body: t("landing.capabilityC.body"),
-  },
-]);
-
-const blueprintCards = computed(() => [
-  {
-    title: t("landing.blueprintA.title"),
-    body: t("landing.blueprintA.body"),
-  },
-  {
-    title: t("landing.blueprintB.title"),
-    body: t("landing.blueprintB.body"),
-  },
-  {
-    title: t("landing.blueprintC.title"),
-    body: t("landing.blueprintC.body"),
-  },
-]);
+const features = [
+  { icon: "wechat", title: "微信入口", desc: "消息直达任务流" },
+  { icon: "device", title: "设备联动", desc: "房间状态实时同步" },
+  { icon: "memory", title: "记忆系统", desc: "主动关怀用户偏好" },
+];
 </script>
 
 <template>
-  <div class="ambient-shell min-h-screen bg-canvas px-4 pb-14 pt-4 sm:px-6 lg:px-10">
+  <div class="min-h-screen bg-white">
     <AppHeader />
 
-    <main class="mx-auto flex max-w-7xl flex-col gap-10">
-      <section class="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-        <div class="glass-panel overflow-hidden rounded-[34px] p-6 sm:p-8 lg:p-10">
-          <div class="mb-4 inline-flex rounded-full border border-brand/10 bg-glow px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-brand">
-            {{ t("landing.eyebrow") }}
-          </div>
+    <main class="mx-auto max-w-4xl px-4 py-16 text-center">
+      <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#E8F8EC] text-[#07C160] text-sm mb-6">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+        </svg>
+        AI 智能管家
+      </div>
 
-          <div class="space-y-6">
-            <h1 class="max-w-4xl font-display text-4xl font-bold leading-tight text-ink sm:text-5xl lg:text-6xl">
-              {{ t("landing.titleLead") }}
-              <span class="bg-gradient-to-r from-brand via-brand to-[#4FD387] bg-clip-text text-transparent">
-                {{ t("landing.titleAccent") }}
-              </span>
-            </h1>
+      <h1 class="text-4xl font-semibold text-[#333333] mb-4">
+        Wanny
+      </h1>
+      <p class="text-lg text-[#888888] mb-8 max-w-md mx-auto">
+        一个智能控制台，连接家庭设备、微信入口、任务审批与长期记忆
+      </p>
 
-            <p class="max-w-2xl text-base leading-8 text-[#4a4a4a] sm:text-lg">
-              {{ t("landing.summary") }}
-            </p>
-
-            <div class="flex flex-wrap gap-3">
-              <span class="rounded-full border border-black/[0.05] bg-white px-4 py-2 text-sm text-ink">
-                {{ t("landing.chips.safety") }}
-              </span>
-              <span class="rounded-full border border-black/[0.05] bg-white px-4 py-2 text-sm text-ink">
-                {{ t("landing.chips.memory") }}
-              </span>
-              <span class="rounded-full border border-black/[0.05] bg-white px-4 py-2 text-sm text-ink">
-                {{ t("landing.chips.shell") }}
-              </span>
-            </div>
-
-            <div class="flex flex-col gap-3 sm:flex-row">
-              <RouterLink
-                class="inline-flex h-12 items-center justify-center rounded-full border border-brand bg-brand px-6 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:shadow-[0_16px_32px_rgba(7,193,96,0.18)]"
-                to="/console"
-              >
-                {{ t("landing.primary") }}
-              </RouterLink>
-
-              <a
-                class="inline-flex h-12 items-center justify-center rounded-full border border-black/[0.06] bg-white px-6 text-sm font-semibold text-ink transition hover:-translate-y-0.5 hover:bg-[#fcfcfc]"
-                href="#blueprint"
-              >
-                {{ t("landing.secondary") }}
-              </a>
-            </div>
-          </div>
-        </div>
-
-        <aside class="glass-panel soft-grid rounded-[34px] p-6 sm:p-8">
-          <div class="mb-6 flex items-center justify-between">
-            <div>
-              <p class="text-xs uppercase tracking-[0.28em] text-muted">
-                {{ t("landing.preview.title") }}
-              </p>
-              <h2 class="mt-2 text-2xl font-semibold text-ink">Jarvis Runtime</h2>
-            </div>
-            <div class="rounded-full border border-brand/10 bg-glow px-3 py-1 text-xs font-medium text-brand">
-              ACTIVE
-            </div>
-          </div>
-
-          <div class="grid gap-3 sm:grid-cols-3">
-            <div class="rounded-3xl border border-black/[0.05] bg-white p-4">
-              <p class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("landing.statA.label") }}</p>
-              <p class="mt-3 text-lg font-semibold text-ink">{{ t("landing.statA.value") }}</p>
-            </div>
-            <div class="rounded-3xl border border-black/[0.05] bg-white p-4">
-              <p class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("landing.statB.label") }}</p>
-              <p class="mt-3 text-lg font-semibold text-ink">{{ t("landing.statB.value") }}</p>
-            </div>
-            <div class="rounded-3xl border border-black/[0.05] bg-white p-4">
-              <p class="text-xs uppercase tracking-[0.22em] text-muted">{{ t("landing.statC.label") }}</p>
-              <p class="mt-3 text-lg font-semibold text-ink">{{ t("landing.statC.value") }}</p>
-            </div>
-          </div>
-
-          <div class="mt-6 rounded-[28px] border border-brand/10 bg-glow/70 p-5">
-            <p class="text-sm text-[#4a4a4a]">{{ t("landing.preview.status") }}</p>
-            <div class="mt-5 space-y-3 rounded-2xl border border-brand/10 bg-white/85 p-4 font-mono text-sm text-brand">
-              <div>{{ t("landing.preview.line1") }}</div>
-              <div>{{ t("landing.preview.line2") }}</div>
-              <div>{{ t("landing.preview.line3") }}</div>
-            </div>
-          </div>
-        </aside>
-      </section>
-
-      <section class="grid gap-4 lg:grid-cols-3">
-        <article
-          v-for="card in capabilityCards"
-          :key="card.kicker"
-          class="glass-panel rounded-[30px] p-6"
+      <div class="flex justify-center gap-3 mb-12">
+        <RouterLink
+          :to="primaryAction"
+          class="rounded-full bg-[#07C160] px-6 py-3 text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-lg hover:-translate-y-0.5"
         >
-          <div class="text-xs uppercase tracking-[0.28em] text-brand/70">{{ card.kicker }}</div>
-          <h3 class="mt-4 text-2xl font-semibold text-ink">{{ card.title }}</h3>
-          <p class="mt-3 text-sm leading-7 text-[#4a4a4a]">{{ card.body }}</p>
-        </article>
-      </section>
+          {{ primaryLabel }}
+        </RouterLink>
+        <RouterLink
+          v-if="!isAuthenticated"
+          to="/login"
+          class="rounded-full border border-[#EDEDED] px-6 py-3 text-[#333333] text-sm font-medium transition-all duration-200 hover:border-[#07C160]/30 hover:bg-[#E8F8EC]/30 hover:-translate-y-0.5"
+        >
+          登录
+        </RouterLink>
+      </div>
 
-      <section id="blueprint" class="glass-panel rounded-[34px] p-6 sm:p-8">
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p class="text-xs uppercase tracking-[0.28em] text-muted">Console Blueprint</p>
-            <h2 class="mt-3 text-3xl font-semibold text-ink">{{ t("landing.blueprintTitle") }}</h2>
-          </div>
-          <p class="max-w-2xl text-sm leading-7 text-[#4a4a4a]">
-            {{ t("landing.footer") }}
-          </p>
+      <div class="grid md:grid-cols-3 gap-4 text-left">
+        <div
+          v-for="feature in features"
+          :key="feature.title"
+          class="p-5 rounded-2xl bg-[#F7F7F7] transition-all duration-200 hover:bg-[#E8F8EC]/30 hover:-translate-y-1 hover:shadow-md"
+        >
+          <div class="font-medium text-[#333333] mb-1">{{ feature.title }}</div>
+          <div class="text-sm text-[#888888]">{{ feature.desc }}</div>
         </div>
-
-        <div class="mt-8 grid gap-4 lg:grid-cols-3">
-          <article
-            v-for="card in blueprintCards"
-            :key="card.title"
-            class="rounded-[28px] border border-black/[0.05] bg-white p-6"
-          >
-            <h3 class="text-xl font-semibold text-ink">{{ card.title }}</h3>
-            <p class="mt-3 text-sm leading-7 text-[#4a4a4a]">{{ card.body }}</p>
-          </article>
-        </div>
-      </section>
+      </div>
     </main>
+
+    <footer class="border-t border-[#EDEDED] py-4 text-center text-sm text-[#888888]">
+      Wanny - AI 智能家居管理平台
+    </footer>
   </div>
 </template>

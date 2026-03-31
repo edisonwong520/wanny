@@ -6,18 +6,15 @@ export default {
     extend: {
       colors: {
         brand: "#07C160",
-        canvas: "#FAF6E8",
-        surface: "#FFFFFF",
-        ink: "#191919",
-        muted: "#999999",
-        glow: "#E1F8EA",
+        brandLight: "#9CDA62",
+        ink: "#333333",
+        muted: "#888888",
+        canvas: "#FFFFFF",
+        surface: "#F7F7F7",
+        secondary: "#EDEDED",
       },
       fontFamily: {
-        display: ["Space Grotesk", "Noto Sans SC", "sans-serif"],
-        body: ["Noto Sans SC", "Space Grotesk", "sans-serif"],
-      },
-      backgroundImage: {
-        mesh: "radial-gradient(circle at top left, rgba(244,218,158,0.34), transparent 28%), radial-gradient(circle at 90% 0%, rgba(255,244,210,0.92), transparent 22%), radial-gradient(circle at 50% 100%, rgba(232,204,148,0.18), transparent 30%)",
+        sans: ["Noto Sans SC", "system-ui", "sans-serif"],
       },
     },
   },

@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
 
-const guardItems = computed(() => [
+const items = computed(() => [
   t("guard.items.a"),
   t("guard.items.b"),
   t("guard.items.c"),
@@ -12,21 +12,18 @@ const guardItems = computed(() => [
 </script>
 
 <template>
-  <div class="space-y-5">
-    <section class="rounded-[30px] border border-black/[0.05] bg-white p-6">
-      <div class="text-xs uppercase tracking-[0.26em] text-brand">{{ t("guard.eyebrow") }}</div>
-      <h1 class="mt-3 text-3xl font-bold text-ink">{{ t("guard.title") }}</h1>
-      <p class="mt-4 max-w-3xl text-base leading-8 text-[#4a4a4a]">{{ t("guard.summary") }}</p>
-    </section>
+  <div class="space-y-4">
+    <h1 class="text-lg font-semibold text-[#333333]">{{ t("guard.title") }}</h1>
+    <p class="text-sm text-[#888888]">{{ t("guard.summary") }}</p>
 
-    <section class="grid gap-4 lg:grid-cols-3">
-      <article
-        v-for="item in guardItems"
+    <div class="space-y-2">
+      <div
+        v-for="item in items"
         :key="item"
-        class="rounded-[28px] border border-black/[0.05] bg-white p-5 text-sm leading-7 text-[#4a4a4a]"
+        class="p-4 rounded-2xl bg-[#F7F7F7] text-sm text-[#333333] transition-all duration-200 hover:bg-[#E8F8EC]/30"
       >
         {{ item }}
-      </article>
-    </section>
+      </div>
+    </div>
   </div>
 </template>

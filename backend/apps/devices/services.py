@@ -164,7 +164,7 @@ class DeviceDashboardService:
         if auth:
             payload = cls._build_mijia_snapshot(account)
         else:
-            payload = cls._build_demo_snapshot()
+            payload = cls._build_empty_snapshot()
 
         with transaction.atomic():
             state = cls._get_state(account)
@@ -381,6 +381,16 @@ class DeviceDashboardService:
         if "camera" in model:
             return "监控"
         return "其他设备"
+
+    @staticmethod
+    def _build_empty_snapshot() -> dict:
+        return {
+            "source": "none",
+            "rooms": [],
+            "devices": [],
+            "anomalies": [],
+            "rules": [],
+        }
 
     @staticmethod
     def _build_demo_snapshot() -> dict:

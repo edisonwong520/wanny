@@ -108,13 +108,13 @@ async function handleReject() {
       加载中...
     </div>
 
-    <div v-else class="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+    <div v-else class="gap-4">
       <div class="space-y-3">
-        <div class="flex gap-2">
+        <div class="flex gap-1.5">
           <button
             v-for="filter in filters"
             :key="filter.id"
-            class="px-4 py-2 rounded-full text-sm transition-all duration-200"
+            class="px-3 py-1.5 rounded-full text-xs transition-all duration-200"
             :class="activeFilter === filter.id
               ? 'bg-[#07C160] text-white shadow-sm'
               : 'bg-[#F7F7F7] text-[#888888] hover:bg-[#EDEDED]'"
@@ -125,29 +125,30 @@ async function handleReject() {
         </div>
 
         <div class="space-y-2">
-          <div
-            v-for="mission in filteredMissions"
-            :key="mission.id"
-            class="p-4 rounded-2xl cursor-pointer transition-all duration-200 border"
-            :class="selectedMissionId === mission.id
-              ? 'border-[#07C160] bg-[#E8F8EC]/50 shadow-sm'
-              : 'border-[#EDEDED] hover:border-[#07C160]/30 hover:bg-[#F7F7F7]'"
-            @click="selectMission(mission.id)"
-          >
-            <div class="flex items-center gap-2 mb-2">
-              <span
-                class="px-2.5 py-1 rounded-full text-xs font-medium"
-                :style="{ background: statusStyle(mission.status).bg, color: statusStyle(mission.status).text }"
-              >
-                {{ t(`missions.status.${mission.status}`) }}
-              </span>
-              <span class="text-xs text-[#888888]">{{ mission.createdAt }}</span>
+          <template v-if="filteredMissions.length > 0">
+            <div
+              v-for="mission in filteredMissions"
+              :key="mission.id"
+              class="p-4 rounded-2xl cursor-pointer transition-all duration-200 border"
+              :class="selectedMissionId === mission.id
+                ? 'border-[#07C160] bg-[#E8F8EC]/50 shadow-sm'
+                : 'border-[#EDEDED] hover:border-[#07C160]/30 hover:bg-[#F7F7F7]'"
+              @click="selectMission(mission.id)"
+            >
+              <div class="flex items-center gap-2 mb-2">
+                <span
+                  class="px-2.5 py-1 rounded-full text-xs font-medium"
+                  :style="{ background: statusStyle(mission.status).bg, color: statusStyle(mission.status).text }"
+                >
+                  {{ t(`missions.status.${mission.status}`) }}
+                </span>
+                <span class="text-xs text-[#888888]">{{ mission.createdAt }}</span>
+              </div>
+              <div class="text-sm font-medium text-[#333333]">{{ mission.title }}</div>
+              <div class="text-xs text-[#888888] mt-1">{{ mission.source }}</div>
             </div>
-            <div class="text-sm font-medium text-[#333333]">{{ mission.title }}</div>
-            <div class="text-xs text-[#888888] mt-1">{{ mission.source }}</div>
-          </div>
-
-          <div v-if="filteredMissions.length === 0" class="py-8 text-center text-sm text-[#888888]">
+          </template>
+          <div v-else class="py-8 text-center text-sm text-[#888888]">
             暂无任务
           </div>
         </div>

@@ -162,7 +162,7 @@ class ReviewEngine:
                     if wechat_user_id and bot and getattr(bot, '_context_tokens', None):
                         summary_lines = [f"  • {i.get('summary', i.get('key'))}" for i in insights if isinstance(i, dict)]
                         if summary_lines:
-                            report = f"🧠 Sir, 每日复盘完成。我从今天的互动中学到了以下内容：\n" + "\n".join(summary_lines[:5])
+                            report = f"🧠 每日复盘完成。我从今天的互动中学到了以下内容：\n" + "\n".join(summary_lines[:5])
                             
                             # 记录推送日志
                             await sync_to_async(ProactiveLog.objects.create)(

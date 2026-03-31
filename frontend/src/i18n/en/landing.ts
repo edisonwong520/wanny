@@ -23,7 +23,6 @@ export default {
     "Elevate all security policies to the highest level",
     "Show me the digest of yesterday's security footage"
   ],
-  eyebrow: "Home Agent / Shell / Memory",
   briefFeatures: {
     wechat: { title: "WeChat Entry", desc: "Command anywhere, anytime." },
     device: { title: "Smart Linking", desc: "Mijia, Midea, total control." },

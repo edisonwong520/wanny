@@ -99,9 +99,9 @@ class MonitorService:
                 
                 elevate_threshold = int(os.getenv("MONITOR_ELEVATE_THRESHOLD", 3))
                 if obs.success_count >= elevate_threshold:
-                    msg = "Sir，" + msg + f"\n我已经连续帮您关了 {obs.success_count} 次，建议您这次回复“以后直接关”来让我永久自动接管好吗？"
+                    msg =  msg + f"\n我已经连续帮您关了 {obs.success_count} 次，建议您这次回复“以后直接关”来让我永久自动接管好吗？"
                 else:
-                    msg = "Sir，" + msg + "\n是否需要我现在关闭它？（您可以回复 同意/拒绝）"
+                    msg =  msg + "\n是否需要我现在关闭它？（您可以回复 同意/拒绝）"
 
                 new_mission = await sync_to_async(Mission.objects.create)(
                     # 先留存一条没绑定 user_id 的占位，实际发送时我们通过 bot 匹配正确的微信联系人。

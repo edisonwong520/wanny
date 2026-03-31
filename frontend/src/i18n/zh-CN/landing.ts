@@ -23,7 +23,6 @@ export default {
     "家里所有的安全策略升为最高等级",
     "查询昨天监控录像摘要"
   ],
-  eyebrow: "Home Agent / Shell / Memory",
   briefFeatures: {
     wechat: { title: "微信入口", desc: "随说、随办、处处方便" },
     device: { title: "家电联动", desc: "米家、美的、样样都行" },

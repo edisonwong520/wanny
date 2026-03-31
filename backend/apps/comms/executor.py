@@ -24,7 +24,7 @@ class ShellExecutor:
                     logger.warning(f"[Shell Executor] 检测到高危指令 (sudo)，已拦截。")
                     return "🚫 高危拦截：禁止提权！由于包含 `sudo`，本指令不予放行。"
                 
-                cmd_args = ["uv", "run", "gemini", "-p", shell_prompt, "--yolo"]
+                cmd_args = ["gemini", "-p", shell_prompt, "--yolo"]
                 logger.info(f"[Shell Executor] 正在拉起子进程: {' '.join(cmd_args)}")
                 
                 # capture_output 意味着拿到运行后的 stdout 和 stderr
@@ -64,7 +64,7 @@ class ShellExecutor:
                     logger.warning(f"[Shell Executor] STDERR 内容概要:\n{err[:200]}...")
 
                 status_emoji = "✅" if code == 0 else "⚠️"
-                ret_msg = f"{status_emoji} 执行完成！(Code: {code})\n"
+                ret_msg = f"{status_emoji} 执行完成！{'' if code == 0 else f'(Code: {code})'}\n"
                 
                 if out:
                     ret_msg += f"-- \n输出内容:\n{out[:800]}"

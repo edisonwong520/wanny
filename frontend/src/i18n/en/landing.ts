@@ -30,59 +30,6 @@ export default {
   },
   titleLead: "Wanny, Your Jarvis Butler",
   titleAccent: "",
-  summary:
-    "Wanny is a single interface for household automation, proactive care, guarded task execution and semantic memory. We start with a landing page, then move fast into the Console.",
   primary: "Open Console",
   secondary: "Get Started",
-  chips: {
-    safety: "Approval Gate",
-    memory: "Long Memory",
-    shell: "Shell Agent",
-  },
-  statA: {
-    label: "Mode",
-    value: "Manual Gate",
-  },
-  statB: {
-    label: "Memory Layer",
-    value: "Vector + Profile",
-  },
-  statC: {
-    label: "Device Fabric",
-    value: "Mijia Live",
-  },
-  preview: {
-    title: "Operations Snapshot",
-    status: "System online, waiting for the next approval or orchestration event.",
-    line1: "queue.approvals = 3",
-    line2: "memory.recall = semantic",
-    line3: "shell.mode = guarded",
-  },
-  capabilityTitle: "What the Console will own next",
-  capabilityA: {
-    title: "Live orchestration",
-    body: "Track devices, alerts, approvals and automation suggestions in one place.",
-  },
-  capabilityB: {
-    title: "Guarded execution",
-    body: "Turn shell work into replayable, approvable and traceable control flows.",
-  },
-  capabilityC: {
-    title: "Persistent memory",
-    body: "Store conversations, preferences and context as recallable Jarvis memory.",
-  },
-  blueprintTitle: "First-pass Console architecture",
-  blueprintA: {
-    title: "Mission Desk",
-    body: "Manage chat-driven intents, approval queues and execution logs.",
-  },
-  blueprintB: {
-    title: "Device Fabric",
-    body: "View topology, room state, rule matrices and abnormal events.",
-  },
-  blueprintC: {
-    title: "Memory Atlas",
-    body: "Inspect semantic recall, profiles and proactive suggestion hits.",
-  },
-  footer: "Next, these preview cards become the real Jarvis Console.",
 };

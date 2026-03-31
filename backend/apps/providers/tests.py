@@ -6,6 +6,7 @@ from unittest.mock import patch
 from django.test import TestCase, Client
 from django.urls import reverse
 
+from accounts.models import Account
 from .auth_sessions import AuthorizationSessionStore
 from .models import PlatformAuth
 from .services import MijiaAuthService
@@ -15,6 +16,12 @@ class PlatformAuthAPITest(TestCase):
     def setUp(self):
         AuthorizationSessionStore.reset()
         self.client = Client()
+        self.account = Account.objects.create(
+            email="provider-test@example.com",
+            name="Provider Test",
+            password="pwd",
+        )
+        self.auth_headers = {"HTTP_X_WANNY_EMAIL": self.account.email}
         self.url = reverse('providers:platform_auth_upsert')
         self.detail_url = lambda platform_name: reverse('providers:platform_auth_detail', args=[platform_name])
         self.login_url = lambda platform_name: reverse('providers:platform_auth_login', args=[platform_name])
@@ -33,12 +40,14 @@ class PlatformAuthAPITest(TestCase):
             self.url,
             data=json.dumps(payload),
             content_type="application/json",
+            **self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(PlatformAuth.objects.count(), 1)
 
         auth_obj = PlatformAuth.objects.first()
+        self.assertEqual(auth_obj.account, self.account)
         self.assertEqual(auth_obj.platform_name, "wechat")
         self.assertEqual(auth_obj.auth_payload['access_token'], "mock-token-123")
         self.assertEqual(response.json()["provider"]["status"], "connected")
@@ -48,12 +57,14 @@ class PlatformAuthAPITest(TestCase):
             self.url,
             data=json.dumps({"payload": {}}),
             content_type="application/json",
+            **self.auth_headers,
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(PlatformAuth.objects.count(), 0)
 
     def test_list_platform_auths_includes_supported_platforms_and_masks_sensitive_payload(self):
         PlatformAuth.objects.create(
+            account=self.account,
             platform_name="wechat",
             auth_payload={
                 "access_token": "mock-token-123",
@@ -63,7 +74,7 @@ class PlatformAuthAPITest(TestCase):
             is_active=True,
         )
 
-        response = self.client.get(self.url)
+        response = self.client.get(self.url, **self.auth_headers)
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -82,7 +93,7 @@ class PlatformAuthAPITest(TestCase):
         self.assertFalse(providers["mijia"]["configured"])
 
     def test_get_mijia_platform_detail_returns_supported_placeholder_when_not_configured(self):
-        response = self.client.get(self.detail_url("mijia"))
+        response = self.client.get(self.detail_url("mijia"), **self.auth_headers)
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()["provider"]
@@ -93,12 +104,13 @@ class PlatformAuthAPITest(TestCase):
 
     def test_get_xiaomi_alias_returns_mijia_platform_detail(self):
         PlatformAuth.objects.create(
+            account=self.account,
             platform_name="mijia",
             auth_payload={"serviceToken": "mi-token-123"},
             is_active=True,
         )
 
-        response = self.client.get(self.detail_url("xiaomi"))
+        response = self.client.get(self.detail_url("xiaomi"), **self.auth_headers)
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()["provider"]
@@ -119,10 +131,11 @@ class PlatformAuthAPITest(TestCase):
             self.url,
             data=json.dumps(payload),
             content_type="application/json",
+            **self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 200)
-        auth_obj = PlatformAuth.objects.get(platform_name="mijia")
+        auth_obj = PlatformAuth.objects.get(account=self.account, platform_name="mijia")
         self.assertEqual(auth_obj.auth_payload["access_token"], "mi-token-123")
         self.assertEqual(response.json()["provider"]["status"], "connected")
 
@@ -139,17 +152,19 @@ class PlatformAuthAPITest(TestCase):
             self.url,
             data=json.dumps(payload),
             content_type="application/json",
+            **self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(PlatformAuth.objects.filter(platform_name="mijia").count(), 1)
+        self.assertEqual(PlatformAuth.objects.filter(account=self.account, platform_name="mijia").count(), 1)
         self.assertEqual(PlatformAuth.objects.filter(platform_name="xiaomi").count(), 0)
-        auth_obj = PlatformAuth.objects.get(platform_name="mijia")
+        auth_obj = PlatformAuth.objects.get(account=self.account, platform_name="mijia")
         self.assertEqual(auth_obj.auth_payload["serviceToken"], "mi-token-456")
         self.assertEqual(response.json()["provider"]["platform"], "mijia")
 
     def test_patch_platform_auth_merges_payload_and_updates_active(self):
         PlatformAuth.objects.create(
+            account=self.account,
             platform_name="wechat",
             auth_payload={"access_token": "mock-token-123"},
             is_active=True,
@@ -164,10 +179,11 @@ class PlatformAuthAPITest(TestCase):
                 }
             ),
             content_type="application/json",
+            **self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 200)
-        auth_obj = PlatformAuth.objects.get(platform_name="wechat")
+        auth_obj = PlatformAuth.objects.get(account=self.account, platform_name="wechat")
         self.assertFalse(auth_obj.is_active)
         self.assertEqual(auth_obj.auth_payload["access_token"], "mock-token-123")
         self.assertEqual(auth_obj.auth_payload["wxid"], "wxid_edison")
@@ -175,25 +191,27 @@ class PlatformAuthAPITest(TestCase):
 
     def test_delete_platform_auth_removes_record(self):
         PlatformAuth.objects.create(
+            account=self.account,
             platform_name="wechat",
             auth_payload={"access_token": "mock-token-123"},
             is_active=True,
         )
 
-        response = self.client.delete(self.detail_url("wechat"))
+        response = self.client.delete(self.detail_url("wechat"), **self.auth_headers)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(PlatformAuth.objects.count(), 0)
 
     def test_mijia_login_endpoint_returns_provider_from_service(self):
         auth_obj = PlatformAuth.objects.create(
+            account=self.account,
             platform_name="mijia",
             auth_payload={"serviceToken": "mi-token-123", "userId": "mijia-user-1"},
             is_active=True,
         )
 
         with patch("providers.views.MijiaAuthService.login_and_store", return_value=auth_obj):
-            response = self.client.post(self.login_url("mijia"))
+            response = self.client.post(self.login_url("mijia"), **self.auth_headers)
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -216,6 +234,7 @@ class PlatformAuthAPITest(TestCase):
                 self.authorize_url("wechat"),
                 data=json.dumps({"force": True}),
                 content_type="application/json",
+                **self.auth_headers,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -241,6 +260,7 @@ class PlatformAuthAPITest(TestCase):
                 self.authorize_url("mijia"),
                 data=json.dumps({}),
                 content_type="application/json",
+                **self.auth_headers,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -260,7 +280,7 @@ class PlatformAuthAPITest(TestCase):
             action_url="https://wechat.example/qr",
         )
 
-        response = self.client.get(self.authorize_url("wechat"))
+        response = self.client.get(self.authorize_url("wechat"), **self.auth_headers)
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -271,9 +291,15 @@ class PlatformAuthAPITest(TestCase):
 class MijiaAuthServiceTest(TestCase):
     def setUp(self):
         AuthorizationSessionStore.reset()
+        self.account = Account.objects.create(
+            email="mijia-test@example.com",
+            name="Mijia Test",
+            password="pwd",
+        )
 
     def test_write_auth_file_from_db_loads_active_mijia_payload(self):
         PlatformAuth.objects.create(
+            account=self.account,
             platform_name="mijia",
             auth_payload={"serviceToken": "mi-token-123", "userId": "mijia-user-1"},
             is_active=True,
@@ -281,7 +307,7 @@ class MijiaAuthServiceTest(TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             auth_file = Path(temp_dir) / "auth.json"
-            MijiaAuthService.write_auth_file_from_db(auth_file)
+            MijiaAuthService.write_auth_file_from_db(account=self.account, auth_file_path=auth_file)
 
             with open(auth_file, "r", encoding="utf-8") as f:
                 payload = json.load(f)
@@ -308,8 +334,9 @@ class MijiaAuthServiceTest(TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             auth_file = Path(temp_dir) / "auth.json"
             with patch("providers.services.mijiaAPI", FakeMijiaAPI):
-                auth_obj = MijiaAuthService.login_and_store(auth_file)
+                auth_obj = MijiaAuthService.login_and_store(self.account, auth_file)
 
         self.assertEqual(auth_obj.platform_name, "mijia")
         self.assertTrue(auth_obj.is_active)
+        self.assertEqual(auth_obj.account, self.account)
         self.assertEqual(auth_obj.auth_payload["serviceToken"], "mi-token-123")

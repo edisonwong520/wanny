@@ -150,16 +150,16 @@ class WeChatAuthorizationService:
     platform_name = "wechat"
 
     @classmethod
-    def start_session(cls, *, force: bool = False) -> AuthorizationSession:
+    def start_session(cls, account, *, force: bool = False) -> AuthorizationSession:
         existing = AuthorizationSessionStore.get_latest(cls.platform_name)
         if existing and not existing.is_terminal:
             return existing
 
         if not force:
-            auth_obj = WeChatAuthService.get_auth_record(active_only=True)
+            auth_obj = WeChatAuthService.get_auth_record(account=account, active_only=True)
             payload = WeChatAuthService._extract_payload(auth_obj)
             if payload:
-                WeChatAuthService.write_cred_file_from_db()
+                WeChatAuthService.write_cred_file_from_db(account=account)
                 return AuthorizationSessionStore.create(
                     platform=cls.platform_name,
                     auth_kind="link",
@@ -189,14 +189,14 @@ class WeChatAuthorizationService:
 
         monitor_thread = threading.Thread(
             target=cls._monitor_qr_status,
-            args=(session.id, qr_payload["qrcode"], DEFAULT_BASE_URL),
+            args=(session.id, account, qr_payload["qrcode"], DEFAULT_BASE_URL),
             daemon=True,
         )
         monitor_thread.start()
         return session
 
     @classmethod
-    def _monitor_qr_status(cls, session_id: str, qr_code: str, base_url: str):
+    def _monitor_qr_status(cls, session_id: str, account, qr_code: str, base_url: str):
         close_old_connections()
         api = ILinkApi()
 
@@ -235,7 +235,8 @@ class WeChatAuthorizationService:
                     )
                     cred_path = WeChatAuthService.save_credentials_to_file(creds)
                     WeChatAuthService.sync_cred_file_to_db(
-                        cred_path,
+                        account=account,
+                        cred_file_path=cred_path,
                         fallback_payload={
                             "token": creds.token,
                             "baseUrl": creds.base_url,
@@ -268,16 +269,16 @@ class MijiaAuthorizationService:
     platform_name = MijiaAuthService.platform_name
 
     @classmethod
-    def start_session(cls, *, force: bool = False) -> AuthorizationSession:
+    def start_session(cls, account, *, force: bool = False) -> AuthorizationSession:
         existing = AuthorizationSessionStore.get_latest(cls.platform_name)
         if existing and not existing.is_terminal:
             return existing
 
         if not force:
-            auth_obj = MijiaAuthService.get_auth_record(active_only=True)
+            auth_obj = MijiaAuthService.get_auth_record(account=account, active_only=True)
             payload = MijiaAuthService._extract_payload(auth_obj)
             if payload:
-                MijiaAuthService.write_auth_file_from_db()
+                MijiaAuthService.write_auth_file_from_db(account=account)
                 return AuthorizationSessionStore.create(
                     platform=cls.platform_name,
                     auth_kind="qr",
@@ -296,7 +297,11 @@ class MijiaAuthorizationService:
         if location_data.get("code", -1) == 0 and location_data.get("message", "") == "刷新Token成功":
             api._save_auth_data()
             api._init_session()
-            MijiaAuthService.sync_auth_file_to_db(auth_path, fallback_payload=api.auth_data)
+            MijiaAuthService.sync_auth_file_to_db(
+                account=account,
+                auth_file_path=auth_path,
+                fallback_payload=api.auth_data,
+            )
             return AuthorizationSessionStore.create(
                 platform=cls.platform_name,
                 auth_kind="qr",
@@ -338,7 +343,7 @@ class MijiaAuthorizationService:
 
         monitor_thread = threading.Thread(
             target=cls._wait_for_confirmation,
-            args=(session.id, api, headers, login_data["lp"], auth_path),
+            args=(session.id, account, api, headers, login_data["lp"], auth_path),
             daemon=True,
         )
         monitor_thread.start()
@@ -348,6 +353,7 @@ class MijiaAuthorizationService:
     def _wait_for_confirmation(
         cls,
         session_id: str,
+        account,
         api: mijiaAPI,
         headers: dict,
         lp_url: str,
@@ -374,7 +380,11 @@ class MijiaAuthorizationService:
             )
             api._save_auth_data()
             api._init_session()
-            MijiaAuthService.sync_auth_file_to_db(auth_path, fallback_payload=api.auth_data)
+            MijiaAuthService.sync_auth_file_to_db(
+                account=account,
+                auth_file_path=auth_path,
+                fallback_payload=api.auth_data,
+            )
             AuthorizationSessionStore.update(
                 session_id,
                 status="completed",

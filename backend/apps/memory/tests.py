@@ -6,6 +6,7 @@ from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
+from accounts.models import Account
 from memory.models import UserProfile
 from memory.review import parse_review_hours, should_run_review_now
 from memory.services import (
@@ -70,23 +71,29 @@ class ProfileMergeLogicTests(SimpleTestCase):
 class UserProfileFeatureTests(TestCase):
     def setUp(self):
         self.client_url = reverse("memory:profiles")
+        self.account = Account.objects.create(
+            email="memory-test@example.com",
+            name="Memory Test",
+            password="pwd",
+        )
+        self.auth_headers = {"HTTP_X_WANNY_EMAIL": self.account.email}
 
     def test_manual_profile_api_marks_profile_as_user_edited(self):
         response = self.client.post(
             self.client_url,
             data=json.dumps(
                 {
-                    "user_id": "wxid_edison",
                     "category": "Environment",
                     "key": "preferred_temp",
                     "value": "26",
                 }
             ),
             content_type="application/json",
+            **self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 200)
-        profile = UserProfile.objects.get(user_id="wxid_edison", key="preferred_temp")
+        profile = UserProfile.objects.get(account=self.account, key="preferred_temp")
         self.assertEqual(profile.value, "26")
         self.assertEqual(profile.source, UserProfile.SourceChoices.MANUAL)
         self.assertTrue(profile.is_user_edited)
@@ -95,14 +102,14 @@ class UserProfileFeatureTests(TestCase):
 
     def test_review_update_keeps_user_value_when_conflicting(self):
         async_to_sync(MemoryService.upsert_manual_profile)(
-            user_id="wxid_edison",
+            account=self.account,
             key="preferred_temp",
             value="26",
             category="Environment",
         )
 
         async_to_sync(MemoryService.apply_review_profile_update)(
-            "wxid_edison",
+            self.account,
             {
                 "category": "Environment",
                 "key": "preferred_temp",
@@ -111,7 +118,7 @@ class UserProfileFeatureTests(TestCase):
             },
         )
 
-        profile = UserProfile.objects.get(user_id="wxid_edison", key="preferred_temp")
+        profile = UserProfile.objects.get(account=self.account, key="preferred_temp")
         self.assertEqual(profile.value, "26")
         self.assertEqual(profile.source, UserProfile.SourceChoices.MANUAL)
         self.assertTrue(profile.is_user_edited)
@@ -120,8 +127,13 @@ class UserProfileFeatureTests(TestCase):
         self.assertIsNotNone(profile.last_review_at)
 
     def test_review_update_creates_profile_for_new_user(self):
+        other_account = Account.objects.create(
+            email="memory-new@example.com",
+            name="Memory New",
+            password="pwd",
+        )
         async_to_sync(MemoryService.apply_review_profile_update)(
-            "wxid_new_user",
+            other_account,
             {
                 "category": "Habit",
                 "key": "bedtime_routine",
@@ -130,7 +142,7 @@ class UserProfileFeatureTests(TestCase):
             },
         )
 
-        profile = UserProfile.objects.get(user_id="wxid_new_user", key="bedtime_routine")
+        profile = UserProfile.objects.get(account=other_account, key="bedtime_routine")
         self.assertEqual(profile.value, "23:30")
         self.assertEqual(profile.source, UserProfile.SourceChoices.REVIEW)
         self.assertFalse(profile.is_user_edited)
@@ -138,13 +150,13 @@ class UserProfileFeatureTests(TestCase):
 
     def test_get_profiles_api_returns_profiles(self):
         async_to_sync(MemoryService.upsert_manual_profile)(
-            user_id="wxid_edison",
+            account=self.account,
             key="preferred_temp",
             value="26",
             category="Environment",
         )
 
-        response = self.client.get(f"{self.client_url}?user_id=wxid_edison")
+        response = self.client.get(self.client_url, **self.auth_headers)
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()

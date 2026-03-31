@@ -1,6 +1,12 @@
+from __future__ import annotations
+
 import asyncio
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from accounts.models import Account
 
 from mijiaAPI import mijiaAPI
 from wechatbot.auth import save_credentials
@@ -27,8 +33,8 @@ class WeChatAuthService:
         return path
 
     @classmethod
-    def get_auth_record(cls, active_only: bool = False) -> PlatformAuth | None:
-        queryset = PlatformAuth.objects.filter(platform_name=cls.platform_name)
+    def get_auth_record(cls, account: Account, active_only: bool = False) -> PlatformAuth | None:
+        queryset = PlatformAuth.objects.filter(account=account, platform_name=cls.platform_name)
         if active_only:
             queryset = queryset.filter(is_active=True)
         return queryset.first()
@@ -39,9 +45,9 @@ class WeChatAuthService:
         return payload if isinstance(payload, dict) else {}
 
     @classmethod
-    def write_cred_file_from_db(cls, cred_file_path=None) -> Path:
+    def write_cred_file_from_db(cls, account: Account, cred_file_path=None) -> Path:
         path = cls.resolve_cred_file_path(cred_file_path)
-        auth_obj = cls.get_auth_record(active_only=True)
+        auth_obj = cls.get_auth_record(account=account, active_only=True)
         payload = cls._extract_payload(auth_obj)
 
         if payload:
@@ -64,7 +70,7 @@ class WeChatAuthService:
         return path
 
     @classmethod
-    def sync_cred_file_to_db(cls, cred_file_path=None, fallback_payload=None) -> PlatformAuth:
+    def sync_cred_file_to_db(cls, account: Account, cred_file_path=None, fallback_payload=None) -> PlatformAuth:
         path = cls.resolve_cred_file_path(cred_file_path)
 
         if path.exists():
@@ -77,6 +83,7 @@ class WeChatAuthService:
             raise ValueError("WeChat auth payload is empty or invalid")
 
         auth_obj, _ = PlatformAuth.objects.update_or_create(
+            account=account,
             platform_name=cls.platform_name,
             defaults={
                 "auth_payload": payload,
@@ -110,8 +117,8 @@ class MijiaAuthService:
         return path
 
     @classmethod
-    def get_auth_record(cls, active_only: bool = False) -> PlatformAuth | None:
-        queryset = PlatformAuth.objects.filter(platform_name__in=cls.platform_aliases)
+    def get_auth_record(cls, account: Account, active_only: bool = False) -> PlatformAuth | None:
+        queryset = PlatformAuth.objects.filter(account=account, platform_name__in=cls.platform_aliases)
         if active_only:
             queryset = queryset.filter(is_active=True)
 
@@ -127,9 +134,13 @@ class MijiaAuthService:
         return payload if isinstance(payload, dict) else {}
 
     @classmethod
-    def write_auth_file_from_db(cls, auth_file_path=None) -> Path:
+    def write_auth_file_from_db(cls, account: Account, auth_file_path=None) -> Path:
+        # 为不同用户使用不同的文件名，以防冲突
         path = cls.resolve_auth_file_path(auth_file_path)
-        auth_obj = cls.get_auth_record(active_only=True)
+        if not auth_file_path:
+             path = path.parent / f"mijia_auth_{account.id}.json"
+        
+        auth_obj = cls.get_auth_record(account=account, active_only=True)
         payload = cls._extract_payload(auth_obj)
 
         if payload:
@@ -144,7 +155,7 @@ class MijiaAuthService:
         return path
 
     @classmethod
-    def sync_auth_file_to_db(cls, auth_file_path=None, fallback_payload=None) -> PlatformAuth:
+    def sync_auth_file_to_db(cls, account: Account, auth_file_path=None, fallback_payload=None) -> PlatformAuth:
         path = cls.resolve_auth_file_path(auth_file_path)
 
         if path.exists():
@@ -157,28 +168,33 @@ class MijiaAuthService:
             raise ValueError("Mijia auth payload is empty or invalid")
 
         auth_obj, _ = PlatformAuth.objects.update_or_create(
+            account=account,
             platform_name=cls.platform_name,
             defaults={
                 "auth_payload": payload,
                 "is_active": True,
             },
         )
-        logger.info("[Mijia Auth] 已将米家授权凭证同步入库至 PlatformAuth。")
+        logger.info(f"[Mijia Auth] 已将账户 {account.email} 的米家授权凭证同步入库。")
         return auth_obj
 
     @classmethod
-    def get_authenticated_api(cls, auth_file_path=None, require_login: bool = False) -> mijiaAPI:
-        path = cls.write_auth_file_from_db(auth_file_path)
+    def get_authenticated_api(cls, account: Account, auth_file_path=None, require_login: bool = False) -> mijiaAPI:
+        path = cls.write_auth_file_from_db(account=account, auth_file_path=auth_file_path)
         api = mijiaAPI(auth_data_path=str(path))
 
         if require_login:
             auth_data = api.login()
-            cls.sync_auth_file_to_db(path, fallback_payload=auth_data)
+            cls.sync_auth_file_to_db(account=account, auth_file_path=path, fallback_payload=auth_data)
 
         return api
 
     @classmethod
-    def login_and_store(cls, auth_file_path=None) -> PlatformAuth:
+    def login_and_store(cls, account: Account, auth_file_path=None) -> PlatformAuth:
         path = cls.resolve_auth_file_path(auth_file_path)
-        api = cls.get_authenticated_api(path, require_login=True)
-        return cls.sync_auth_file_to_db(path, fallback_payload=getattr(api, "auth_data", {}))
+        api = cls.get_authenticated_api(account=account, auth_file_path=path, require_login=True)
+        return cls.sync_auth_file_to_db(
+            account=account,
+            auth_file_path=path,
+            fallback_payload=getattr(api, "auth_data", {}),
+        )

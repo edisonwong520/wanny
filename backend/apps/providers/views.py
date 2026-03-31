@@ -57,17 +57,21 @@ def _get_platform_lookup_names(platform_name: str) -> tuple[str, ...]:
     return (platform_name,)
 
 
-def _get_platform_auth(platform_name: str) -> PlatformAuth | None:
+def _get_platform_auth(request, platform_name: str) -> PlatformAuth | None:
+    account = getattr(request, 'account', None)
+    if not account:
+        return None
     normalized_name = _normalize_platform_name(platform_name)
     if normalized_name == MijiaAuthService.platform_name:
-        return MijiaAuthService.get_auth_record()
+        return MijiaAuthService.get_auth_record(account=account)
 
-    return PlatformAuth.objects.filter(platform_name=normalized_name).first()
+    return PlatformAuth.objects.filter(account=account, platform_name=normalized_name).first()
 
 
-def _get_platform_auth_queryset(platform_name: str):
+def _get_platform_auth_queryset(request, platform_name: str):
+    account = getattr(request, 'account', None)
     normalized_name = _normalize_platform_name(platform_name)
-    return PlatformAuth.objects.filter(platform_name__in=_get_platform_lookup_names(normalized_name))
+    return PlatformAuth.objects.filter(account=account, platform_name__in=_get_platform_lookup_names(normalized_name))
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -150,26 +154,25 @@ def _load_request_json(request):
         return None, JsonResponse({"error": "Invalid JSON mapping"}, status=400)
 
 
-def _serialize_authorization_session(platform_name: str):
+def _serialize_authorization_session(request, platform_name: str):
     session = AuthorizationSessionStore.get_latest(platform_name)
     if session is None:
         return None
-    if session.status == "completed" and _get_platform_auth(platform_name) is None:
+    if session.status == "completed" and _get_platform_auth(request, platform_name) is None:
         return None
     return session.to_dict()
 
 
 @csrf_exempt
 def handle_platform_auth(request):
-    """
-    平台授权管理入口：
-    - GET /api/providers/auth/
-    - POST /api/providers/auth/
-    """
     if request.method == "GET":
+        account = getattr(request, 'account', None)
+        if not account:
+             return JsonResponse({"error": "Unauthorized"}, status=401)
+             
         stored_records = {
             _normalize_platform_name(obj.platform_name): obj
-            for obj in PlatformAuth.objects.all().order_by("platform_name")
+            for obj in PlatformAuth.objects.filter(account=account).order_by("platform_name")
         }
         platform_names = list(PLATFORM_CATALOG.keys())
         for name in stored_records.keys():
@@ -200,8 +203,13 @@ def handle_platform_auth(request):
         if not isinstance(auth_payload, dict):
             return JsonResponse({"error": "'payload' must be a JSON object"}, status=400)
 
+        account = getattr(request, 'account', None)
+        if not account:
+            return JsonResponse({"error": "Unauthorized"}, status=401)
+
         # 始终通过平台名称做到单一更新，避免数据库重复创建多条该平台的有效记录
         obj, created = PlatformAuth.objects.update_or_create(
+            account=account,
             platform_name=platform_name,
             defaults={
                 "auth_payload": auth_payload,
@@ -231,12 +239,16 @@ def handle_platform_auth_authorize(request, platform_name: str):
     if normalized_name not in PLATFORM_CATALOG:
         return JsonResponse({"error": f"Unknown platform: {normalized_name}"}, status=404)
 
+    account = getattr(request, 'account', None)
+    if not account:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
     if request.method == "GET":
         return JsonResponse(
             {
                 "status": "success",
-                "provider": _serialize_platform_auth(_get_platform_auth(normalized_name), platform_name=normalized_name),
-                "session": _serialize_authorization_session(normalized_name),
+                "provider": _serialize_platform_auth(_get_platform_auth(request, normalized_name), platform_name=normalized_name),
+                "session": _serialize_authorization_session(request, normalized_name),
             },
             status=200,
         )
@@ -252,16 +264,16 @@ def handle_platform_auth_authorize(request, platform_name: str):
 
     try:
         if normalized_name == WeChatAuthorizationService.platform_name:
-            session = WeChatAuthorizationService.start_session(force=force)
+            session = WeChatAuthorizationService.start_session(account=account, force=force)
         elif normalized_name == MijiaAuthorizationService.platform_name:
-            session = MijiaAuthorizationService.start_session(force=force)
+            session = MijiaAuthorizationService.start_session(account=account, force=force)
         else:
             return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
 
         return JsonResponse(
             {
                 "status": "success",
-                "provider": _serialize_platform_auth(_get_platform_auth(normalized_name), platform_name=normalized_name),
+                "provider": _serialize_platform_auth(_get_platform_auth(request, normalized_name), platform_name=normalized_name),
                 "session": session.to_dict(),
             },
             status=200,
@@ -280,7 +292,11 @@ def handle_platform_auth_detail(request, platform_name: str):
     - DELETE /api/providers/auth/<platform>/
     """
     normalized_name = _normalize_platform_name(platform_name)
-    auth_obj = _get_platform_auth(normalized_name)
+    account = getattr(request, 'account', None)
+    if not account:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    auth_obj = _get_platform_auth(request, normalized_name)
 
     if request.method == "GET":
         if auth_obj is None and normalized_name not in PLATFORM_CATALOG:
@@ -316,7 +332,9 @@ def handle_platform_auth_detail(request, platform_name: str):
 
         merged_payload = updates.get("auth_payload", auth_obj.auth_payload)
         is_active = updates.get("is_active", auth_obj.is_active)
+        account = getattr(request, 'account', None)
         auth_obj, _ = PlatformAuth.objects.update_or_create(
+            account=account,
             platform_name=normalized_name,
             defaults={
                 "auth_payload": merged_payload,
@@ -334,7 +352,7 @@ def handle_platform_auth_detail(request, platform_name: str):
         if auth_obj is None:
             return JsonResponse({"error": f"Platform auth not found: {normalized_name}"}, status=404)
 
-        _get_platform_auth_queryset(normalized_name).delete()
+        _get_platform_auth_queryset(request, normalized_name).delete()
         AuthorizationSessionStore.clear_latest(normalized_name)
         logger.info(f"Platform auth deleted for {normalized_name}")
         return JsonResponse(
@@ -359,7 +377,11 @@ def handle_platform_auth_login(request, platform_name: str):
         return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
 
     try:
-        auth_obj = MijiaAuthService.login_and_store()
+        account = getattr(request, 'account', None)
+        if not account:
+            return JsonResponse({"error": "Unauthorized"}, status=401)
+            
+        auth_obj = MijiaAuthService.login_and_store(account)
         return JsonResponse(
             {
                 "status": "success",

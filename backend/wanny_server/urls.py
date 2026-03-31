@@ -23,4 +23,5 @@ urlpatterns = [
     path('api/providers/', include('providers.urls', namespace='providers')),
     path('api/memory/', include('memory.urls', namespace='memory')),
     path('api/comms/', include('comms.urls', namespace='comms')),
+    path('api/accounts/', include('accounts.urls')),
 ]

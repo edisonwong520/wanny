@@ -4,7 +4,7 @@ import asyncio
 from asgiref.sync import sync_to_async
 from utils.logger import logger
 from brain.models import HomeMode, HabitPolicy, ObservationCounter
-from comms.models import PendingCommand
+from comms.models import Mission
 
 class MonitorService:
     @classmethod
@@ -67,16 +67,14 @@ class MonitorService:
                 # 构建话术，根据之前的容忍计数器决定采用强硬转正语句还是委婉请示
                 obs, _ = await sync_to_async(ObservationCounter.objects.get_or_create)(policy=rule)
                 
-                # 为了防止狂发垃圾消息，看看是否该设备在这个指令要求下已发过 PendingCommand 并还未执行完
-                already_asked = await sync_to_async(PendingCommand.objects.filter(
+                # 为了防止狂发垃圾消息，看看是否该设备在这个指令要求下已发过 Mission 并还未执行完
+                already_asked = await sync_to_async(Mission.objects.filter(
                     original_prompt__icontains=f"[MIJIA:{dev_id}]",
-                    is_approved=False,
-                    is_executed=False,
-                    is_cancelled=False
+                    status=Mission.StatusChoices.PENDING,
                 ).exists)()
 
                 if already_asked:
-                    logger.debug(f"[Brain Hook] 发现设备 {dev_id} 已存在未审批的报警工单，本次轮询跳过发送，以防骚扰。")
+                    logger.debug(f"[Brain Hook] 发现设备 {dev_id} 已存在未审批的报务，本次轮询跳过发送，以防骚扰。")
                     continue  # 别问了等回复呢
 
                 msg = f"检测到在 {active_mode.name} 时，您的 {dev_id} 设备还在开着。"
@@ -87,19 +85,20 @@ class MonitorService:
                 else:
                     msg = "Sir，" + msg + "\n是否需要我现在关闭它？（您可以回复 同意/拒绝）"
 
-                new_pending = await sync_to_async(PendingCommand.objects.create)(
+                new_mission = await sync_to_async(Mission.objects.create)(
                     # 先留存一条没绑定 user_id 的占位，实际发送时我们通过 bot 匹配正确的微信联系人。
                     user_id="BROADCAST", 
                     original_prompt=f"[MIJIA:{dev_id}] 想变更 {prop_key} 为 {t_value}！",
                     shell_command="", 
+                    status=Mission.StatusChoices.PENDING
                 )
 
                 # 将这条请求推送给微信去：
                 logger.warning(f"[主动推送给报警内容] ==============> \n{msg}\n")
                 if not bot or not getattr(bot, '_context_tokens', None):
-                    new_pending.is_cancelled = True
-                    await sync_to_async(new_pending.save)()
-                    logger.warning(f"[Brain Hook] 因缺少微信回复 Context Token，暂时无法向微信主动推流，这笔拦截已软删除，等您微信说话。")
+                    new_mission.status = Mission.StatusChoices.CANCELLED
+                    await sync_to_async(new_mission.save)()
+                    logger.warning(f"[Brain Hook] 因缺少微信回复 Context Token，暂时无法向微信主动推流，这笔任务已作废，等您微信说话。")
                     continue
 
                 sent_count = 0
@@ -110,13 +109,13 @@ class MonitorService:
                         await bot.send(wx_user_id, msg)
                         logger.info(f"✅ 成功投递底层报文至 {wx_user_id}")
                         
-                        new_pending.user_id = wx_user_id
-                        await sync_to_async(new_pending.save)()
+                        new_mission.user_id = wx_user_id
+                        await sync_to_async(new_mission.save)()
                         sent_count += 1
                     except Exception as e:
                         logger.error(f"❌ 推送至微信 {wx_user_id} 发送级失败：{e}")
                 
                 if sent_count == 0:
-                    logger.warning(f"[Brain Hook] 所有可能目标均发送失败，软删除当前 PendingCommand 记录。")
-                    new_pending.is_cancelled = True
-                    await sync_to_async(new_pending.save)()
+                    logger.warning(f"[Brain Hook] 所有可能目标均发送失败，作废当前 Mission 记录。")
+                    new_mission.status = Mission.StatusChoices.CANCELLED
+                    await sync_to_async(new_mission.save)()

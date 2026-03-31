@@ -62,6 +62,8 @@ interface DeviceDashboardResponse {
   snapshot: DeviceDashboardSnapshot;
 }
 
+import { getAuthHeaders } from "./auth";
+
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
 function resolveUrl(path: string) {
@@ -69,12 +71,14 @@ function resolveUrl(path: string) {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = getAuthHeaders();
+  if (init?.headers) {
+    Object.assign(headers, init.headers);
+  }
+
   const response = await fetch(resolveUrl(path), {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
     ...init,
+    headers,
   });
 
   const payload = (await response.json().catch(() => ({}))) as { error?: string };

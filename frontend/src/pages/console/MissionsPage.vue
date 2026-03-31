@@ -54,29 +54,19 @@ watch(
 );
 
 const filters = computed(() => [
-  { id: "pending" as const, label: t("missions.filters.pending") },
-  { id: "approved" as const, label: t("missions.filters.approved") },
-  { id: "failed" as const, label: t("missions.filters.failed") },
-  { id: "all" as const, label: t("missions.filters.all") },
-]);
-
-const summaryCards = computed(() => [
   {
-    label: t("missions.metrics.pending"),
-    value: missions.value.filter((mission) => mission.status === "pending").length,
+    id: "pending" as const,
+    label: `${t("missions.filters.pending")} ${missions.value.filter((m) => m.status === "pending").length}`,
   },
   {
-    label: t("missions.metrics.approved"),
-    value: missions.value.filter((mission) => mission.status === "approved").length,
+    id: "failed" as const,
+    label: `${t("missions.filters.failed")} ${missions.value.filter((m) => m.status === "failed").length}`,
   },
   {
-    label: t("missions.metrics.failed"),
-    value: missions.value.filter((mission) => mission.status === "failed").length,
+    id: "approved" as const,
+    label: `${t("missions.filters.approved")} ${missions.value.filter((m) => m.status === "approved").length}`,
   },
-  {
-    label: t("missions.metrics.highRisk"),
-    value: missions.value.filter((mission) => mission.risk === "high").length,
-  },
+  { id: "all" as const, label: `${t("missions.filters.all")} ${missions.value.length}` },
 ]);
 
 const filteredMissions = computed(() => {
@@ -183,16 +173,6 @@ async function handleReject() {
       {{ t("missions.loading") || "Loading missions..." }}
     </section>
 
-    <section v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <article
-        v-for="item in summaryCards"
-        :key="item.label"
-        class="rounded-[26px] border border-black/[0.05] bg-white p-5"
-      >
-        <div class="text-xs uppercase tracking-[0.24em] text-muted">{{ item.label }}</div>
-        <div class="mt-4 text-3xl font-semibold text-ink">{{ item.value }}</div>
-      </article>
-    </section>
 
     <section v-if="!loading" class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
       <div class="space-y-4">
@@ -202,7 +182,7 @@ async function handleReject() {
             :key="filter.id"
             :class="
               cn(
-                'rounded-full border px-4 py-2 text-sm font-medium transition',
+                'rounded-full border px-4 py-2 text-sm font-medium transition w-28 sm:w-32 text-center',
                 activeFilter === filter.id
                   ? 'border-brand/12 bg-glow text-brand'
                   : 'border-black/[0.06] bg-white text-muted hover:border-brand/10 hover:text-ink',

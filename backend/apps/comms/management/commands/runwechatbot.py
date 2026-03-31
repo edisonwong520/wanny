@@ -23,6 +23,7 @@ class Command(BaseCommand):
         return payload if isinstance(payload, dict) else {}
 
     def _write_credentials_file(self, cred_file, payload):
+        os.makedirs(os.path.dirname(cred_file), exist_ok=True)
         with open(cred_file, "w", encoding="utf-8") as f:
             json.dump(payload, f)
 
@@ -99,13 +100,13 @@ class Command(BaseCommand):
         sync_thread.start()
 
     def _cleanup_zombie_pending_commands(self):
-        from comms.models import PendingCommand
+        from comms.models import Mission
 
-        zombie_count = PendingCommand.objects.filter(
-            is_approved=False, is_executed=False, is_cancelled=False
-        ).update(is_cancelled=True)
+        zombie_count = Mission.objects.filter(
+            status=Mission.StatusChoices.PENDING
+        ).update(status=Mission.StatusChoices.CANCELLED)
         if zombie_count:
-            logger.info(f"[WeChat Bot] 启动清理：已软删除 {zombie_count} 条残留僵尸工单 (is_cancelled=True)")
+            logger.info(f"[WeChat Bot] 启动清理：已作废 {zombie_count} 条残留僵尸任务 (status=cancelled)")
 
     def _run_bot(self, cred_file):
         import asyncio

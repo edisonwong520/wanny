@@ -1,4 +1,8 @@
 from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from accounts.models import Account
 
 from collections import Counter
 from datetime import timedelta
@@ -21,13 +25,13 @@ class DeviceDashboardService:
     default_sync_interval_seconds = 300
 
     @classmethod
-    def _get_state(cls) -> DeviceDashboardState:
-        state, _ = DeviceDashboardState.objects.get_or_create(key=cls.state_key)
+    def _get_state(cls, account: Account) -> DeviceDashboardState:
+        state, _ = DeviceDashboardState.objects.get_or_create(account=account, key=cls.state_key)
         return state
 
     @classmethod
-    def _has_snapshot(cls) -> bool:
-        return bool(cls._get_state().refreshed_at)
+    def _has_snapshot(cls, account: Account) -> bool:
+        return bool(cls._get_state(account).refreshed_at)
 
     @classmethod
     def _serialize_snapshot(
@@ -114,9 +118,9 @@ class DeviceDashboardService:
         state.save(update_fields=["requested_trigger", "refresh_requested_at", "last_error", "updated_at"])
 
     @classmethod
-    def get_dashboard(cls) -> dict:
-        state = cls._get_state()
-        has_snapshot = cls._has_snapshot()
+    def get_dashboard(cls, account: Account) -> dict:
+        state = cls._get_state(account)
+        has_snapshot = cls._has_snapshot(account)
 
         if not has_snapshot and not state.refresh_requested_at:
             cls._queue_refresh(state, trigger="bootstrap")
@@ -132,10 +136,10 @@ class DeviceDashboardService:
                 ),
             }
 
-        rooms = list(DeviceRoom.objects.all())
-        devices = list(DeviceSnapshot.objects.select_related("room").all())
-        anomalies = list(DeviceAnomaly.objects.select_related("room", "device").filter(is_active=True))
-        rules = list(DeviceAutomationRule.objects.select_related("room", "device").filter(is_active=True))
+        rooms = list(DeviceRoom.objects.filter(account=account))
+        devices = list(DeviceSnapshot.objects.filter(account=account).select_related("room").all())
+        anomalies = list(DeviceAnomaly.objects.filter(account=account, is_active=True).select_related("room", "device"))
+        rules = list(DeviceAutomationRule.objects.filter(account=account, is_active=True).select_related("room", "device"))
 
         return {
             "status": "success",
@@ -149,30 +153,31 @@ class DeviceDashboardService:
         }
 
     @classmethod
-    def refresh(cls, *, trigger: str = "manual") -> dict:
+    def refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
         auth = None
         from providers.services import MijiaAuthService
         try:
-            auth = MijiaAuthService.get_auth_record(active_only=True)
+            auth = MijiaAuthService.get_auth_record(account=account, active_only=True)
         except Exception as e:
-            logger.error(f"[Device Sync] Failed to check Mijia auth state: {e}")
+            logger.error(f"[Device Sync] Failed to check Mijia auth state for user {account.email}: {e}")
 
         if auth:
-            payload = cls._build_mijia_snapshot()
+            payload = cls._build_mijia_snapshot(account)
         else:
             payload = cls._build_demo_snapshot()
 
         with transaction.atomic():
-            state = cls._get_state()
+            state = cls._get_state(account)
 
-            DeviceAnomaly.objects.all().delete()
-            DeviceAutomationRule.objects.all().delete()
-            DeviceSnapshot.objects.all().delete()
-            DeviceRoom.objects.all().delete()
+            DeviceAnomaly.objects.filter(account=account).delete()
+            DeviceAutomationRule.objects.filter(account=account).delete()
+            DeviceSnapshot.objects.filter(account=account).delete()
+            DeviceRoom.objects.filter(account=account).delete()
 
             room_map: dict[str, DeviceRoom] = {}
             for room_data in payload["rooms"]:
                 room = DeviceRoom.objects.create(
+                    account=account,
                     slug=room_data["id"],
                     name=room_data["name"],
                     climate=room_data["climate"],
@@ -184,6 +189,7 @@ class DeviceDashboardService:
             device_map: dict[str, DeviceSnapshot] = {}
             for device_data in payload["devices"]:
                 device = DeviceSnapshot.objects.create(
+                    account=account,
                     external_id=device_data["id"],
                     room=room_map.get(device_data["room_id"]),
                     name=device_data["name"],
@@ -200,6 +206,7 @@ class DeviceDashboardService:
 
             for anomaly_data in payload["anomalies"]:
                 DeviceAnomaly.objects.create(
+                    account=account,
                     external_id=anomaly_data["id"],
                     room=room_map.get(anomaly_data["room_id"]),
                     device=device_map.get(anomaly_data.get("device_id")),
@@ -212,6 +219,7 @@ class DeviceDashboardService:
 
             for rule_data in payload["rules"]:
                 DeviceAutomationRule.objects.create(
+                    account=account,
                     external_id=rule_data["id"],
                     room=room_map.get(rule_data["room_id"]),
                     device=device_map.get(rule_data.get("device_id")),
@@ -230,32 +238,22 @@ class DeviceDashboardService:
             state.refresh_requested_at = None
             state.last_error = ""
             state.refreshed_at = timezone.now()
-            state.save(
-                update_fields=[
-                    "source",
-                    "last_trigger",
-                    "requested_trigger",
-                    "refresh_requested_at",
-                    "last_error",
-                    "refreshed_at",
-                    "updated_at",
-                ]
-            )
+            state.save()
 
-        return cls.get_dashboard()
+        return cls.get_dashboard(account)
 
     @classmethod
-    def request_refresh(cls, *, trigger: str = "manual") -> dict:
-        state = cls._get_state()
+    def request_refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
+        state = cls._get_state(account)
         cls._queue_refresh(state, trigger=trigger)
-        return cls.get_dashboard()
+        return cls.get_dashboard(account)
 
     @classmethod
-    def run_pending_refresh(cls, *, sync_interval_seconds: int | None = None) -> bool:
-        state = cls._get_state()
+    def run_pending_refresh(cls, account: Account, *, sync_interval_seconds: int | None = None) -> bool:
+        state = cls._get_state(account)
         interval_seconds = sync_interval_seconds or cls.default_sync_interval_seconds
         now = timezone.now()
-        has_snapshot = cls._has_snapshot()
+        has_snapshot = cls._has_snapshot(account)
         is_stale = (
             not has_snapshot
             or not state.refreshed_at
@@ -267,10 +265,10 @@ class DeviceDashboardService:
 
         trigger = state.requested_trigger or ("worker_bootstrap" if not has_snapshot else "worker")
         try:
-            cls.refresh(trigger=trigger)
+            cls.refresh(account, trigger=trigger)
             return True
         except Exception as error:
-            state = cls._get_state()
+            state = cls._get_state(account)
             if not state.refresh_requested_at:
                 state.refresh_requested_at = now
             if not state.requested_trigger:
@@ -287,11 +285,11 @@ class DeviceDashboardService:
             raise
 
     @classmethod
-    def _build_mijia_snapshot(cls) -> dict:
+    def _build_mijia_snapshot(cls, account: Account) -> dict:
         from providers.services import MijiaAuthService
 
         try:
-            api = MijiaAuthService.get_authenticated_api()
+            api = MijiaAuthService.get_authenticated_api(account=account)
             devices = api.get_devices_list()
             homes = api.get_homes_list()
         except Exception as e:
@@ -301,6 +299,14 @@ class DeviceDashboardService:
         home_map = {str(h["id"]): h["name"] for h in homes}
 
         rooms_data = []
+        auth_obj, _ = PlatformAuth.objects.update_or_create(
+            account=account,
+            platform_name=cls.platform_name,
+            defaults={
+                "auth_payload": {"homes": homes},
+                "is_active": True,
+            },
+        )
         for h_id, h_name in home_map.items():
             rooms_data.append(
                 {

@@ -20,12 +20,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wanny_server.settings')
 import django
 django.setup()
 
-from comms.models import PendingCommand
+from comms.models import Mission
 
 def run():
-    count = PendingCommand.objects.filter(is_approved=False, is_executed=False).count()
-    print(f"发现 {count} 条僵尸工单，正在清理...")
-    PendingCommand.objects.filter(is_approved=False, is_executed=False).delete()
+    count = Mission.objects.filter(status=Mission.StatusChoices.PENDING).count()
+    print(f"发现 {count} 条待审批任务，正在清理...")
+    Mission.objects.filter(status=Mission.StatusChoices.PENDING).delete()
     print("清理完成！")
 
 if __name__ == "__main__":

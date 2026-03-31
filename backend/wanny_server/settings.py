@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'channels',
     
     # Custom Apps
+    'accounts.apps.AccountsConfig',
     'brain.apps.BrainConfig',
     'comms.apps.CommsConfig',
     'database.apps.DatabaseConfig',
@@ -65,6 +66,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'accounts.middleware.AccountAuthenticationMiddleware',
 ]
 
 ROOT_URLCONF = 'wanny_server.urls'

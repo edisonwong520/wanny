@@ -2,10 +2,13 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import ConsoleLayout from "@/layouts/ConsoleLayout.vue";
 import LandingPage from "@/pages/LandingPage.vue";
+import RegisterPage from "@/pages/RegisterPage.vue";
+import LoginPage from "@/pages/LoginPage.vue";
 import DevicesPage from "@/pages/console/DevicesPage.vue";
 import ManagePage from "@/pages/console/ManagePage.vue";
 import MissionsPage from "@/pages/console/MissionsPage.vue";
 import OverviewPage from "@/pages/console/OverviewPage.vue";
+import { isAuthenticated } from "@/lib/auth";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -20,8 +23,19 @@ const router = createRouter({
       component: LandingPage,
     },
     {
+      path: "/register",
+      name: "register",
+      component: RegisterPage,
+    },
+    {
+      path: "/login",
+      name: "login",
+      component: LoginPage,
+    },
+    {
       path: "/console",
       component: ConsoleLayout,
+      meta: { requiresAuth: true },
       children: [
         {
           path: "",
@@ -57,6 +71,16 @@ const router = createRouter({
   scrollBehavior() {
     return { top: 0 };
   },
+});
+
+router.beforeEach((to, _from, next) => {
+  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth);
+
+  if (requiresAuth && !isAuthenticated.value) {
+    next("/login");
+  } else {
+    next();
+  }
 });
 
 export default router;

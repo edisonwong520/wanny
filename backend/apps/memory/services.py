@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from utils.logger import logger
 from memory.vector_store import VectorStore
+from accounts.models import Account
 
 PROFILE_SOURCE_REVIEW = "review"
 PROFILE_SOURCE_MANUAL = "manual"
@@ -100,7 +101,7 @@ class MemoryService:
     @staticmethod
     def _serialize_profile(profile) -> dict:
         return {
-            "user_id": profile.user_id,
+            "account_email": profile.account.email if profile.account else "unknown",
             "category": profile.category,
             "key": profile.key,
             "value": profile.value,
@@ -115,29 +116,29 @@ class MemoryService:
         }
 
     @classmethod
-    async def record_conversation(cls, user_id: str, role: str, content: str):
+    async def record_conversation(cls, account: Account, role: str, content: str):
         """
         记录一条对话到向量库。
 
         Args:
-            user_id: 用户唯一标识
+            account: 关联账户
             role: 角色 ("user" 或 "assistant")
             content: 对话内容
         """
         try:
             text = f"[{role}] {content}"
             metadata = {"role": role, "source": "wechat_chat"}
-            await asyncio.to_thread(cls._store().add_memory, user_id, text, metadata)
+            await asyncio.to_thread(cls._store().add_memory, account.email, text, metadata)
         except Exception as e:
             logger.error(f"[MemoryService] 记录对话失败: {e}")
 
     @classmethod
-    async def record_device_event(cls, user_id: str, device_did: str, action: str, result: str):
+    async def record_device_event(cls, account: Account, device_did: str, action: str, result: str):
         """
         记录一条设备操作事件到向量库。
 
         Args:
-            user_id: 关联的用户
+            account: 关联账户
             device_did: 设备 ID
             action: 操作动作描述
             result: 执行结果
@@ -145,17 +146,17 @@ class MemoryService:
         try:
             text = f"[device_event] 设备 {device_did}: {action} -> {result}"
             metadata = {"role": "system", "source": "iot_monitor", "device_did": device_did}
-            await asyncio.to_thread(cls._store().add_memory, user_id, text, metadata)
+            await asyncio.to_thread(cls._store().add_memory, account.email, text, metadata)
         except Exception as e:
             logger.error(f"[MemoryService] 记录设备事件失败: {e}")
 
     @classmethod
-    async def get_context_for_chat(cls, user_id: str, current_msg: str, top_k: int = 5) -> str:
+    async def get_context_for_chat(cls, account: Account, current_msg: str, top_k: int = 5) -> str:
         """
         检索与当前消息语义相关的历史记忆，组装成 system prompt 增补片段。
 
         Args:
-            user_id: 用户唯一标识
+            account: 关联账户
             current_msg: 当前用户消息
             top_k: 检索条数
 
@@ -163,12 +164,12 @@ class MemoryService:
             格式化的记忆上下文字符串，可直接拼接到 system prompt
         """
         try:
-            memories = await asyncio.to_thread(cls._store().search_memory, user_id, current_msg, top_k)
+            memories = await asyncio.to_thread(cls._store().search_memory, account.email, current_msg, top_k)
             if not memories:
                 return ""
 
             # 获取用户画像作为补充
-            profile_context = await cls._get_profile_context(user_id)
+            profile_context = await cls._get_profile_context(account)
 
             lines = ["以下是与用户之前的互动记忆（按相关性排序），请参考它们来理解上下文："]
             for i, mem in enumerate(memories, 1):
@@ -179,7 +180,7 @@ class MemoryService:
                 lines.append(profile_context)
 
             context = "\n".join(lines)
-            logger.debug(f"[MemoryService] 生成上下文: user={user_id}, 记忆数={len(memories)}, 长度={len(context)}")
+            logger.debug(f"[MemoryService] 生成上下文: account={account.email}, 记忆数={len(memories)}, 长度={len(context)}")
             return context
 
         except Exception as e:
@@ -187,12 +188,12 @@ class MemoryService:
             return ""
 
     @classmethod
-    async def _get_profile_context(cls, user_id: str) -> str:
+    async def _get_profile_context(cls, account: Account) -> str:
         """从 UserProfile 表中读取结构化画像，格式化为文本。"""
         try:
             from memory.models import UserProfile
             profiles = await sync_to_async(list)(
-                UserProfile.objects.filter(user_id=user_id, confidence__gte=0.5)
+                UserProfile.objects.filter(account=account, confidence__gte=0.5)
                 .order_by('-is_user_edited', '-confidence', '-updated_at')[:10]
             )
             if not profiles:
@@ -211,12 +212,12 @@ class MemoryService:
             return ""
 
     @classmethod
-    async def get_recent_memories_text(cls, user_id: str, hours: int = 24) -> str:
+    async def get_recent_memories_text(cls, account: Account, hours: int = 24) -> str:
         """
         获取指定时间窗口的所有记忆文本（用于 Daily Review）。
         """
         try:
-            memories = await asyncio.to_thread(cls._store().get_recent_memories, user_id, hours)
+            memories = await asyncio.to_thread(cls._store().get_recent_memories, account.email, hours)
             if not memories:
                 return ""
             return "\n".join([m["text"] for m in memories])
@@ -225,24 +226,26 @@ class MemoryService:
             return ""
 
     @classmethod
-    async def get_active_user_ids(cls, hours: int = 24) -> list[str]:
-        """从向量记忆库中扫描最近活跃的用户，用于定时画像更新。"""
+    async def get_active_account_emails(cls, hours: int = 24) -> list[str]:
+        """从向量记忆库中扫描最近活跃的账户（Email标识），用于定时画像更新。"""
         try:
             return await asyncio.to_thread(cls._store().list_recent_user_ids, hours)
         except Exception as e:
-            logger.error(f"[MemoryService] 获取活跃用户失败: {e}")
+            logger.error(f"[MemoryService] 获取活跃账户失败: {e}")
             return []
 
     @classmethod
-    async def list_profiles(cls, user_id: str) -> list[dict]:
+    async def list_profiles(cls, account: Account) -> list[dict]:
         """列出某个用户的所有画像，供前端展示和人工编辑。"""
         try:
             from memory.models import UserProfile
 
             profiles = await sync_to_async(list)(
-                UserProfile.objects.filter(user_id=user_id).order_by("-is_user_edited", "-updated_at", "key")
+                UserProfile.objects.filter(account=account)
+                .select_related('account')
+                .order_by("-is_user_edited", "-updated_at", "key")
             )
-            return [cls._serialize_profile(profile) for profile in profiles]
+            return await sync_to_async(lambda: [cls._serialize_profile(p) for p in profiles])()
         except Exception as e:
             logger.error(f"[MemoryService] 列出画像失败: {e}")
             return []
@@ -250,7 +253,7 @@ class MemoryService:
     @classmethod
     async def upsert_manual_profile(
         cls,
-        user_id: str,
+        account: Account,
         key: str,
         value: str,
         category: str = "Other",
@@ -261,7 +264,7 @@ class MemoryService:
 
             now = timezone.now()
             existing = await sync_to_async(
-                lambda: UserProfile.objects.filter(user_id=user_id, key=key).first()
+                lambda: UserProfile.objects.filter(account=account, key=key).first()
             )()
             defaults = build_profile_update(
                 existing,
@@ -274,19 +277,19 @@ class MemoryService:
                 now=now,
             )
 
-            profile, _ = await sync_to_async(UserProfile.objects.update_or_create)(
-                user_id=user_id,
-                key=key,
-                defaults=defaults,
-            )
-            logger.info(f"[MemoryService] 用户手动更新画像: user={user_id}, key={key}")
-            return cls._serialize_profile(profile)
+            profile_and_created = await sync_to_async(
+                lambda: UserProfile.objects.update_or_create(account=account, key=key, defaults=defaults)
+            )()
+            profile = profile_and_created[0]
+            
+            logger.info(f"[MemoryService] 用户手动更新画像: account={account.email}, key={key}")
+            return await sync_to_async(cls._serialize_profile)(profile)
         except Exception as e:
             logger.error(f"[MemoryService] 手动更新画像失败: {e}")
             return None
 
     @classmethod
-    async def apply_review_profile_update(cls, user_id: str, insight: dict) -> dict | None:
+    async def apply_review_profile_update(cls, account: Account, insight: dict) -> dict | None:
         """定时复盘写入画像，自动处理与用户手动修改的融合策略。"""
         try:
             from memory.models import UserProfile
@@ -296,7 +299,7 @@ class MemoryService:
                 return None
 
             existing = await sync_to_async(
-                lambda: UserProfile.objects.filter(user_id=user_id, key=key).first()
+                lambda: UserProfile.objects.filter(account=account, key=key).first()
             )()
             defaults = build_profile_update(
                 existing,
@@ -305,15 +308,15 @@ class MemoryService:
                 now=timezone.now(),
             )
 
-            profile, _ = await sync_to_async(UserProfile.objects.update_or_create)(
-                user_id=user_id,
-                key=key,
-                defaults=defaults,
-            )
+            profile_and_created = await sync_to_async(
+                lambda: UserProfile.objects.update_or_create(account=account, key=key, defaults=defaults)
+            )()
+            profile = profile_and_created[0]
+
             logger.info(
-                f"[MemoryService] 复盘更新画像: user={user_id}, key={key}, source={profile.source}, user_edited={profile.is_user_edited}"
+                f"[MemoryService] 复盘更新画像: account={account.email}, key={key}, source={profile.source}, user_edited={profile.is_user_edited}"
             )
-            return cls._serialize_profile(profile)
+            return await sync_to_async(cls._serialize_profile)(profile)
         except Exception as e:
             logger.error(f"[MemoryService] 复盘更新画像失败: {e}")
             return None

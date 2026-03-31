@@ -1,14 +1,16 @@
-import json
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from comms.models import PendingCommand
+from comms.models import Mission
 from comms.serializers import MissionSerializer
 from comms.executor import ShellExecutor
 
-def _get_mission_or_404(pk):
+def _get_mission_or_404(request, pk):
+    account = getattr(request, 'account', None)
+    if not account:
+        return None
     try:
-        return PendingCommand.objects.get(pk=pk, is_cancelled=False)
-    except PendingCommand.DoesNotExist:
+        return Mission.objects.get(pk=pk, account=account)
+    except Mission.DoesNotExist:
         return None
 
 @csrf_exempt
@@ -16,7 +18,12 @@ def handle_missions(request):
     if request.method != "GET":
         return JsonResponse({"error": "Method must be GET"}, status=405)
     
-    missions = PendingCommand.objects.exclude(is_cancelled=True)
+    account = getattr(request, 'account', None)
+    if not account:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+    
+    # Exclude cancelled missions from the main list, filtered by account
+    missions = Mission.objects.filter(account=account).exclude(status=Mission.StatusChoices.CANCELLED)
     data = [MissionSerializer.serialize(m) for m in missions]
     return JsonResponse(data, safe=False)
 
@@ -25,15 +32,15 @@ def handle_mission_approve(request, pk):
     if request.method != "POST":
         return JsonResponse({"error": "Method must be POST"}, status=405)
     
-    mission = _get_mission_or_404(pk)
+    mission = _get_mission_or_404(request, pk)
     if not mission:
-        return JsonResponse({"error": "Mission not found"}, status=404)
+        return JsonResponse({"error": "Mission not found or unauthorized"}, status=404)
         
-    if mission.is_executed:
-        return JsonResponse({"error": "Mission already executed"}, status=400)
+    if mission.status != Mission.StatusChoices.PENDING:
+        return JsonResponse({"error": f"Mission is already in {mission.status} state"}, status=400)
     
     # Mark as approved
-    mission.is_approved = True
+    mission.status = Mission.StatusChoices.APPROVED
     mission.save()
 
     # Execute
@@ -47,11 +54,12 @@ def handle_mission_approve(request, pk):
             result = async_to_sync(ShellExecutor.execute_yolo)(mission.shell_command)
         except Exception as e:
             result = f"❌ 执行异常: {str(e)}"
+            mission.status = Mission.StatusChoices.FAILED
+            mission.save()
+            return JsonResponse({"status": "failed", "result": result})
 
-    # Mark as executed
-    mission.is_executed = True
+    # Mark as completed/approved (currently frontend uses 'approved' as terminal success state)
     mission.save()
-
     return JsonResponse({"status": "approved", "result": result})
 
 @csrf_exempt
@@ -59,13 +67,13 @@ def handle_mission_reject(request, pk):
     if request.method != "POST":
         return JsonResponse({"error": "Method must be POST"}, status=405)
     
-    mission = _get_mission_or_404(pk)
+    mission = _get_mission_or_404(request, pk)
     if not mission:
-        return JsonResponse({"error": "Mission not found"}, status=404)
+        return JsonResponse({"error": "Mission not found or unauthorized"}, status=404)
         
-    if mission.is_executed:
-        return JsonResponse({"error": "Mission already executed"}, status=400)
+    if mission.status != Mission.StatusChoices.PENDING:
+        return JsonResponse({"error": "Mission cannot be rejected in current state"}, status=400)
     
-    mission.is_executed = True # Marking as "failed/handled"
+    mission.status = Mission.StatusChoices.REJECTED
     mission.save()
     return JsonResponse({"status": "rejected"})

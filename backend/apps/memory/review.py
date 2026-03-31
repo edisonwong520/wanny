@@ -9,6 +9,8 @@ from asgiref.sync import sync_to_async
 from utils.logger import logger
 from memory.services import MemoryService
 from comms.ai import AIAgent
+from accounts.models import Account
+from providers.models import PlatformAuth
 
 
 def parse_review_hours(raw_value: str | None, legacy_hour: str | None = None) -> list[int]:
@@ -84,33 +86,41 @@ class ReviewEngine:
     async def _run_review(cls, bot, lookback_hours: int | None = None):
         """
         执行一次复盘：
-        1. 收集最近时间窗口的所有记忆
-        2. 交给 AI 做反思分析
-        3. 将画像建议写入 UserProfile（用户手动修改优先）
-        4. 通过微信推送汇总报告
+        1. 遍历所有活跃账户
+        2. 收集最近时间窗口的所有记忆
+        3. 交给 AI 做反思分析
+        4. 将画像建议写入 UserProfile（用户手动修改优先）
+        5. 通过微信推送汇总报告
         """
         from memory.models import UserProfile, ProactiveLog
         lookback_hours = lookback_hours or int(os.getenv("REVIEW_LOOKBACK_HOURS", 12))
 
-        profile_user_ids = await sync_to_async(list)(
-            UserProfile.objects.values_list("user_id", flat=True).distinct()
+        # 获取所有系统账户
+        accounts = await sync_to_async(list)(
+            Account.objects.all()
         )
-        recent_memory_user_ids = await MemoryService.get_active_user_ids(hours=lookback_hours)
-        runtime_user_ids = list(bot._context_tokens.keys()) if bot and getattr(bot, "_context_tokens", None) else []
-        user_ids = sorted(set(profile_user_ids) | set(recent_memory_user_ids) | set(runtime_user_ids))
 
-        if not user_ids:
-            logger.info("[ReviewEngine] 没有找到活跃用户，跳过本次复盘。")
+        if not accounts:
+            logger.info("[ReviewEngine] 没有找到有效的系统账户，跳过本次复盘。")
             return
 
-        for user_id in user_ids:
+        for account in accounts:
             try:
-                recent_text = await MemoryService.get_recent_memories_text(user_id, hours=lookback_hours)
+                # 获取该账户最近的记忆文本
+                recent_text = await MemoryService.get_recent_memories_text(account, hours=lookback_hours)
                 if not recent_text or len(recent_text) < 50:
-                    logger.debug(f"[ReviewEngine] 用户 {user_id} 近 {lookback_hours}h 记忆不足，跳过。")
+                    logger.debug(f"[ReviewEngine] 账户 {account.email} 近 {lookback_hours}h 记忆不足，跳过。")
                     continue
 
-                profile_context = await MemoryService._get_profile_context(user_id)
+                # 查询与该账户关联的微信 OpenID（用于报告推送）
+                wechat_auth = await sync_to_async(
+                    lambda: PlatformAuth.objects.filter(account=account, platform_name="wechat", is_active=True).first()
+                )()
+                wechat_user_id = None
+                if wechat_auth and isinstance(wechat_auth.auth_payload, dict):
+                    wechat_user_id = wechat_auth.auth_payload.get("user_id")
+
+                profile_context = await MemoryService._get_profile_context(account)
                 review_prompt = f"""请分析以下用户在最近 {lookback_hours} 小时的互动记录，提取出值得记录的用户偏好或习惯。
 
 已有画像（如果标记为“用户已确认”，请视为最高优先级，不要输出与其直接冲突的值）：
@@ -141,31 +151,32 @@ class ReviewEngine:
                 for insight in insights:
                     if not isinstance(insight, dict) or "key" not in insight:
                         continue
-                    profile = await MemoryService.apply_review_profile_update(user_id, insight)
+                    profile = await MemoryService.apply_review_profile_update(account, insight)
                     if profile:
                         updated_count += 1
 
                 if updated_count > 0:
-                    logger.info(f"[ReviewEngine] ✅ 用户 {user_id} 画像更新了 {updated_count} 条偏好。")
+                    logger.info(f"[ReviewEngine] ✅ 账户 {account.email} 画像更新了 {updated_count} 条偏好。")
                     
-                    # 推送简要汇总给用户
-                    summary_lines = [f"  • {i.get('summary', i.get('key'))}" for i in insights if isinstance(i, dict)]
-                    if summary_lines and bot and getattr(bot, '_context_tokens', None):
-                        report = f"🧠 Sir, 每日复盘完成。我从今天的互动中学到了以下内容：\n" + "\n".join(summary_lines[:5])
-                        
-                        # 记录推送日志
-                        await sync_to_async(ProactiveLog.objects.create)(
-                            user_id=user_id,
-                            message=report,
-                            score=0.8,
-                            source="daily_review"
-                        )
-                        
-                        if user_id in bot._context_tokens:
-                            try:
-                                await bot.send(user_id, report)
-                            except Exception as e:
-                                logger.error(f"[ReviewEngine] 推送复盘报告失败: {e}")
+                    # 如果有微信连接，则推送报告
+                    if wechat_user_id and bot and getattr(bot, '_context_tokens', None):
+                        summary_lines = [f"  • {i.get('summary', i.get('key'))}" for i in insights if isinstance(i, dict)]
+                        if summary_lines:
+                            report = f"🧠 Sir, 每日复盘完成。我从今天的互动中学到了以下内容：\n" + "\n".join(summary_lines[:5])
+                            
+                            # 记录推送日志
+                            await sync_to_async(ProactiveLog.objects.create)(
+                                account=account,
+                                message=report,
+                                score=0.8,
+                                source="daily_review"
+                            )
+                            
+                            if wechat_user_id in bot._context_tokens:
+                                try:
+                                    await bot.send(wechat_user_id, report)
+                                except Exception as e:
+                                    logger.error(f"[ReviewEngine] 向微信 {wechat_user_id} 推送复盘报告失败: {e}")
 
             except Exception as e:
-                logger.error(f"[ReviewEngine] 用户 {user_id} 复盘失败: {e}")
+                logger.error(f"[ReviewEngine] 账户 {account.email} 复盘失败: {e}")

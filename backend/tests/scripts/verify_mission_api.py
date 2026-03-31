@@ -8,7 +8,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wanny_server.settings')
 django.setup()
 
 from django.test import Client
-from comms.models import PendingCommand
+from comms.models import Mission
 from django.utils import timezone
 
 def verify_mission_api():
@@ -16,10 +16,11 @@ def verify_mission_api():
     
     # 1. Create a mission
     print("Step 1: Creating a test mission...")
-    mission = PendingCommand.objects.create(
+    mission = Mission.objects.create(
         user_id="verifier",
         original_prompt="把空调开了",
         shell_command="echo AC_ON",
+        status=Mission.StatusChoices.PENDING,
         metadata={
             "title": "空调控制",
             "risk": "low",
@@ -55,8 +56,8 @@ def verify_mission_api():
     
     # 4. Verify model state
     mission.refresh_from_db()
-    if not mission.is_approved or not mission.is_executed:
-        print(f"❌ Mission state incorrect: approved={mission.is_approved}, executed={mission.is_executed}")
+    if mission.status != Mission.StatusChoices.APPROVED:
+        print(f"❌ Mission state incorrect: status={mission.status}")
         return False
     print("✅ Model state updated correctly")
     

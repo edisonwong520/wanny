@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { RouterLink } from "vue-router";
+import { useI18n } from "vue-i18n";
 
 import { fetchDeviceDashboard, type DeviceDashboardSnapshot } from "@/lib/devices";
 import { formatDateTime } from "@/lib/utils";
@@ -8,23 +9,27 @@ import { formatDateTime } from "@/lib/utils";
 const snapshot = ref<DeviceDashboardSnapshot | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
+const { t } = useI18n();
 
 onMounted(async () => {
   try {
     const response = await fetchDeviceDashboard();
     snapshot.value = response.snapshot;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "加载失败";
+    error.value = e instanceof Error ? e.message : t("common.error");
   } finally {
     loading.value = false;
   }
 });
 
 const metrics = computed(() => {
+  const onlineLabel = t("overview.metrics.online");
+  const offlineLabel = t("overview.metrics.offline");
+
   if (!snapshot.value) {
     return [
-      { label: "在线设备", value: 0, color: "#07C160", bg: "#E8F8EC" },
-      { label: "离线设备", value: 0, color: "#888888", bg: "#F7F7F7" },
+      { label: onlineLabel, value: 0, color: "#07C160", bg: "#E8F8EC" },
+      { label: offlineLabel, value: 0, color: "#888888", bg: "#F7F7F7" },
     ];
   }
 
@@ -33,8 +38,8 @@ const metrics = computed(() => {
   const offlineCount = devices.filter((d) => d.status === "offline").length;
 
   return [
-    { label: "在线设备", value: onlineCount, color: "#07C160", bg: "#E8F8EC" },
-    { label: "离线设备", value: offlineCount, color: "#888888", bg: "#F7F7F7" },
+    { label: onlineLabel, value: onlineCount, color: "#07C160", bg: "#E8F8EC" },
+    { label: offlineLabel, value: offlineCount, color: "#888888", bg: "#F7F7F7" },
   ];
 });
 
@@ -47,8 +52,8 @@ const recentEvents = computed(() => {
   const offlineDevices = snapshot.value.devices.filter((d) => d.status === "offline");
   const offlineEvents = offlineDevices.slice(0, 4).map((device) => ({
     id: `offline-${device.id}`,
-    title: `${device.name} 已离线`,
-    body: `状态: ${device.telemetry}`,
+    title: t("overview.events.offline", { name: device.name }),
+    body: `${t("common.status")}: ${device.telemetry}`,
     time: formatDateTime(device.last_seen || new Date().toISOString()),
     route: "/console/devices",
   }));
@@ -68,19 +73,19 @@ const hasAuth = computed(() => {
 <template>
   <div class="space-y-5">
     <!-- 加载状态 -->
-    <div v-if="loading" class="text-center py-10 text-[#888888]">加载中...</div>
+    <div v-if="loading" class="text-center py-10 text-[#888888]">{{ $t("common.loading") }}</div>
 
     <!-- 错误状态 -->
     <div v-else-if="error" class="text-center py-10 text-[#E84343]">{{ error }}</div>
 
     <!-- 无授权状态 -->
     <div v-else-if="!hasAuth" class="text-center py-10">
-      <div class="text-[#888888] mb-4">暂无已授权的平台</div>
+      <div class="text-[#888888] mb-4">{{ $t("overview.empty.auth") }}</div>
       <RouterLink
         to="/console/manage"
         class="inline-block px-4 py-2 bg-[#07C160] text-white rounded-lg hover:bg-[#06AD56] transition-colors"
       >
-        去授权平台
+        {{ $t("overview.actions.authorize") }}
       </RouterLink>
     </div>
 
@@ -102,18 +107,18 @@ const hasAuth = computed(() => {
 
       <section>
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-medium text-[#333333]">最近动态</h2>
+          <h2 class="text-sm font-medium text-[#333333]">{{ $t("overview.sections.events") }}</h2>
           <RouterLink
             to="/console/devices"
             class="text-xs text-[#07C160] hover:underline"
           >
-            查看全部
+            {{ $t("overview.sections.viewAll") }}
           </RouterLink>
         </div>
 
         <!-- 无设备时 -->
         <div v-if="!hasDevices" class="text-center py-8 text-[#888888]">
-          已授权但暂无设备数据，请等待同步完成
+          {{ $t("overview.empty.sync") }}
         </div>
 
         <!-- 有设备时 -->
@@ -132,7 +137,7 @@ const hasAuth = computed(() => {
 
           <!-- 无异常时显示最近设备 -->
           <div v-if="recentEvents.length === 0" class="text-center py-4 text-[#888888]">
-            设备运行正常，无异常动态
+            {{ $t("overview.empty.noEvents") }}
           </div>
         </div>
       </section>

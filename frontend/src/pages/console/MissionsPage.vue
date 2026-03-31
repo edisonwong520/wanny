@@ -40,9 +40,9 @@ onMounted(() => void loadMissions());
 watch(() => locale.value, () => void loadMissions());
 
 const filters = computed(() => [
-  { id: "pending" as const, label: "待处理", count: missions.value.filter((m) => m.status === "pending").length },
-  { id: "approved" as const, label: "已通过", count: missions.value.filter((m) => m.status === "approved").length },
-  { id: "failed" as const, label: "已拒绝", count: missions.value.filter((m) => m.status === "failed").length },
+  { id: "pending" as const, label: t("missions.filters.pending"), count: missions.value.filter((m) => m.status === "pending").length },
+  { id: "approved" as const, label: t("missions.filters.approved"), count: missions.value.filter((m) => m.status === "approved").length },
+  { id: "failed" as const, label: t("missions.filters.failed"), count: missions.value.filter((m) => m.status === "failed").length },
 ]);
 
 const filteredMissions = computed(() => {
@@ -78,7 +78,7 @@ async function handleApprove() {
     await approveMission(mission.id);
     await loadMissions({ silent: true });
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : "操作失败";
+    errorMessage.value = err instanceof Error ? err.message : t("manage.auth.errors.action");
   } finally {
     processing.value = false;
   }
@@ -92,7 +92,7 @@ async function handleReject() {
     await rejectMission(mission.id);
     await loadMissions({ silent: true });
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : "操作失败";
+    errorMessage.value = err instanceof Error ? err.message : t("manage.auth.errors.action");
   } finally {
     processing.value = false;
   }
@@ -106,7 +106,7 @@ async function handleReject() {
     </div>
 
     <div v-if="loading" class="py-8 text-center text-sm text-[#888888]">
-      加载中...
+      {{ $t("common.loading") }}
     </div>
 
     <div v-else class="gap-4">
@@ -137,13 +137,14 @@ async function handleReject() {
                 @click="selectMission(mission.id)"
               >
                 <div class="flex items-center gap-2 mb-2">
+                  <span class="text-xs text-[#888888]">{{ formatDateTime(mission.createdAt) }}</span>
                   <span
                     class="px-2.5 py-1 rounded-full text-xs font-medium"
                     :style="{ background: statusStyle(mission.status).bg, color: statusStyle(mission.status).text }"
                   >
                     {{ t(`missions.status.${mission.status}`) }}
                   </span>
-                  <span class="text-xs text-[#888888]">{{ formatDateTime(mission.createdAt) }}</span>
+                  
                 </div>
                 <div class="text-sm font-medium text-[#333333]">{{ mission.title }}</div>
               </div>
@@ -160,24 +161,24 @@ async function handleReject() {
                     class="px-5 py-2 rounded-full bg-[#07C160] text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     @click="handleApprove"
                   >
-                    {{ processing ? "..." : "通过" }}
+                    {{ processing ? "..." : $t("missions.actions.approve") }}
                   </button>
                   <button
                     :disabled="processing"
                     class="px-5 py-2 rounded-full border border-[#dce6dd] bg-white text-[#888888] text-sm font-medium transition-all duration-200 hover:border-[#E84343]/30 hover:text-[#E84343] hover:bg-[#FFE8E8]/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     @click="handleReject"
                   >
-                    {{ processing ? "..." : "拒绝" }}
+                    {{ processing ? "..." : $t("missions.actions.reject") }}
                   </button>
                 </div>
 
                 <div class="space-y-4 text-sm bg-white/50 p-4 rounded-xl">
                   <div>
-                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">用户消息</div>
+                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.userMessage") }}</div>
                     <div class="text-[#333333] bg-white/80 p-2 rounded-lg border border-[#07C160]/5">{{ mission.rawMessage }}</div>
                   </div>
                   <div v-if="mission.commandPreview">
-                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">预期执行指令</div>
+                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.command") }}</div>
                     <div class="font-mono text-[11px] text-[#07C160] bg-[#1e1e1e] p-3 rounded-lg overflow-x-auto shadow-inner">
                       {{ mission.commandPreview }}
                     </div>
@@ -188,7 +189,7 @@ async function handleReject() {
           </template>
           <div v-else class="py-12 text-center">
             <div class="text-3xl mb-2">🍃</div>
-            <div class="text-sm text-[#888888]">暂无该状态下的任务</div>
+            <div class="text-sm text-[#888888]">{{ $t("missions.empty") }}</div>
           </div>
         </div>
       </div>

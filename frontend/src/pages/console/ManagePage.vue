@@ -18,7 +18,7 @@ import {
   startAuthorization,
 } from "@/lib/provider-auth";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const providers = ref<ProviderRecord[]>([]);
 const sessions = ref<Record<string, AuthorizationSession | null>>({});
@@ -198,7 +198,7 @@ onBeforeUnmount(() => stopAllPolling());
     </div>
 
     <div v-if="loading" class="py-8 text-center text-sm text-[#888888]">
-      加载中...
+      {{ $t("common.loading") }}
     </div>
 
     <div v-else class="space-y-3">
@@ -208,7 +208,7 @@ onBeforeUnmount(() => stopAllPolling());
         class="flex items-center justify-between p-4 rounded-2xl border border-[#EDEDED] transition-all duration-200 hover:border-[#07C160]/30 hover:bg-[#E8F8EC]/30 hover:shadow-sm"
       >
         <div class="flex items-center gap-3">
-          <span class="font-medium text-[#333333]">{{ provider.display_name_zh }}</span>
+          <span class="font-medium text-[#333333]">{{ locale === "zh-CN" ? provider.display_name_zh : provider.display_name }}</span>
           <span
             class="px-2.5 py-1 rounded-full text-xs font-medium"
             :style="{ background: providerStyle(provider).bg, color: providerStyle(provider).text }"
@@ -224,7 +224,7 @@ onBeforeUnmount(() => stopAllPolling());
             class="px-4 py-2 rounded-full border border-[#07C160] bg-white text-[#07C160] text-sm font-medium transition-all duration-200 hover:bg-[#07C160] hover:text-white hover:shadow-md hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-[#07C160]"
             @click="handleClick(provider)"
           >
-            连接
+            {{ $t("manage.auth.actions.connect") }}
           </button>
           <button
             v-if="provider.configured"
@@ -232,20 +232,20 @@ onBeforeUnmount(() => stopAllPolling());
             class="px-4 py-2 rounded-full border border-[#EDEDED] bg-white text-[#888888] text-sm font-medium transition-all duration-200 hover:border-[#E84343]/30 hover:text-[#E84343] hover:bg-[#FFE8E8]/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-[#888888] disabled:hover:border-[#EDEDED]"
             @click="handleDisconnect(provider)"
           >
-            断开
+            {{ $t("manage.auth.actions.disconnect") }}
           </button>
         </div>
       </div>
 
       <div v-if="providers.length === 0" class="py-8 text-center text-sm text-[#888888]">
-        暂无可用的集成
+        {{ $t("manage.auth.empty") }}
       </div>
     </div>
 
     <Dialog :open="Boolean(modalProvider)" @update:open="handleDialogOpenChange">
       <DialogContent v-if="modalProvider" class="p-5 max-w-sm">
         <DialogHeader class="sr-only">
-          <DialogTitle>{{ modalProvider.display_name_zh }}</DialogTitle>
+          <DialogTitle>{{ locale === "zh-CN" ? modalProvider.display_name_zh : modalProvider.display_name }}</DialogTitle>
         </DialogHeader>
         <DialogClose
           class="absolute right-4 top-4 w-8 h-8 flex items-center justify-center rounded-full border border-[#EDEDED] text-[#888888] transition-all duration-200 hover:bg-[#F7F7F7] hover:text-[#333333]"
@@ -254,7 +254,9 @@ onBeforeUnmount(() => stopAllPolling());
         </DialogClose>
 
         <div class="space-y-4">
-          <h3 class="text-lg font-medium text-[#333333]">{{ modalProvider.display_name_zh }} 授权</h3>
+          <h3 class="text-lg font-medium text-[#333333]">
+            {{ locale === "zh-CN" ? modalProvider.display_name_zh : modalProvider.display_name }} {{ $t("manage.auth.actions.authorize") }}
+          </h3>
 
           <!-- 米家：只显示二维码 -->
           <div v-if="modalProvider.platform === 'mijia' && modalQrImageUrl" class="flex justify-center">
@@ -273,17 +275,17 @@ onBeforeUnmount(() => stopAllPolling());
               rel="noreferrer"
               class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#E8F8EC] text-[#07C160] text-sm font-medium transition-all duration-200 hover:bg-[#07C160] hover:text-white hover:shadow-md"
             >
-              点击打开授权链接
+              {{ $t("manage.auth.actions.openLink") }}
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>
               </svg>
             </a>
           </div>
           <div v-if="modalProvider.platform === 'mijia'" class="text-sm text-[#888888] text-center">
-            使用米家 App 扫描二维码完成授权
+            {{ $t("manage.auth.hint.mijia") }}
           </div>
           <div v-if="modalProvider.platform === 'wechat'" class="text-sm text-[#888888] text-center">
-            扫码授权完成后请回到本页
+            {{ $t("manage.auth.hint.wechat") }}
           </div>
         </div>
       </DialogContent>

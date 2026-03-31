@@ -1,0 +1,34 @@
+export default {
+  login: "Login",
+  logout: "Logout",
+  register: "Register",
+  loginTitle: "Login",
+  loginSubtitle: "Login to access the console",
+  registerTitle: "Register",
+  registerSubtitle: "Create an account to get started",
+  placeholders: {
+    identifier: "Username or email",
+    name: "Nickname",
+    email: "Email",
+    password: "Password",
+    passwordMin: "Password (min 6 chars)",
+  },
+  actions: {
+    login: "Login",
+    register: "Register",
+    loggingIn: "Logging in...",
+    processing: "Processing...",
+  },
+  hints: {
+    noAccount: "Don't have an account?",
+    hasAccount: "Already have an account?",
+  },
+  errors: {
+    incomplete: "Please fill in all details",
+    allFields: "Please fill in all required fields",
+    passwordLength: "Password must be at least 6 characters",
+    loginFailed: "Login failed",
+    registerFailed: "Registration failed",
+    systemBusy: "System busy, please try again later",
+  },
+};

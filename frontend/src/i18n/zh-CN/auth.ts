@@ -1,0 +1,34 @@
+export default {
+  login: "登录",
+  logout: "退出",
+  register: "注册",
+  loginTitle: "登录",
+  loginSubtitle: "登录以访问控制台",
+  registerTitle: "注册",
+  registerSubtitle: "创建账户开始使用",
+  placeholders: {
+    identifier: "昵称或邮箱",
+    name: "昵称",
+    email: "邮箱",
+    password: "密码",
+    passwordMin: "密码（至少 6 位）",
+  },
+  actions: {
+    login: "登录",
+    register: "注册",
+    loggingIn: "登录中...",
+    processing: "处理中...",
+  },
+  hints: {
+    noAccount: "还没有账号？",
+    hasAccount: "已有账号？",
+  },
+  errors: {
+    incomplete: "请填写完整信息",
+    allFields: "请填写所有必填字段",
+    passwordLength: "密码长度至少需要 6 个字符",
+    loginFailed: "登录失败",
+    registerFailed: "注册失败",
+    systemBusy: "系统繁忙，请稍后再试",
+  },
+};

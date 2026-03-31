@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 
 import AppHeader from "@/components/AppHeader.vue";
 
 const route = useRoute();
+const { t } = useI18n();
 
-const tabs = [
-  { to: "/console", label: "总览" },
-  { to: "/console/missions", label: "任务" },
-  { to: "/console/devices", label: "设备" },
-  { to: "/console/manage", label: "管理" },
-];
+const tabs = computed(() => [
+  { to: "/console", label: t("console.nav.overview") },
+  { to: "/console/missions", label: t("console.nav.tasks") },
+  { to: "/console/devices", label: t("console.nav.devices") },
+  { to: "/console/manage", label: t("console.nav.manage") },
+]);
 
 function isActive(path: string) {
   return route.path === path;

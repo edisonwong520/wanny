@@ -21,7 +21,7 @@ const rooms = computed(() => {
   const r = dashboard.value?.rooms ?? [];
   const total = dashboard.value?.devices.length ?? 0;
   return [
-    { id: "all", name: "全部", count: total },
+    { id: "all", name: t("devices.filters.all"), count: total },
     ...r.map((room) => ({ id: room.id, name: room.name, count: room.device_count })),
   ];
 });
@@ -88,7 +88,7 @@ onBeforeUnmount(() => stopPolling());
     </div>
 
     <div v-if="loading" class="py-8 text-center text-sm text-[#888888]">
-      加载中...
+      {{ $t("common.loading") }}
     </div>
 
     <div v-else-if="dashboard">
@@ -122,12 +122,12 @@ onBeforeUnmount(() => stopPolling());
               {{ t(`devices.status.${device.status}`) }}
             </span>
           </div>
-          <div class="mt-2 text-sm text-[#333333]">状态: {{ device.telemetry }}</div>
+          <div class="mt-2 text-sm text-[#333333]">{{ $t("common.status") }}: {{ device.telemetry }}</div>
         </div>
       </div>
 
       <div v-if="visibleDevices.length === 0" class="py-8 text-center text-sm text-[#888888]">
-        暂无设备
+        {{ $t("devices.empty.noDevices") }}
       </div>
     </div>
   </div>

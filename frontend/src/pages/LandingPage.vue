@@ -1,18 +1,45 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { RouterLink } from "vue-router";
+import { useI18n } from "vue-i18n";
 
 import AppHeader from "@/components/AppHeader.vue";
 import { isAuthenticated } from "@/lib/auth";
 
-const primaryAction = computed(() => (isAuthenticated.value ? "/console" : "/register"));
-const primaryLabel = computed(() => (isAuthenticated.value ? "进入控制台" : "开始使用"));
+const { t, tm } = useI18n();
 
-const features = [
-  { icon: "wechat", title: "微信入口", desc: "消息直达任务流" },
-  { icon: "device", title: "设备联动", desc: "房间状态实时同步" },
-  { icon: "memory", title: "记忆系统", desc: "主动关怀用户偏好" },
-];
+const primaryAction = computed(() => (isAuthenticated.value ? "/console" : "/register"));
+const primaryLabel = computed(() => (isAuthenticated.value ? t("landing.primary") : t("landing.secondary")));
+
+const features = computed(() => {
+  const brief = tm("landing.briefFeatures") as any;
+  return [
+    { icon: "wechat", title: brief.wechat.title, desc: brief.wechat.desc },
+    { icon: "device", title: brief.device.title, desc: brief.device.desc },
+    { icon: "memory", title: brief.memory.title, desc: brief.memory.desc },
+  ];
+});
+
+// 从 i18n 获取翻译后的列表
+const localizedPrompts = computed(() => tm("landing.prompts") as string[]);
+const displayPrompts = computed(() => [...localizedPrompts.value, localizedPrompts.value[0]]);
+
+const isTransitionsEnabled = ref(true);
+const currentPromptIndex = ref(0);
+
+onMounted(() => {
+  setInterval(() => {
+    isTransitionsEnabled.value = true;
+    currentPromptIndex.value++;
+    
+    if (currentPromptIndex.value === displayPrompts.value.length - 1) {
+      setTimeout(() => {
+        isTransitionsEnabled.value = false;
+        currentPromptIndex.value = 0;
+      }, 700);
+    }
+  }, 2000);
+});
 </script>
 
 <template>
@@ -21,20 +48,37 @@ const features = [
 
     <main class="mx-auto max-w-4xl px-4 py-16 text-center">
       <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#E8F8EC] text-[#07C160] text-sm mb-6">
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+        <svg class="w-4 h-4 animate-breath" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
         </svg>
-        AI 智能管家
+        {{ $t("landing.butler") }}
       </div>
 
-      <h1 class="text-4xl font-semibold text-[#333333] mb-4">
-        Wanny
-      </h1>
-      <p class="text-lg text-[#888888] mb-8 max-w-md mx-auto">
-        一个智能控制台，连接家庭设备、微信入口、任务审批与长期记忆
-      </p>
+      <h1 class="text-5xl font-semibold text-[#333333] mb-4 tracking-tight">
+        {{ $t("landing.titleLead") }}
+      </h1> 
 
-      <div class="flex justify-center gap-3 mb-12">
+      <div class="flex items-center justify-center gap-2 text-lg text-[#888888] mb-12">
+        <span>{{ $t("landing.questions") }}</span>
+        <div class="h-7 overflow-hidden relative w-64">
+          <div
+            class="absolute w-full left-0"
+            :class="{ 'transition-all duration-700 ease-in-out': isTransitionsEnabled }"
+            :style="{ transform: `translateY(-${currentPromptIndex * 28}px)` }"
+          >
+            <div
+              v-for="(prompt, index) in displayPrompts"
+              :key="index"
+              class="h-7 leading-7 text-[#07C160] font-medium text-left truncate"
+            >
+              {{ prompt }}
+            </div>
+          </div>
+          <div class="absolute inset-0 pointer-events-none bg-gradient-to-b from-white via-transparent to-white opacity-60"></div>
+        </div>
+      </div>
+
+      <div class="flex justify-center gap-3 mb-16">
         <RouterLink
           :to="primaryAction"
           class="rounded-full bg-[#07C160] px-6 py-3 text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-lg hover:-translate-y-0.5"
@@ -46,7 +90,7 @@ const features = [
           to="/login"
           class="rounded-full border border-[#EDEDED] px-6 py-3 text-[#333333] text-sm font-medium transition-all duration-200 hover:border-[#07C160]/30 hover:bg-[#E8F8EC]/30 hover:-translate-y-0.5"
         >
-          登录
+          {{ $t("auth.login") }}
         </RouterLink>
       </div>
 
@@ -63,7 +107,27 @@ const features = [
     </main>
 
     <footer class="border-t border-[#EDEDED] py-4 text-center text-sm text-[#888888]">
-      Wanny - AI 智能家居管理平台
+      Wanny - {{ $t("landing.butler") }}
     </footer>
   </div>
 </template>
+
+<style scoped>
+.animate-breath {
+  animation: breath 3s infinite ease-in-out;
+  filter: drop-shadow(0 0 4px rgba(7, 193, 96, 0.4));
+}
+
+@keyframes breath {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+    filter: drop-shadow(0 0 2px rgba(7, 193, 96, 0.2));
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.7;
+    filter: drop-shadow(0 0 8px rgba(7, 193, 96, 0.6));
+  }
+}
+</style>

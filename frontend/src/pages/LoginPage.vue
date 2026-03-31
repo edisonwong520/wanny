@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { setAuth } from "@/lib/auth";
 import AppHeader from "@/components/AppHeader.vue";
 
 const router = useRouter();
+const { t } = useI18n();
 
 const identifier = ref("");
 const password = ref("");
@@ -15,7 +17,7 @@ const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
 const handleLogin = async () => {
   if (!identifier.value || !password.value) {
-    errorMessage.value = "请填写完整登录信息";
+    errorMessage.value = t("auth.errors.incomplete");
     return;
   }
 
@@ -35,13 +37,13 @@ const handleLogin = async () => {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error || "登录失败");
+      throw new Error(data.error || t("auth.errors.loginFailed"));
     }
 
     setAuth(data.data);
     router.push("/console");
   } catch (err: any) {
-    errorMessage.value = err.message || "系统繁忙，请稍后再试";
+    errorMessage.value = err.message || t("auth.errors.systemBusy");
   } finally {
     isLoading.value = false;
   }
@@ -54,9 +56,9 @@ const handleLogin = async () => {
 
     <main class="mx-auto max-w-sm px-4 py-12">
       <div class="bg-white rounded-2xl p-6 shadow-sm">
-        <h1 class="text-xl font-semibold text-[#333333] mb-1">登录</h1>
+        <h1 class="text-xl font-semibold text-[#333333] mb-1">{{ $t("auth.loginTitle") }}</h1>
         <p class="text-sm text-[#888888] mb-6">
-          登录以访问控制台
+          {{ $t("auth.loginSubtitle") }}
         </p>
 
         <form @submit.prevent="handleLogin" class="space-y-4">
@@ -64,7 +66,7 @@ const handleLogin = async () => {
             <input
               v-model="identifier"
               type="text"
-              placeholder="昵称或邮箱"
+              :placeholder="t('auth.placeholders.identifier')"
               required
               class="w-full rounded-xl border border-[#EDEDED] px-4 py-3 text-sm outline-none transition-all duration-200 focus:border-[#07C160] focus:ring-2 focus:ring-[#07C160]/20"
             />
@@ -74,7 +76,7 @@ const handleLogin = async () => {
             <input
               v-model="password"
               type="password"
-              placeholder="密码"
+              :placeholder="t('auth.placeholders.password')"
               required
               class="w-full rounded-xl border border-[#EDEDED] px-4 py-3 text-sm outline-none transition-all duration-200 focus:border-[#07C160] focus:ring-2 focus:ring-[#07C160]/20"
             />
@@ -90,14 +92,14 @@ const handleLogin = async () => {
             class="w-full rounded-full bg-[#07C160] py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
           >
             <span v-if="isLoading" class="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></span>
-            {{ isLoading ? '登录中...' : '登录' }}
+            {{ isLoading ? $t('auth.actions.loggingIn') : $t('auth.actions.login') }}
           </button>
         </form>
 
         <div class="mt-5 text-sm text-center text-[#888888]">
-          还没有账号？
+          {{ $t("auth.hints.noAccount") }}
           <router-link to="/register" class="text-[#07C160] hover:underline">
-            注册
+            {{ $t("auth.register") }}
           </router-link>
         </div>
       </div>

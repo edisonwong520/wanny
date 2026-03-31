@@ -42,7 +42,7 @@ function handleLogout() {
             ? 'bg-[#E8F8EC] text-[#07C160]'
             : 'text-[#888888] hover:bg-[#F7F7F7] hover:text-[#333333]'"
         >
-          首页
+          {{ $t("nav.landing") }}
         </RouterLink>
         <RouterLink
           to="/console"
@@ -51,12 +51,12 @@ function handleLogout() {
             ? 'bg-[#E8F8EC] text-[#07C160]'
             : 'text-[#888888] hover:bg-[#F7F7F7] hover:text-[#333333]'"
         >
-          控制台
+          {{ $t("nav.console") }}
         </RouterLink>
       </nav>
 
       <div class="flex items-center gap-3">
-        <span v-if="isAuthenticated && currentUser" class="text-sm text-[#888888]">
+        <span v-if="isAuthenticated && currentUser" class="text-sm text-[#888888] truncate max-w-[80px]">
           {{ currentUser.name }}
         </span>
         <RouterLink
@@ -64,11 +64,11 @@ function handleLogout() {
           to="/login"
           class="text-sm text-[#888888] hover:text-[#07C160] transition-colors"
         >
-          登录
+          {{ $t("auth.login") }}
         </RouterLink>
 
         <button
-          class="text-sm text-[#888888] hover:text-[#07C160] transition-colors px-2"
+          class="text-sm text-[#888888] hover:text-[#07C160] transition-colors w-12 text-center"
           type="button"
           @click="toggleLocale"
         >
@@ -81,14 +81,14 @@ function handleLogout() {
           type="button"
           @click="handleLogout"
         >
-          退出
+          {{ $t("auth.logout") }}
         </button>
         <RouterLink
           v-else
           class="rounded-full bg-[#07C160] px-4 py-1.5 text-sm text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5"
           to="/register"
         >
-          注册
+          {{ $t("auth.register") }}
         </RouterLink>
       </div>
     </div>
@@ -100,14 +100,14 @@ function handleLogout() {
           class="px-3 py-1.5 rounded-full text-sm"
           :class="route.path === '/landing' ? 'bg-[#E8F8EC] text-[#07C160]' : 'text-[#888888]'"
         >
-          首页
+          {{ $t("nav.landing") }}
         </RouterLink>
         <RouterLink
           to="/console"
           class="px-3 py-1.5 rounded-full text-sm"
           :class="isConsoleRoute ? 'bg-[#E8F8EC] text-[#07C160]' : 'text-[#888888]'"
         >
-          控制台
+          {{ $t("nav.console") }}
         </RouterLink>
       </nav>
     </div>

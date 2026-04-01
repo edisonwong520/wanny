@@ -159,11 +159,13 @@ class DeviceDashboardService:
 
     @classmethod
     def _queue_refresh(cls, state: DeviceDashboardState, *, trigger: str) -> None:
+        logger.info(f"[Device Sync] _queue_refresh called: account_id={state.account_id} trigger={trigger}")
         state.requested_trigger = trigger
         if not state.refresh_requested_at:
             state.refresh_requested_at = timezone.now()
         state.last_error = ""
         state.save(update_fields=["requested_trigger", "refresh_requested_at", "last_error", "updated_at"])
+        logger.info(f"[Device Sync] Refresh queued for account_id={state.account_id}, waiting for worker to process")
 
     @classmethod
     def get_dashboard(cls, account: Account) -> dict:
@@ -221,22 +223,35 @@ class DeviceDashboardService:
 
     @classmethod
     def refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
+        logger.info(f"[Device Sync] refresh() called for account_id={account.id} email={account.email} trigger={trigger}")
         provider_payloads: list[dict] = []
         from providers.services import HomeAssistantAuthService, MijiaAuthService
 
         try:
-            if MijiaAuthService.get_auth_record(account=account, active_only=True):
-                provider_payloads.append(cls._build_mijia_snapshot(account))
+            mijia_auth = MijiaAuthService.get_auth_record(account=account, active_only=True)
+            logger.debug(f"[Device Sync] Mijia auth check for account_id={account.id}: found={mijia_auth is not None}")
+            if mijia_auth:
+                logger.info(f"[Device Sync] Building Mijia snapshot for account_id={account.id}")
+                mijia_payload = cls._build_mijia_snapshot(account)
+                logger.info(f"[Device Sync] Mijia snapshot built for account_id={account.id}: devices={len(mijia_payload.get('devices', []))}")
+                provider_payloads.append(mijia_payload)
         except Exception as error:
             logger.error(f"[Device Sync] Failed to check Mijia auth state for user {account.email}: {error}")
 
         try:
-            if HomeAssistantAuthService.get_auth_record(account=account, active_only=True):
-                provider_payloads.append(cls._build_home_assistant_snapshot(account))
+            ha_auth = HomeAssistantAuthService.get_auth_record(account=account, active_only=True)
+            logger.debug(f"[Device Sync] HomeAssistant auth check for account_id={account.id}: found={ha_auth is not None}")
+            if ha_auth:
+                logger.info(f"[Device Sync] Building HomeAssistant snapshot for account_id={account.id}")
+                ha_payload = cls._build_home_assistant_snapshot(account)
+                logger.info(f"[Device Sync] HomeAssistant snapshot built for account_id={account.id}: devices={len(ha_payload.get('devices', []))}")
+                provider_payloads.append(ha_payload)
         except Exception as error:
             logger.error(f"[Device Sync] Failed to check Home Assistant auth state for user {account.email}: {error}")
 
+        logger.info(f"[Device Sync] Merging {len(provider_payloads)} provider payloads for account_id={account.id}")
         payload = cls._merge_snapshots(provider_payloads) if provider_payloads else cls._build_empty_snapshot()
+        logger.info(f"[Device Sync] Final payload for account_id={account.id}: rooms={len(payload['rooms'])} devices={len(payload['devices'])}")
 
         with transaction.atomic():
             state = cls._get_state(account)
@@ -338,6 +353,7 @@ class DeviceDashboardService:
 
     @classmethod
     def request_refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
+        logger.info(f"[Device Sync] request_refresh called: account_id={account.id} email={account.email} trigger={trigger}")
         state = cls._get_state(account)
         cls._queue_refresh(state, trigger=trigger)
         return cls.get_dashboard(account)
@@ -404,14 +420,24 @@ class DeviceDashboardService:
             or (now - state.refreshed_at).total_seconds() >= interval_seconds
         )
 
+        logger.debug(
+            f"[Device Sync] run_pending_refresh check: account_id={account.id} email={account.email} "
+            f"has_snapshot={has_snapshot} refresh_requested_at={state.refresh_requested_at} "
+            f"is_stale={is_stale} refreshed_at={state.refreshed_at}"
+        )
+
         if not state.refresh_requested_at and not is_stale:
+            logger.debug(f"[Device Sync] Skip refresh for account_id={account.id}: no request and not stale")
             return False
 
         trigger = state.requested_trigger or ("worker_bootstrap" if not has_snapshot else "worker")
+        logger.info(f"[Device Sync] Starting refresh for account_id={account.id} email={account.email} trigger={trigger}")
         try:
             cls.refresh(account, trigger=trigger)
+            logger.info(f"[Device Sync] Refresh completed for account_id={account.id}")
             return True
         except Exception as error:
+            logger.error(f"[Device Sync] Refresh failed for account_id={account.id}: {error}")
             state = cls._get_state(account)
             if not state.refresh_requested_at:
                 state.refresh_requested_at = now
@@ -426,10 +452,15 @@ class DeviceDashboardService:
         from mijiaAPI import get_device_info, mijiaDevice
         from providers.services import MijiaAuthService
 
+        logger.debug(f"[Device Sync] _build_mijia_snapshot start for account_id={account.id}")
         try:
+            logger.debug(f"[Device Sync] Getting Mijia authenticated API for account_id={account.id}")
             api = MijiaAuthService.get_authenticated_api(account=account)
+            logger.debug(f"[Device Sync] Fetching devices list from Mijia for account_id={account.id}")
             devices = api.get_devices_list()
+            logger.info(f"[Device Sync] Mijia devices list fetched for account_id={account.id}: count={len(devices)}")
             homes = api.get_homes_list()
+            logger.debug(f"[Device Sync] Mijia homes list fetched for account_id={account.id}: count={len(homes)}")
         except Exception as error:
             logger.error(f"[Device Sync] Failed to fetch real MiJia data, falling back to empty: {error}")
             return cls._build_empty_snapshot()

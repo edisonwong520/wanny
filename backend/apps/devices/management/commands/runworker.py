@@ -23,9 +23,11 @@ class Command(BaseCommand):
             try:
                 from django import db
                 db.close_old_connections()
-                
+
+                logger.debug(f"[Worker] Starting loop iteration, checking all accounts")
                 refreshed_accounts = 0
                 for account in Account.objects.all():
+                    logger.debug(f"[Worker] Checking account_id={account.id} email={account.email}")
                     refreshed = DeviceDashboardService.run_pending_refresh(
                         account=account,
                         sync_interval_seconds=sync_interval,

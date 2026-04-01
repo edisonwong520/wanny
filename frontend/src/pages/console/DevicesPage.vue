@@ -521,7 +521,7 @@ onBeforeUnmount(() => {
                 ? 'bg-[#07C160] text-white shadow-sm'
                 : 'bg-[#F7F7F7] text-[#888888] hover:bg-[#EDEDED]'"
             >
-              {{ room.name }}
+              {{ room.name }} ({{ room.count }})
             </button>
           </div>
         </div>
@@ -651,7 +651,7 @@ onBeforeUnmount(() => {
                   class="flex items-center justify-between w-full py-2 text-sm font-medium text-[#333333] hover:text-[#07C160] transition-colors"
                 >
                   <span>{{ group.label }}</span>
-                  <span class="text-xs text-[#888888]">{{ isGroupCollapsed(group.label) ? "展开" : "折叠" }}</span>
+                  <span class="text-xs text-[#888888]">{{ isGroupCollapsed(group.label) ? $t("devices.actions.expand") : $t("devices.actions.collapse") }}</span>
                 </button>
 
                 <div v-if="!isGroupCollapsed(group.label)" class="grid grid-cols-1 md:grid-cols-2 gap-3">

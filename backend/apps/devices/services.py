@@ -656,19 +656,23 @@ class DeviceDashboardService:
 
             attributes = entity.get("attributes") or {}
             friendly_name = str(attributes.get("friendly_name") or entity_id)
-            if any(keyword in friendly_name for keyword in ["Backup", "Sun Next", "Sun next"]):
+            # 过滤天文实体（sun.sun, moon.moon 等是位置计算，非物理设备，可能没有 device_id）
+            if entity_id.split(".", 1)[0] in {"sun", "moon"}:
                 continue
             entity_registry = entity_registry_map.get(entity_id, {})
             if entity_registry.get("hidden_by") or entity_registry.get("disabled_by"):
                 continue
 
             registry_device = device_registry_map.get(str(entity_registry.get("device_id") or ""), {})
+            # 过滤虚拟设备（entry_type="service" 表示非物理设备，如 Sun, Backup, HACS 等）
+            if registry_device.get("entry_type") == "service":
+                continue
             registry_area = area_map.get(
                 str(entity_registry.get("area_id") or registry_device.get("area_id") or "")
             )
 
             room_name = str(
-                registry_area.get("name")
+                (registry_area or {}).get("name")
                 or attributes.get("room")
                 or attributes.get("area_name")
                 or attributes.get("floor_name")

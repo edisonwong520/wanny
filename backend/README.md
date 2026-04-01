@@ -60,6 +60,35 @@ uv run manage.py runserver
 uv run daphne wanny_server.asgi:application
 ```
 
+### 4. 运行 Python 脚本 (执行数据库查询/调试)
+
+当需要运行涉及 Django ORM 的 Python 脚本时，**必须使用 `uv run python`**，而不是 `uv run manage.py shell`：
+
+```bash
+# 正确方式：使用 uv run python 并手动调用 django.setup()
+uv run python -c "
+import os
+import django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wanny_server.settings')
+django.setup()
+
+from accounts.models import Account
+# 现在可以正常使用 Django ORM
+account = Account.objects.filter(id=1).first()
+print(account.email)
+"
+
+# 错误方式：uv run manage.py shell -c "..." 会有模块导入问题
+```
+
+**注意：** 所有 Django 脚本必须包含以下初始化代码：
+```python
+import os
+import django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wanny_server.settings')
+django.setup()
+```
+
 ## 📖 参考文档
 
 关于 Wanny 进一步的需求意图与技术规范细节，请参阅根目录的 `docs/` 文档库，尤其是架构规划设计：

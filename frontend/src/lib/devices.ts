@@ -21,6 +21,23 @@ export interface DeviceSnapshotRecord {
   controls: DeviceControlRecord[];
 }
 
+export interface DeviceListItem {
+  id: string;
+  room_id: string | null;
+  room_name: string;
+  name: string;
+  category: string;
+  status: "online" | "attention" | "offline";
+  telemetry: string;
+}
+
+export interface DevicePagination {
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
 export interface DeviceControlRecord {
   id: string;
   parent_id: string | null;
@@ -109,6 +126,34 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function fetchDeviceDashboard() {
   return requestJson<DeviceDashboardResponse>("/api/devices/dashboard/");
+}
+
+export async function fetchDeviceList(params: {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  room_id?: string;
+} = {}) {
+  const query = new URLSearchParams();
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  if (params.search) query.set("search", params.search);
+  if (params.room_id) query.set("room_id", params.room_id);
+
+  const queryString = query.toString();
+  const path = queryString ? `/api/devices/list/?${queryString}` : "/api/devices/list/";
+  return requestJson<{
+    status: string;
+    devices: DeviceListItem[];
+    pagination: DevicePagination;
+  }>(path);
+}
+
+export async function fetchDeviceDetail(deviceId: string) {
+  return requestJson<{
+    status: string;
+    device: DeviceSnapshotRecord;
+  }>(`/api/devices/${encodeURIComponent(deviceId)}/`);
 }
 
 export async function refreshDeviceDashboard() {

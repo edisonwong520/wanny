@@ -13,6 +13,7 @@ export default {
     viewAll: "查看全部",
     submit: "提交",
     save: "保存",
+    search: "搜索",
   },
   nav: {
     console: "控制台",

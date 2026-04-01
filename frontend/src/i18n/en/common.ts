@@ -13,6 +13,7 @@ export default {
     viewAll: "View All",
     submit: "Submit",
     save: "Save",
+    search: "Search",
   },
   nav: {
     console: "Console",

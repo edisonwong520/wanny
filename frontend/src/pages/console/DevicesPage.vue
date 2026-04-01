@@ -5,45 +5,62 @@ import { useI18n } from "vue-i18n";
 import {
   type DeviceControlRecord,
   type DeviceDashboardSnapshot,
+  type DeviceListItem,
   type DeviceSnapshotRecord,
   executeDeviceControl,
   fetchDeviceDashboard,
+  fetchDeviceDetail,
+  fetchDeviceList,
   refreshDeviceDashboard,
 } from "@/lib/devices";
 import { formatDateTime } from "@/lib/utils";
 
 const { t } = useI18n();
 
+// Dashboard state
 const dashboard = ref<DeviceDashboardSnapshot | null>(null);
-const activeRoomId = ref("all");
-const selectedDeviceId = ref("");
 const loading = ref(true);
 const syncing = ref(false);
 const errorMessage = ref("");
+
+// Device list state
+const devices = ref<DeviceListItem[]>([]);
+const devicesLoading = ref(false);
+const pagination = ref({ page: 1, page_size: 8, total: 0, total_pages: 0 });
+const searchQuery = ref("");
+const activeRoomId = ref("all");
+let searchTimeout: number | null = null;
+
+// Selected device detail
+const selectedDeviceId = ref("");
+const selectedDevice = ref<DeviceSnapshotRecord | null>(null);
+const deviceLoading = ref(false);
 const executingControlId = ref("");
 const draftValues = ref<Record<string, unknown>>({});
 const collapsedGroups = ref<Record<string, boolean>>({});
 const actionFeedback = ref<{ type: "success" | "error" | "info"; message: string } | null>(null);
+
 let pollTimer: number | null = null;
 
+// Rooms computed from dashboard
 const rooms = computed(() => {
   const r = dashboard.value?.rooms ?? [];
-  const total = dashboard.value?.devices.length ?? 0;
+  const total = pagination.value.total;
   return [
     { id: "all", name: t("devices.filters.all"), count: total },
     ...r.map((room) => ({ id: room.id, name: room.name, count: room.device_count })),
   ];
 });
 
-const visibleDevices = computed<DeviceSnapshotRecord[]>(() => {
-  const devices = dashboard.value?.devices ?? [];
-  if (activeRoomId.value === "all") return devices;
-  return devices.filter((device) => device.room_id === activeRoomId.value);
-});
-
-const selectedDevice = computed<DeviceSnapshotRecord | null>(() => {
-  const devices = visibleDevices.value;
-  return devices.find((device) => device.id === selectedDeviceId.value) ?? devices[0] ?? null;
+// Metrics computed from dashboard
+const metrics = computed(() => {
+  const devicesList = dashboard.value?.devices ?? [];
+  return {
+    online: devicesList.filter((item) => item.status === "online").length,
+    attention: devicesList.filter((item) => item.status === "attention").length,
+    offline: devicesList.filter((item) => item.status === "offline").length,
+    controls: selectedDevice.value?.controls.length ?? 0,
+  };
 });
 
 const groupedControls = computed(() => {
@@ -99,16 +116,7 @@ const selectedDeviceHighlights = computed(() => {
   return highlights.filter((item, index, array) => array.findIndex((x) => x.label === item.label) === index).slice(0, 3);
 });
 
-const metrics = computed(() => {
-  const devices = dashboard.value?.devices ?? [];
-  return {
-    online: devices.filter((item) => item.status === "online").length,
-    attention: devices.filter((item) => item.status === "attention").length,
-    offline: devices.filter((item) => item.status === "offline").length,
-    controls: selectedDevice.value?.controls.length ?? 0,
-  };
-});
-
+// Methods
 function stopPolling() {
   if (pollTimer !== null) {
     window.clearTimeout(pollTimer);
@@ -121,25 +129,88 @@ function schedulePolling(delay = 3000) {
   pollTimer = window.setTimeout(() => void loadDashboard({ silent: true }), delay);
 }
 
-function syncSelection() {
-  const devices = visibleDevices.value;
-  if (devices.length === 0) {
-    selectedDeviceId.value = "";
-    return;
+async function loadDashboard(options: { silent?: boolean } = {}) {
+  if (!options.silent) loading.value = true;
+  errorMessage.value = "";
+  try {
+    const response = await fetchDeviceDashboard();
+    dashboard.value = response.snapshot;
+    if (response.snapshot.pending_refresh) {
+      schedulePolling();
+    } else {
+      stopPolling();
+    }
+  } catch (error) {
+    stopPolling();
+    errorMessage.value = error instanceof Error ? error.message : t("devices.errors.load");
+  } finally {
+    if (!options.silent) loading.value = false;
   }
+}
 
-  if (!devices.some((device) => device.id === selectedDeviceId.value)) {
-    selectedDeviceId.value = devices[0].id;
+async function loadDevices(options: { silent?: boolean } = {}) {
+  if (!options.silent) devicesLoading.value = true;
+  try {
+    const response = await fetchDeviceList({
+      page: pagination.value.page,
+      page_size: pagination.value.page_size,
+      search: searchQuery.value || undefined,
+      room_id: activeRoomId.value !== "all" ? activeRoomId.value : undefined,
+    });
+    devices.value = response.devices;
+    pagination.value = response.pagination;
+
+    // Auto-select first device if current selection is not in list
+    if (devices.value.length > 0) {
+      const isSelectedInList = devices.value.some((d) => d.id === selectedDeviceId.value);
+      if (!isSelectedInList) {
+        await selectDevice(devices.value[0].id);
+      }
+    } else {
+      selectedDeviceId.value = "";
+      selectedDevice.value = null;
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : t("devices.errors.load");
+  } finally {
+    if (!options.silent) devicesLoading.value = false;
+  }
+}
+
+async function selectDevice(deviceId: string) {
+  if (deviceId === selectedDeviceId.value && selectedDevice.value) return;
+
+  selectedDeviceId.value = deviceId;
+  deviceLoading.value = true;
+  try {
+    const response = await fetchDeviceDetail(deviceId);
+    selectedDevice.value = response.device;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Failed to load device";
+  } finally {
+    deviceLoading.value = false;
   }
 }
 
 function selectRoom(id: string) {
   activeRoomId.value = id;
-  syncSelection();
+  pagination.value.page = 1;
+  void loadDevices();
 }
 
-function selectDevice(id: string) {
-  selectedDeviceId.value = id;
+function handleSearchInput() {
+  if (searchTimeout !== null) {
+    window.clearTimeout(searchTimeout);
+  }
+  searchTimeout = window.setTimeout(() => {
+    pagination.value.page = 1;
+    void loadDevices();
+  }, 300);
+}
+
+function goToPage(page: number) {
+  pagination.value.page = page;
+  void loadDevices();
 }
 
 function groupKey(deviceId: string, label: string) {
@@ -164,12 +235,6 @@ function toggleGroup(label: string) {
     ...collapsedGroups.value,
     [key]: !isGroupCollapsed(label),
   };
-}
-
-function statusTone(status: DeviceSnapshotRecord["status"]) {
-  if (status === "online") return "online";
-  if (status === "attention") return "attention";
-  return "offline";
 }
 
 function groupPriority(label: string) {
@@ -212,10 +277,6 @@ function writeDraftValue(controlId: string, value: unknown) {
     ...draftValues.value,
     [controlId]: value,
   };
-}
-
-function cloneSnapshot(snapshot: DeviceDashboardSnapshot | null) {
-  return snapshot ? (JSON.parse(JSON.stringify(snapshot)) as DeviceDashboardSnapshot) : null;
 }
 
 function formatValue(value: unknown, unit = "") {
@@ -321,67 +382,9 @@ function handleTextInput(controlId: string, event: Event) {
   writeDraftValue(controlId, (event.target as HTMLInputElement).value);
 }
 
-function buildOptimisticTelemetry(device: DeviceSnapshotRecord) {
-  const items = device.controls
-    .filter((control) => control.kind !== "action")
-    .slice(0, 3)
-    .map((control) => `${control.label}: ${formatValue(control.value, control.unit)}`);
-  return items.join(" | ") || device.telemetry;
-}
-
 function rangeInputValue(control: DeviceControlRecord) {
   const draft = Number(readDraftValue(control) ?? 0);
   return Number.isNaN(draft) ? 0 : draft;
-}
-
-function applyOptimisticUpdate(
-  deviceId: string,
-  control: DeviceControlRecord,
-  payload: { action?: string; value?: unknown },
-) {
-  if (!dashboard.value) return;
-
-  const targetDevice = dashboard.value.devices.find((item) => item.id === deviceId);
-  if (!targetDevice) return;
-
-  const targetControl = targetDevice.controls.find((item) => item.id === control.id);
-  if (!targetControl) return;
-
-  if (targetControl.kind === "toggle") {
-    const nextAction = payload.action ?? "toggle";
-    if (nextAction === "turn_on" || nextAction === "lock") {
-      targetControl.value = "on";
-    } else if (nextAction === "turn_off" || nextAction === "unlock") {
-      targetControl.value = "off";
-    } else {
-      targetControl.value = String(targetControl.value).toLowerCase() === "on" ? "off" : "on";
-    }
-  } else if (payload.value !== undefined) {
-    targetControl.value = payload.value;
-  }
-
-  targetDevice.telemetry = buildOptimisticTelemetry(targetDevice);
-}
-
-async function loadDashboard(options: { silent?: boolean } = {}) {
-  if (!options.silent) loading.value = true;
-  errorMessage.value = "";
-  if (!options.silent) clearFeedback();
-  try {
-    const response = await fetchDeviceDashboard();
-    dashboard.value = response.snapshot;
-    syncSelection();
-    if (response.snapshot.pending_refresh) {
-      schedulePolling();
-    } else {
-      stopPolling();
-    }
-  } catch (error) {
-    stopPolling();
-    errorMessage.value = error instanceof Error ? error.message : t("devices.errors.load");
-  } finally {
-    if (!options.silent) loading.value = false;
-  }
 }
 
 async function handleRefresh() {
@@ -391,7 +394,6 @@ async function handleRefresh() {
   try {
     const response = await refreshDeviceDashboard();
     dashboard.value = response.snapshot;
-    syncSelection();
     showFeedback("info", t("devices.feedback.refreshQueued"));
     if (response.snapshot.pending_refresh) {
       schedulePolling();
@@ -410,16 +412,12 @@ async function submitControl(control: DeviceControlRecord, payload: { action?: s
   executingControlId.value = control.id;
   errorMessage.value = "";
   clearFeedback();
-  const previousSnapshot = cloneSnapshot(dashboard.value);
-  applyOptimisticUpdate(device.id, control, payload);
+
   try {
     const response = await executeDeviceControl(device.id, control.id, payload);
-    dashboard.value = response.snapshot;
-    syncSelection();
+    selectedDevice.value = response.snapshot.devices.find((d) => d.id === device.id) ?? device;
     showFeedback("success", t("devices.feedback.actionSuccess", { name: control.label }));
   } catch (error) {
-    dashboard.value = previousSnapshot;
-    syncSelection();
     errorMessage.value = error instanceof Error ? error.message : t("devices.errors.action");
     showFeedback("error", t("devices.feedback.actionFailed", { name: control.label }));
   } finally {
@@ -439,675 +437,339 @@ async function saveValue(control: DeviceControlRecord) {
   await submitControl(control, { value: readDraftValue(control) });
 }
 
-watch(visibleDevices, () => syncSelection());
+onMounted(async () => {
+  await loadDashboard();
+  await loadDevices();
+});
 
-onMounted(() => void loadDashboard());
-onBeforeUnmount(() => stopPolling());
+onBeforeUnmount(() => {
+  stopPolling();
+  if (searchTimeout !== null) {
+    window.clearTimeout(searchTimeout);
+  }
+});
 </script>
 
 <template>
-  <section class="device-studio">
-    <div class="device-studio__backdrop"></div>
-
-    <div v-if="errorMessage" class="device-alert">
-      {{ errorMessage }}
+  <div class="space-y-5">
+    <!-- Alerts -->
+    <div v-if="errorMessage" class="p-4 rounded-2xl bg-[#FFE8E8] text-[#E84343] text-sm flex items-center justify-between">
+      <span>{{ errorMessage }}</span>
+      <button @click="errorMessage = ''" class="opacity-60 hover:opacity-100">✕</button>
     </div>
 
-    <div v-if="actionFeedback" class="device-feedback" :class="`device-feedback--${actionFeedback.type}`">
-      {{ actionFeedback.message }}
+    <div v-if="actionFeedback"
+      class="p-4 rounded-2xl text-sm flex items-center justify-between transition-all duration-300"
+      :class="{
+        'bg-[#E8F8EC] text-[#07C160]': actionFeedback.type === 'success',
+        'bg-[#FFE8E8] text-[#E84343]': actionFeedback.type === 'error',
+        'bg-[#FFF7E6] text-[#E8A223]': actionFeedback.type === 'info'
+      }"
+    >
+      <span>{{ actionFeedback.message }}</span>
+      <button @click="clearFeedback" class="opacity-60 hover:opacity-100">✕</button>
     </div>
 
-    <div v-if="loading" class="device-loading">
+    <!-- Loading -->
+    <div v-if="loading" class="py-12 text-center text-sm text-[#888888]">
       {{ $t("common.loading") }}
     </div>
 
     <template v-else-if="dashboard">
-      <header class="device-hero">
-        <div>
-          <p class="device-hero__eyebrow">{{ $t("devices.title") }}</p>
-          <h1 class="device-hero__title">{{ selectedDevice?.name ?? $t("devices.sections.devices") }}</h1>
-          <p class="device-hero__summary">
-            {{ selectedDevice?.telemetry ?? $t("devices.allRoomsSummary") }}
-          </p>
+      <!-- Metrics -->
+      <section class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="p-4 rounded-2xl bg-[#E8F8EC] transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
+          <div class="text-sm text-[#07C160]">{{ $t("devices.metrics.online") }}</div>
+          <div class="mt-1 text-2xl font-semibold text-[#07C160]">{{ metrics.online }}</div>
         </div>
-        <button class="device-hero__refresh" :disabled="syncing" @click="handleRefresh">
+        <div class="p-4 rounded-2xl bg-[#FFF7E6] transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
+          <div class="text-sm text-[#E8A223]">{{ $t("devices.metrics.attention") }}</div>
+          <div class="mt-1 text-2xl font-semibold text-[#E8A223]">{{ metrics.attention }}</div>
+        </div>
+        <div class="p-4 rounded-2xl bg-[#FFE8E8] transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
+          <div class="text-sm text-[#E84343]">{{ $t("devices.metrics.offline") }}</div>
+          <div class="mt-1 text-2xl font-semibold text-[#E84343]">{{ metrics.offline }}</div>
+        </div>
+        <div class="p-4 rounded-2xl bg-[#F7F7F7] transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
+          <div class="text-sm text-[#888888]">{{ $t("devices.metrics.controls") }}</div>
+          <div class="mt-1 text-2xl font-semibold text-[#333333]">{{ metrics.controls }}</div>
+        </div>
+      </section>
+
+      <!-- Filters + Refresh -->
+      <div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-2 flex-1">
+          <!-- Search -->
+          <div class="relative flex-1 max-w-xs">
+            <input
+              v-model="searchQuery"
+              type="text"
+              :placeholder="$t('common.search')"
+              class="w-full px-3 py-1.5 pl-8 rounded-full border border-[#EDEDED] bg-white text-sm focus:outline-none focus:border-[#07C160] transition-colors"
+              @input="handleSearchInput"
+            />
+            <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#888888] text-sm">🔍</span>
+          </div>
+          <!-- Room Filters -->
+          <div class="flex gap-1.5">
+            <button
+              v-for="room in rooms"
+              :key="room.id"
+              @click="selectRoom(room.id)"
+              class="px-3 py-1.5 rounded-full text-xs transition-all duration-200"
+              :class="activeRoomId === room.id
+                ? 'bg-[#07C160] text-white shadow-sm'
+                : 'bg-[#F7F7F7] text-[#888888] hover:bg-[#EDEDED]'"
+            >
+              {{ room.name }}
+            </button>
+          </div>
+        </div>
+        <!-- Refresh Button -->
+        <button
+          @click="handleRefresh"
+          :disabled="syncing"
+          class="px-4 py-1.5 rounded-full bg-[#07C160] text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           {{ syncing ? $t("common.loading") : $t("devices.actions.refresh") }}
         </button>
-      </header>
-
-      <div class="device-metrics">
-        <article class="metric-card">
-          <span>{{ $t("devices.metrics.online") }}</span>
-          <strong>{{ metrics.online }}</strong>
-        </article>
-        <article class="metric-card">
-          <span>{{ $t("devices.metrics.attention") }}</span>
-          <strong>{{ metrics.attention }}</strong>
-        </article>
-        <article class="metric-card">
-          <span>{{ $t("devices.metrics.offline") }}</span>
-          <strong>{{ metrics.offline }}</strong>
-        </article>
-        <article class="metric-card metric-card--accent">
-          <span>{{ $t("devices.metrics.controls") }}</span>
-          <strong>{{ metrics.controls }}</strong>
-        </article>
       </div>
 
-      <div class="device-filters">
-        <button
-          v-for="room in rooms"
-          :key="room.id"
-          class="device-filter"
-          :class="{ 'device-filter--active': activeRoomId === room.id }"
-          @click="selectRoom(room.id)"
-        >
-          <span>{{ room.name }}</span>
-          <strong>{{ room.count }}</strong>
-        </button>
-      </div>
-
-      <div class="device-shell">
-        <aside class="device-catalog">
-          <button
-            v-for="device in visibleDevices"
-            :key="device.id"
-            class="device-card"
-            :class="[
-              `device-card--${statusTone(device.status)}`,
-              { 'device-card--selected': selectedDevice?.id === device.id },
-            ]"
-            @click="selectDevice(device.id)"
-          >
-            <div class="device-card__meta">
-              <span class="device-card__room">{{ device.room_name || $t("devices.filters.all") }}</span>
-              <span class="device-card__status">{{ t(`devices.status.${device.status}`) }}</span>
-            </div>
-            <h3>{{ device.name }}</h3>
-            <p>{{ device.telemetry }}</p>
-            <div class="device-card__chips">
-              <span>{{ device.category }}</span>
-              <span>{{ device.controls.length }} {{ $t("devices.meta.controls") }}</span>
-            </div>
-          </button>
-
-          <div v-if="visibleDevices.length === 0" class="device-empty">
-            {{ $t("devices.empty.devices") }}
-          </div>
-        </aside>
-
-        <main class="device-panel" v-if="selectedDevice">
-          <div class="device-panel__header">
-            <div>
-              <p class="device-panel__status">
-                {{ t(`devices.status.${selectedDevice.status}`) }} · {{ selectedDevice.category }}
-              </p>
-              <h2>{{ selectedDevice.name }}</h2>
-              <p>{{ selectedDevice.note }}</p>
-            </div>
-            <div class="device-panel__stamp">
-              {{ selectedDevice.last_seen ? formatDateTime(selectedDevice.last_seen) : $t("devices.values.empty") }}
-            </div>
+      <!-- Main Layout -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <!-- Device List -->
+        <div class="lg:col-span-4 space-y-2">
+          <div v-if="devicesLoading" class="py-8 text-center text-sm text-[#888888]">
+            {{ $t("common.loading") }}
           </div>
 
-          <div class="device-panel__summary">
-            <div>
-              <span>{{ $t("devices.detail.telemetry") }}</span>
-              <strong>{{ selectedDevice.telemetry }}</strong>
-            </div>
-            <div>
-              <span>{{ $t("devices.detail.capabilities") }}</span>
-              <strong>{{ selectedDevice.capabilities.join(" · ") || $t("devices.values.empty") }}</strong>
-            </div>
+          <div v-else-if="devices.length === 0" class="p-8 text-center rounded-2xl border-2 border-dashed border-[#EDEDED]">
+            <div class="text-[#888888] text-sm">{{ $t("devices.empty.devices") }}</div>
           </div>
 
-          <div v-if="selectedDeviceHighlights.length" class="device-highlight-grid">
-            <article v-for="item in selectedDeviceHighlights" :key="item.label" class="device-highlight-card">
-              <span>{{ item.label }}</span>
-              <strong>{{ item.value }}</strong>
-            </article>
-          </div>
-
-          <section v-for="group in groupedControls" :key="group.label" class="control-group">
-            <button class="control-group__header" type="button" @click="toggleGroup(group.label)">
-              <h3>{{ group.label }}</h3>
-              <span>
-                {{ group.controls.length }} {{ $t("devices.meta.controls") }}
-                ·
-                {{ isGroupCollapsed(group.label) ? $t("devices.actions.expand") : $t("devices.actions.collapse") }}
-              </span>
+          <template v-else>
+            <button
+              v-for="device in devices"
+              :key="device.id"
+              @click="selectDevice(device.id)"
+              class="w-full p-4 rounded-2xl border transition-all duration-200"
+              :class="selectedDeviceId === device.id
+                ? 'bg-[#E8F8EC] border-[#07C160]/30 shadow-sm'
+                : 'bg-white border-[#EDEDED] hover:border-[#07C160]/20 hover:bg-[#F7F7F7]'"
+            >
+              <div class="flex items-center justify-between">
+                <span class="font-medium text-[#333333]">{{ device.name }}</span>
+                <span
+                  class="px-2 py-0.5 rounded-full text-xs font-medium"
+                  :class="{
+                    'bg-[#E8F8EC] text-[#07C160]': device.status === 'online',
+                    'bg-[#FFF7E6] text-[#E8A223]': device.status === 'attention',
+                    'bg-[#FFE8E8] text-[#E84343]': device.status === 'offline'
+                  }"
+                >
+                  {{ t(`devices.status.${device.status}`) }}
+                </span>
+              </div>
+              <div class="mt-1 text-xs text-[#888888] truncate">
+                {{ device.telemetry || $t("devices.values.empty") }}
+              </div>
             </button>
 
-            <div v-if="!isGroupCollapsed(group.label)" class="control-grid">
-              <article v-for="control in group.controls" :key="control.id" class="control-card">
-                <div class="control-card__top">
-                  <div>
-                    <p class="control-card__kind">{{ $t(`devices.controlKinds.${control.kind}`) }}</p>
-                    <h4>{{ control.label }}</h4>
-                  </div>
-                  <span class="control-card__value">
-                    {{ formatValue(control.value, control.unit) }}
-                  </span>
-                </div>
+            <!-- Pagination -->
+            <div v-if="pagination.total_pages > 1" class="flex items-center justify-center gap-1 pt-2">
+              <button
+                :disabled="pagination.page <= 1"
+                @click="goToPage(pagination.page - 1)"
+                class="w-8 h-8 rounded-full text-xs transition-all"
+                :class="pagination.page <= 1 ? 'text-[#EDEDED]' : 'text-[#888888] hover:bg-[#F7F7F7]'"
+              >
+                ‹
+              </button>
+              <button
+                v-for="p in Math.min(pagination.total_pages, 5)"
+                :key="p"
+                @click="goToPage(p)"
+                class="w-8 h-8 rounded-full text-xs transition-all"
+                :class="p === pagination.page
+                  ? 'bg-[#07C160] text-white'
+                  : 'text-[#888888] hover:bg-[#F7F7F7]'"
+              >
+                {{ p }}
+              </button>
+              <span v-if="pagination.total_pages > 5" class="px-1 text-xs text-[#888888]">...</span>
+              <button
+                :disabled="pagination.page >= pagination.total_pages"
+                @click="goToPage(pagination.page + 1)"
+                class="w-8 h-8 rounded-full text-xs transition-all"
+                :class="pagination.page >= pagination.total_pages ? 'text-[#EDEDED]' : 'text-[#888888] hover:bg-[#F7F7F7]'"
+              >
+                ›
+              </button>
+            </div>
+          </template>
+        </div>
 
-                <template v-if="control.kind === 'sensor'">
-                  <p class="control-card__hint">{{ $t("devices.hints.readOnly") }}</p>
-                </template>
+        <!-- Device Panel -->
+        <div class="lg:col-span-8 rounded-2xl border border-[#EDEDED] bg-white min-h-[400px]">
+          <div v-if="deviceLoading" class="p-12 text-center text-sm text-[#888888]">
+            {{ $t("common.loading") }}
+          </div>
 
-                <template v-else-if="control.kind === 'toggle'">
-                  <div class="control-actions">
-                    <button
-                      v-for="action in controlActions(control)"
-                      :key="action.id"
-                      class="control-button"
-                      :disabled="executingControlId === control.id"
-                      @click="runToggle(control, action.id)"
-                    >
-                      {{ action.label }}
-                    </button>
-                  </div>
-                </template>
+          <div v-else-if="selectedDevice" class="p-5">
+            <!-- Device Info -->
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-base font-semibold text-[#333333]">{{ selectedDevice.name }}</h2>
+              <span
+                class="px-2 py-0.5 rounded-full text-xs font-medium"
+                :class="{
+                  'bg-[#E8F8EC] text-[#07C160]': selectedDevice.status === 'online',
+                  'bg-[#FFF7E6] text-[#E8A223]': selectedDevice.status === 'attention',
+                  'bg-[#FFE8E8] text-[#E84343]': selectedDevice.status === 'offline'
+                }"
+              >
+                {{ t(`devices.status.${selectedDevice.status}`) }}
+              </span>
+            </div>
 
-                <template v-else-if="control.kind === 'range'">
-                  <div class="control-editor">
-                    <input
-                      type="range"
-                      class="control-range"
-                      :min="normalizeRangeBounds(control).min"
-                      :max="normalizeRangeBounds(control).max"
-                      :step="normalizeRangeBounds(control).step"
-                      :value="rangeInputValue(control)"
-                      @input="handleRangeInput(control.id, $event)"
-                    />
-                    <div class="control-editor__footer">
-                      <span>{{ formatValue(readDraftValue(control), control.unit) }}</span>
-                      <button class="control-button control-button--solid" :disabled="executingControlId === control.id" @click="saveValue(control)">
+            <!-- Highlights -->
+            <div v-if="selectedDeviceHighlights.length" class="flex gap-2 mb-5">
+              <div
+                v-for="item in selectedDeviceHighlights"
+                :key="item.label"
+                class="px-3 py-2 rounded-xl bg-[#F7F7F7]"
+              >
+                <div class="text-xs text-[#888888]">{{ item.label }}</div>
+                <div class="text-sm font-medium text-[#333333]">{{ item.value }}</div>
+              </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="space-y-4">
+              <div v-for="group in groupedControls" :key="group.label">
+                <button
+                  @click="toggleGroup(group.label)"
+                  class="flex items-center justify-between w-full py-2 text-sm font-medium text-[#333333] hover:text-[#07C160] transition-colors"
+                >
+                  <span>{{ group.label }}</span>
+                  <span class="text-xs text-[#888888]">{{ isGroupCollapsed(group.label) ? "展开" : "折叠" }}</span>
+                </button>
+
+                <div v-if="!isGroupCollapsed(group.label)" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div
+                    v-for="control in group.controls"
+                    :key="control.id"
+                    class="p-3 rounded-xl border border-[#EDEDED] bg-[#F7F7F7]/50"
+                    :class="executingControlId === control.id ? 'opacity-60' : ''"
+                  >
+                    <div class="flex items-center justify-between mb-2">
+                      <span class="text-sm text-[#333333]">{{ control.label }}</span>
+                      <span class="text-xs font-medium text-[#07C160] bg-[#E8F8EC] px-2 py-0.5 rounded-full">
+                        {{ formatValue(control.value, control.unit) }}
+                      </span>
+                    </div>
+
+                    <!-- Sensor -->
+                    <p v-if="control.kind === 'sensor'" class="text-xs text-[#888888]">
+                      {{ $t("devices.hints.readOnly") }}
+                    </p>
+
+                    <!-- Toggle -->
+                    <div v-else-if="control.kind === 'toggle'" class="flex gap-2">
+                      <button
+                        v-for="action in controlActions(control)"
+                        :key="action.id"
+                        @click="runToggle(control, action.id)"
+                        :disabled="executingControlId === control.id"
+                        class="px-3 py-1 rounded-full text-xs transition-all duration-200 border border-[#07C160]/30 text-[#07C160] hover:bg-[#07C160] hover:text-white disabled:opacity-50"
+                      >
+                        {{ action.label }}
+                      </button>
+                    </div>
+
+                    <!-- Range -->
+                    <div v-else-if="control.kind === 'range'" class="space-y-2">
+                      <input
+                        type="range"
+                        class="w-full h-1 bg-[#EDEDED] rounded-lg appearance-none cursor-pointer accent-[#07C160]"
+                        :min="normalizeRangeBounds(control).min"
+                        :max="normalizeRangeBounds(control).max"
+                        :step="normalizeRangeBounds(control).step"
+                        :value="rangeInputValue(control)"
+                        @input="handleRangeInput(control.id, $event)"
+                      />
+                      <div class="flex items-center justify-between">
+                        <span class="text-xs text-[#333333]">{{ formatValue(readDraftValue(control), control.unit) }}</span>
+                        <button
+                          @click="saveValue(control)"
+                          :disabled="executingControlId === control.id"
+                          class="px-3 py-1 rounded-full bg-[#07C160] text-white text-xs transition-all hover:bg-[#06AD56] disabled:opacity-50"
+                        >
+                          {{ $t("devices.actions.apply") }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Enum -->
+                    <div v-else-if="control.kind === 'enum'" class="flex gap-2">
+                      <select
+                        class="flex-1 bg-white border border-[#EDEDED] rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#07C160]"
+                        :value="String(readDraftValue(control) ?? '')"
+                        @change="handleEnumInput(control.id, $event)"
+                      >
+                        <option v-for="option in control.options" :key="String(option.value)" :value="String(option.value)">
+                          {{ displayOptionLabel(option) }}
+                        </option>
+                      </select>
+                      <button
+                        @click="saveValue(control)"
+                        :disabled="executingControlId === control.id"
+                        class="px-3 py-1 rounded-full bg-[#07C160] text-white text-xs transition-all hover:bg-[#06AD56] disabled:opacity-50"
+                      >
                         {{ $t("devices.actions.apply") }}
                       </button>
                     </div>
-                  </div>
-                </template>
 
-                <template v-else-if="control.kind === 'enum'">
-                  <div class="control-editor">
-                    <select
-                      class="control-select"
-                      :value="String(readDraftValue(control) ?? '')"
-                      @change="handleEnumInput(control.id, $event)"
-                    >
-                      <option v-for="option in control.options" :key="String(option.value)" :value="String(option.value)">
-                        {{ displayOptionLabel(option) }}
-                      </option>
-                    </select>
-                    <button class="control-button control-button--solid" :disabled="executingControlId === control.id" @click="saveValue(control)">
-                      {{ $t("devices.actions.apply") }}
-                    </button>
-                  </div>
-                </template>
+                    <!-- Text -->
+                    <div v-else-if="control.kind === 'text'" class="flex gap-2">
+                      <input
+                        type="text"
+                        class="flex-1 bg-white border border-[#EDEDED] rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#07C160]"
+                        :value="String(readDraftValue(control) ?? '')"
+                        @input="handleTextInput(control.id, $event)"
+                      />
+                      <button
+                        @click="saveValue(control)"
+                        :disabled="executingControlId === control.id"
+                        class="px-3 py-1 rounded-full bg-[#07C160] text-white text-xs transition-all hover:bg-[#06AD56] disabled:opacity-50"
+                      >
+                        {{ $t("devices.actions.apply") }}
+                      </button>
+                    </div>
 
-                <template v-else-if="control.kind === 'text'">
-                  <div class="control-editor">
-                    <input
-                      type="text"
-                      class="control-input"
-                      :value="String(readDraftValue(control) ?? '')"
-                      @input="handleTextInput(control.id, $event)"
-                    />
-                    <button class="control-button control-button--solid" :disabled="executingControlId === control.id" @click="saveValue(control)">
-                      {{ $t("devices.actions.apply") }}
-                    </button>
+                    <!-- Action -->
+                    <div v-else-if="control.kind === 'action'" class="flex gap-2">
+                      <button
+                        v-for="action in controlActions(control)"
+                        :key="action.id"
+                        @click="runAction(control, action.id)"
+                        :disabled="executingControlId === control.id"
+                        class="px-3 py-1 rounded-full bg-[#07C160] text-white text-xs transition-all hover:bg-[#06AD56] disabled:opacity-50"
+                      >
+                        {{ action.label }}
+                      </button>
+                    </div>
                   </div>
-                </template>
-
-                <template v-else-if="control.kind === 'action'">
-                  <div class="control-actions">
-                    <button
-                      v-for="action in controlActions(control)"
-                      :key="action.id"
-                      class="control-button control-button--solid"
-                      :disabled="executingControlId === control.id"
-                      @click="runAction(control, action.id)"
-                    >
-                      {{ action.label }}
-                    </button>
-                  </div>
-                </template>
-              </article>
+                </div>
+              </div>
             </div>
-          </section>
-        </main>
+          </div>
 
-        <div v-else class="device-empty device-empty--panel">
-          {{ $t("devices.empty.noDevices") }}
+          <div v-else class="p-12 text-center">
+            <div class="text-3xl mb-2 opacity-40">🏠</div>
+            <div class="text-sm text-[#888888]">{{ $t("devices.empty.noDevices") }}</div>
+          </div>
         </div>
       </div>
     </template>
-  </section>
+  </div>
 </template>
-
-<style scoped>
-.device-studio {
-  position: relative;
-  display: grid;
-  gap: 20px;
-  min-height: calc(100vh - 180px);
-}
-
-.device-studio__backdrop {
-  position: absolute;
-  inset: -24px;
-  z-index: 0;
-  border-radius: 32px;
-  background:
-    radial-gradient(circle at top left, rgba(255, 170, 0, 0.22), transparent 28%),
-    radial-gradient(circle at top right, rgba(0, 168, 107, 0.14), transparent 26%),
-    linear-gradient(135deg, rgba(255, 248, 239, 0.94), rgba(244, 248, 245, 0.96));
-  filter: blur(0.5px);
-}
-
-.device-alert,
-.device-feedback,
-.device-loading,
-.device-hero,
-.device-metrics,
-.device-filters,
-.device-shell {
-  position: relative;
-  z-index: 1;
-}
-
-.device-alert,
-.device-feedback,
-.device-loading,
-.device-empty {
-  padding: 18px 20px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(32, 32, 32, 0.08);
-}
-
-.device-feedback--success {
-  background: rgba(19, 135, 92, 0.12);
-  border-color: rgba(19, 135, 92, 0.18);
-  color: #11553f;
-}
-
-.device-feedback--error {
-  background: rgba(187, 68, 68, 0.12);
-  border-color: rgba(187, 68, 68, 0.18);
-  color: #842222;
-}
-
-.device-feedback--info {
-  background: rgba(241, 179, 65, 0.16);
-  border-color: rgba(241, 179, 65, 0.22);
-  color: #744900;
-}
-
-.device-hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  padding: 24px 28px;
-  border-radius: 28px;
-  background: rgba(28, 33, 29, 0.9);
-  color: #f5f3ea;
-  box-shadow: 0 24px 60px rgba(24, 31, 24, 0.16);
-}
-
-.device-hero__eyebrow {
-  margin: 0 0 10px;
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(245, 243, 234, 0.58);
-}
-
-.device-hero__title {
-  margin: 0;
-  font-size: clamp(30px, 4vw, 42px);
-  line-height: 1.02;
-}
-
-.device-hero__summary {
-  max-width: 720px;
-  margin: 10px 0 0;
-  color: rgba(245, 243, 234, 0.72);
-}
-
-.device-hero__refresh,
-.control-button {
-  border: 0;
-  cursor: pointer;
-  transition: transform 180ms ease, opacity 180ms ease, background 180ms ease;
-}
-
-.device-hero__refresh {
-  padding: 12px 18px;
-  border-radius: 999px;
-  background: #f1b341;
-  color: #241a08;
-  font-weight: 600;
-}
-
-.device-hero__refresh:disabled,
-.control-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.device-metrics {
-  display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.metric-card {
-  padding: 18px 20px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.84);
-  border: 1px solid rgba(28, 33, 29, 0.08);
-  backdrop-filter: blur(14px);
-}
-
-.metric-card span {
-  display: block;
-  color: #6b6e62;
-  font-size: 13px;
-}
-
-.metric-card strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 30px;
-  color: #1e231f;
-}
-
-.metric-card--accent {
-  background: linear-gradient(135deg, rgba(241, 179, 65, 0.18), rgba(12, 139, 101, 0.12));
-}
-
-.device-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.device-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 999px;
-  border: 1px solid rgba(28, 33, 29, 0.08);
-  background: rgba(255, 255, 255, 0.78);
-  cursor: pointer;
-}
-
-.device-filter strong {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(28, 33, 29, 0.08);
-  font-size: 12px;
-}
-
-.device-filter--active {
-  background: #1f3025;
-  color: #f5f3ea;
-}
-
-.device-shell {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 18px;
-}
-
-.device-catalog,
-.device-panel {
-  padding: 18px;
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(28, 33, 29, 0.08);
-  backdrop-filter: blur(18px);
-}
-
-.device-catalog {
-  display: grid;
-  gap: 12px;
-  align-content: start;
-}
-
-.device-card {
-  padding: 16px;
-  border-radius: 24px;
-  border: 1px solid rgba(28, 33, 29, 0.08);
-  background: #fffdfa;
-  text-align: left;
-  cursor: pointer;
-}
-
-.device-card--selected {
-  border-color: rgba(241, 179, 65, 0.7);
-  box-shadow: 0 14px 28px rgba(241, 179, 65, 0.12);
-}
-
-.device-card__meta,
-.device-card__chips,
-.control-group__header,
-.control-card__top,
-.control-editor__footer,
-.device-panel__summary {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.device-card__room,
-.device-card__status,
-.control-card__kind,
-.device-panel__status {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #6d7264;
-}
-
-.device-card h3,
-.control-card h4,
-.control-group h3,
-.device-panel h2 {
-  margin: 0;
-}
-
-.device-card p,
-.device-panel p,
-.control-card__hint {
-  margin: 8px 0 0;
-  color: #5e6257;
-}
-
-.device-card__chips {
-  margin-top: 12px;
-  flex-wrap: wrap;
-}
-
-.device-card__chips span,
-.device-panel__stamp {
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(28, 33, 29, 0.06);
-  color: #30352e;
-  font-size: 12px;
-}
-
-.device-panel {
-  display: grid;
-  gap: 16px;
-}
-
-.device-panel__header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-}
-
-.device-panel__summary {
-  padding: 16px;
-  border-radius: 22px;
-  background: linear-gradient(135deg, rgba(18, 30, 24, 0.94), rgba(33, 57, 41, 0.92));
-  color: #f7f3e8;
-}
-
-.device-panel__summary span {
-  display: block;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(247, 243, 232, 0.58);
-}
-
-.device-panel__summary strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 16px;
-}
-
-.device-highlight-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.device-highlight-card {
-  padding: 14px 16px;
-  border-radius: 20px;
-  background: linear-gradient(135deg, rgba(255, 252, 247, 0.96), rgba(250, 244, 231, 0.92));
-  border: 1px solid rgba(28, 33, 29, 0.08);
-}
-
-.device-highlight-card span {
-  display: block;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #787768;
-}
-
-.device-highlight-card strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 20px;
-  color: #1c221d;
-}
-
-.control-group {
-  display: grid;
-  gap: 12px;
-}
-
-.control-group__header {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  align-items: center;
-  text-align: left;
-}
-
-.control-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.control-card {
-  padding: 16px;
-  border-radius: 22px;
-  background: #fffcf7;
-  border: 1px solid rgba(28, 33, 29, 0.08);
-  display: grid;
-  gap: 14px;
-}
-
-.control-card__value {
-  color: #1a211d;
-  font-weight: 600;
-}
-
-.control-actions,
-.control-editor {
-  display: grid;
-  gap: 10px;
-}
-
-.control-actions {
-  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-}
-
-.control-button {
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: rgba(28, 33, 29, 0.08);
-  color: #1d221e;
-}
-
-.control-button--solid {
-  background: #1f3025;
-  color: #f5f3ea;
-}
-
-.control-select,
-.control-input,
-.control-range {
-  width: 100%;
-}
-
-.control-select,
-.control-input {
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid rgba(28, 33, 29, 0.12);
-  background: #ffffff;
-}
-
-.control-range {
-  accent-color: #0c8b65;
-}
-
-.device-empty--panel {
-  display: grid;
-  place-items: center;
-}
-
-@media (max-width: 1100px) {
-  .device-metrics,
-  .device-highlight-grid,
-  .control-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .device-shell {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .device-hero,
-  .device-panel__header,
-  .device-panel__summary,
-  .control-group__header,
-  .control-card__top,
-  .control-editor__footer {
-    grid-template-columns: 1fr;
-    display: grid;
-  }
-
-  .device-metrics,
-  .device-highlight-grid,
-  .control-grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

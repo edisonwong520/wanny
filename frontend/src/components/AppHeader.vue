@@ -59,14 +59,6 @@ function handleLogout() {
         <span v-if="isAuthenticated && currentUser" class="text-sm text-[#888888] truncate max-w-[80px]">
           {{ currentUser.name }}
         </span>
-        <RouterLink
-          v-else
-          to="/login"
-          class="text-sm text-[#888888] hover:text-[#07C160] transition-colors"
-        >
-          {{ $t("auth.login") }}
-        </RouterLink>
-
         <button
           class="text-sm text-[#888888] hover:text-[#07C160] transition-colors w-12 text-center"
           type="button"
@@ -86,9 +78,9 @@ function handleLogout() {
         <RouterLink
           v-else
           class="rounded-full bg-[#07C160] px-4 py-1.5 text-sm text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5"
-          to="/register"
+          to="/login"
         >
-          {{ $t("auth.register") }}
+          {{ $t("auth.loginRegister") }}
         </RouterLink>
       </div>
     </div>

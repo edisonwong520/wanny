@@ -18,6 +18,24 @@ export interface DeviceSnapshotRecord {
   note: string;
   capabilities: string[];
   last_seen: string | null;
+  controls: DeviceControlRecord[];
+}
+
+export interface DeviceControlRecord {
+  id: string;
+  parent_id: string | null;
+  source_type: "ha_entity" | "mijia_property" | "mijia_action";
+  kind: "sensor" | "toggle" | "range" | "enum" | "action" | "text";
+  key: string;
+  label: string;
+  group_label: string;
+  writable: boolean;
+  value: unknown;
+  unit: string;
+  options: Array<{ label: string; value: unknown }>;
+  range_spec: { min?: number; max?: number; step?: number };
+  action_params: Record<string, unknown>;
+  updated_at: string;
 }
 
 export interface DeviceAnomalyRecord {
@@ -97,4 +115,24 @@ export async function refreshDeviceDashboard() {
   return requestJson<DeviceDashboardResponse>("/api/devices/dashboard/refresh/", {
     method: "POST",
   });
+}
+
+export async function executeDeviceControl(
+  deviceId: string,
+  controlId: string,
+  payload: {
+    action?: string;
+    value?: unknown;
+  },
+) {
+  return requestJson<DeviceDashboardResponse>(
+    `/api/devices/${encodeURIComponent(deviceId)}/controls/${encodeURIComponent(controlId)}/`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
 }

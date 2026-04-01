@@ -15,7 +15,7 @@ class DeviceDashboardState(models.Model):
         verbose_name="所属账户"
     )
     key = models.CharField(max_length=32, default="default", verbose_name="状态标识")
-    source = models.CharField(max_length=32, default="demo", verbose_name="数据来源")
+    source = models.CharField(max_length=32, default="none", verbose_name="数据来源")
     last_trigger = models.CharField(max_length=32, default="bootstrap", verbose_name="上次触发行为")
     requested_trigger = models.CharField(max_length=32, blank=True, default="", verbose_name="正在请求的触发行为")
     refresh_requested_at = models.DateTimeField(null=True, blank=True, verbose_name="请求刷新时间")
@@ -117,6 +117,76 @@ class DeviceSnapshot(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class DeviceControl(models.Model):
+    """
+    设备控制节点/子功能表。
+    用于承接 HA 的 entity、米家的属性/动作等细粒度能力，供前端进入单设备后渲染专属控制面板。
+    """
+
+    class KindChoices(models.TextChoices):
+        SENSOR = "sensor", "传感器"
+        TOGGLE = "toggle", "开关"
+        RANGE = "range", "范围控制"
+        ENUM = "enum", "枚举控制"
+        ACTION = "action", "动作"
+        TEXT = "text", "文本"
+
+    class SourceTypeChoices(models.TextChoices):
+        HA_ENTITY = "ha_entity", "Home Assistant 实体"
+        MIJIA_PROPERTY = "mijia_property", "米家属性"
+        MIJIA_ACTION = "mijia_action", "米家动作"
+
+    account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.CASCADE,
+        related_name='device_controls',
+        null=True,
+        blank=True,
+        verbose_name="所属账户"
+    )
+    device = models.ForeignKey(
+        DeviceSnapshot,
+        on_delete=models.CASCADE,
+        related_name="controls",
+        verbose_name="所属设备"
+    )
+    external_id = models.CharField(max_length=255, verbose_name="外部控制 ID")
+    parent_external_id = models.CharField(max_length=255, blank=True, verbose_name="父级控制 ID")
+    source_type = models.CharField(
+        max_length=32,
+        choices=SourceTypeChoices.choices,
+        verbose_name="来源类型"
+    )
+    kind = models.CharField(
+        max_length=16,
+        choices=KindChoices.choices,
+        default=KindChoices.SENSOR,
+        verbose_name="控制类型"
+    )
+    key = models.CharField(max_length=128, verbose_name="控制标识")
+    label = models.CharField(max_length=128, verbose_name="控制名称")
+    group_label = models.CharField(max_length=128, blank=True, verbose_name="分组名称")
+    writable = models.BooleanField(default=False, verbose_name="是否可写")
+    value = models.JSONField(default=dict, blank=True, verbose_name="当前值")
+    unit = models.CharField(max_length=32, blank=True, verbose_name="单位")
+    options = models.JSONField(default=list, blank=True, verbose_name="可选项")
+    range_spec = models.JSONField(default=dict, blank=True, verbose_name="范围规格")
+    action_params = models.JSONField(default=dict, blank=True, verbose_name="动作参数")
+    source_payload = models.JSONField(default=dict, blank=True, verbose_name="原始数据报文")
+    sort_order = models.PositiveIntegerField(default=0, verbose_name="排序权重")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = "devices_control"
+        unique_together = ('account', 'external_id')
+        ordering = ["sort_order", "id"]
+        verbose_name = "设备控制节点"
+        verbose_name_plural = "设备控制节点"
+
+    def __str__(self):
+        return f"{self.device.name} / {self.label}"
 
 
 class DeviceAnomaly(models.Model):

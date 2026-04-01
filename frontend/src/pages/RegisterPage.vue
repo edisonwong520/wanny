@@ -48,7 +48,7 @@ const handleRegister = async () => {
     }
 
     setAuth(data.data);
-    router.push("/console");
+    router.push("/console/manage");
   } catch (err: any) {
     errorMessage.value = err.message || t("auth.errors.systemBusy");
   } finally {

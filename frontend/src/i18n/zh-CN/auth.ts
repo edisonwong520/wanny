@@ -2,6 +2,7 @@ export default {
   login: "登录",
   logout: "退出",
   register: "注册",
+  loginRegister: "登录 / 注册",
   loginTitle: "登录",
   loginSubtitle: "登录以访问控制台",
   registerTitle: "注册",

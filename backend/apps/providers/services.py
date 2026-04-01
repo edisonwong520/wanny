@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from accounts.models import Account
 
 import requests
+import websockets
 from mijiaAPI import mijiaAPI
 from wechatbot.auth import save_credentials
 from wechatbot.types import Credentials
@@ -247,6 +248,13 @@ class HomeAssistantAuthService:
         }
 
     @classmethod
+    def _build_websocket_url(cls, base_url: str) -> str:
+        normalized = cls._normalize_base_url(base_url)
+        if normalized.startswith("https://"):
+            return f"wss://{normalized[len('https://'):]}/api/websocket"
+        return f"ws://{normalized[len('http://'):]}/api/websocket"
+
+    @classmethod
     def validate_payload(cls, payload: dict) -> dict:
         if not isinstance(payload, dict):
             raise ValueError("Home Assistant payload must be a JSON object")
@@ -325,3 +333,67 @@ class HomeAssistantAuthService:
             raise ValueError("Home Assistant states response is invalid")
 
         return (config_response.json() or {}), states_payload
+
+    @classmethod
+    async def _fetch_registry_via_websocket(cls, *, base_url: str, access_token: str) -> dict:
+        ws_url = cls._build_websocket_url(base_url)
+        async with websockets.connect(ws_url) as websocket:
+            auth_required = json.loads(await websocket.recv())
+            if auth_required.get("type") != "auth_required":
+                raise ValueError("Home Assistant websocket did not request authentication")
+
+            await websocket.send(json.dumps({"type": "auth", "access_token": access_token}))
+            auth_response = json.loads(await websocket.recv())
+            if auth_response.get("type") != "auth_ok":
+                raise ValueError("Home Assistant websocket authentication failed")
+
+            commands = {
+                1: "config/area_registry/list",
+                2: "config/device_registry/list",
+                3: "config/entity_registry/list",
+            }
+            results: dict[int, list[dict]] = {}
+            for command_id, command_type in commands.items():
+                await websocket.send(json.dumps({"id": command_id, "type": command_type}))
+
+            while len(results) < len(commands):
+                message = json.loads(await websocket.recv())
+                if message.get("type") != "result":
+                    continue
+                command_id = message.get("id")
+                if command_id not in commands:
+                    continue
+                if not message.get("success"):
+                    raise ValueError(f"Home Assistant websocket command failed: {commands[command_id]}")
+                results[command_id] = message.get("result") or []
+
+        return {
+            "areas": results.get(1, []),
+            "devices": results.get(2, []),
+            "entities": results.get(3, []),
+        }
+
+    @classmethod
+    def get_graph(cls, account: Account) -> tuple[dict, list[dict], dict]:
+        auth_obj = cls.get_auth_record(account=account, active_only=True)
+        payload = cls._extract_payload(auth_obj)
+        if not payload:
+            raise ValueError("No active Home Assistant authorization found")
+
+        config, states = cls.get_states(account=account)
+        try:
+            registry = asyncio.run(
+                cls._fetch_registry_via_websocket(
+                    base_url=payload.get("base_url", ""),
+                    access_token=payload.get("access_token", ""),
+                )
+            )
+        except Exception as error:
+            logger.warning(f"[Home Assistant Auth] Failed to load registry via websocket, fallback to state-only grouping: {error}")
+            registry = {
+                "areas": [],
+                "devices": [],
+                "entities": [],
+            }
+
+        return config, states, registry

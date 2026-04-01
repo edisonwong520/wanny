@@ -280,6 +280,11 @@ def handle_platform_auth_authorize(request, platform_name: str):
         elif normalized_name == HomeAssistantAuthService.platform_name:
             auth_payload = data.get("payload", {})
             auth_obj = HomeAssistantAuthService.validate_and_store(account=account, payload=auth_payload)
+            
+            # 立即触发后台同步以拉取最新设备数据
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.sync_after_provider_change(account, trigger="connect_home_assistant")
+
             session = AuthorizationSessionStore.create(
                 platform=normalized_name,
                 auth_kind="form",

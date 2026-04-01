@@ -49,12 +49,8 @@ class MonitorService:
             return # 当家宅无明确状态标示时休眠
 
         # 2. 从米家抓取所有的实际设备状态
-        # (在此处做逻辑封装：因未实现真实网络交互我们在此造出假设设备离家时还开着)
-        # 例如你调用 mijiaApi.get_device_list() 获取全量 dict
-        current_devices_status = {
-            "mocked_light_001": {"power": "on"},
-            "mocked_ac_002": {"power": "off"}
-        }
+        # TODO: 此处应调用真实 API 获取设备列表及其属性
+        current_devices_status = {}
 
         # 3. 拿出当前 Mode 应该遵守的所有纪律
         policies = await sync_to_async(list)(HabitPolicy.objects.filter(mode=active_mode))

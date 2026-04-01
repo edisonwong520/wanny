@@ -1,33 +1,56 @@
 from __future__ import annotations
+
 import hashlib
 import re
-from typing import TYPE_CHECKING
+from collections import Counter, defaultdict
+from typing import TYPE_CHECKING, Any
 
-from providers.models import PlatformAuth
-
-if TYPE_CHECKING:
-    from accounts.models import Account
-
-from collections import Counter
-from datetime import timedelta
-
+import requests
 from django.db import transaction
 from django.utils import timezone
 
+from providers.models import PlatformAuth
 from utils.logger import logger
+
 from .models import (
     DeviceAnomaly,
     DeviceAutomationRule,
+    DeviceControl,
     DeviceDashboardState,
     DeviceRoom,
     DeviceSnapshot,
 )
+
+if TYPE_CHECKING:
+    from accounts.models import Account
 
 
 class DeviceDashboardService:
     state_key = "default"
     default_sync_interval_seconds = 300
     device_provider_names = ("mijia", "home_assistant")
+    supported_ha_domains = {
+        "light",
+        "switch",
+        "fan",
+        "climate",
+        "sensor",
+        "binary_sensor",
+        "cover",
+        "lock",
+        "camera",
+        "media_player",
+        "humidifier",
+        "vacuum",
+        "number",
+        "input_number",
+        "select",
+        "button",
+        "scene",
+        "script",
+        "input_boolean",
+    }
+    ha_service_domains = {"light", "switch", "fan", "humidifier", "cover", "vacuum", "media_player", "script", "scene"}
 
     @classmethod
     def _get_state(cls, account: Account) -> DeviceDashboardState:
@@ -37,6 +60,25 @@ class DeviceDashboardService:
     @classmethod
     def _has_snapshot(cls, account: Account) -> bool:
         return bool(cls._get_state(account).refreshed_at)
+
+    @classmethod
+    def _serialize_control(cls, control: DeviceControl) -> dict:
+        return {
+            "id": control.external_id,
+            "parent_id": control.parent_external_id or None,
+            "source_type": control.source_type,
+            "kind": control.kind,
+            "key": control.key,
+            "label": control.label,
+            "group_label": control.group_label,
+            "writable": control.writable,
+            "value": control.value,
+            "unit": control.unit,
+            "options": control.options,
+            "range_spec": control.range_spec,
+            "action_params": control.action_params,
+            "updated_at": control.updated_at.isoformat(),
+        }
 
     @classmethod
     def _serialize_snapshot(
@@ -81,6 +123,7 @@ class DeviceDashboardService:
                     "note": device.note,
                     "capabilities": device.capabilities,
                     "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+                    "controls": [cls._serialize_control(control) for control in device.controls.all()],
                 }
                 for device in devices
             ],
@@ -142,7 +185,7 @@ class DeviceDashboardService:
             }
 
         rooms = list(DeviceRoom.objects.filter(account=account))
-        devices = list(DeviceSnapshot.objects.filter(account=account).select_related("room").all())
+        devices = list(DeviceSnapshot.objects.filter(account=account).select_related("room").prefetch_related("controls"))
         anomalies = list(DeviceAnomaly.objects.filter(account=account, is_active=True).select_related("room", "device"))
         rules = list(DeviceAutomationRule.objects.filter(account=account, is_active=True).select_related("room", "device"))
 
@@ -159,18 +202,13 @@ class DeviceDashboardService:
 
     @classmethod
     def clear_all_data(cls, account: Account) -> None:
-        """
-        彻底清理指定账户下所有的房间、设备快照、异常记录和自动化规则。
-        通常在断开平台（如米家）授权时调用，以确保隐私与数据一致性。
-        """
         with transaction.atomic():
-            # 1. 删除所有关联业务数据
             DeviceAnomaly.objects.filter(account=account).delete()
             DeviceAutomationRule.objects.filter(account=account).delete()
+            DeviceControl.objects.filter(account=account).delete()
             DeviceSnapshot.objects.filter(account=account).delete()
             DeviceRoom.objects.filter(account=account).delete()
 
-            # 2. 重置总览状态
             state = cls._get_state(account)
             state.source = "none"
             state.refreshed_at = None
@@ -198,16 +236,14 @@ class DeviceDashboardService:
         except Exception as error:
             logger.error(f"[Device Sync] Failed to check Home Assistant auth state for user {account.email}: {error}")
 
-        if provider_payloads:
-            payload = cls._merge_snapshots(provider_payloads)
-        else:
-            payload = cls._build_demo_snapshot()
+        payload = cls._merge_snapshots(provider_payloads) if provider_payloads else cls._build_empty_snapshot()
 
         with transaction.atomic():
             state = cls._get_state(account)
 
             DeviceAnomaly.objects.filter(account=account).delete()
             DeviceAutomationRule.objects.filter(account=account).delete()
+            DeviceControl.objects.filter(account=account).delete()
             DeviceSnapshot.objects.filter(account=account).delete()
             DeviceRoom.objects.filter(account=account).delete()
 
@@ -240,6 +276,27 @@ class DeviceDashboardService:
                     source_payload=device_data.get("source_payload", {}),
                 )
                 device_map[device.external_id] = device
+
+                for control_data in device_data.get("controls", []):
+                    DeviceControl.objects.create(
+                        account=account,
+                        device=device,
+                        external_id=control_data["id"],
+                        parent_external_id=control_data.get("parent_id", "") or "",
+                        source_type=control_data["source_type"],
+                        kind=control_data["kind"],
+                        key=control_data["key"],
+                        label=control_data["label"],
+                        group_label=control_data.get("group_label", ""),
+                        writable=control_data.get("writable", False),
+                        value=control_data.get("value"),
+                        unit=control_data.get("unit", ""),
+                        options=control_data.get("options", []),
+                        range_spec=control_data.get("range_spec", {}),
+                        action_params=control_data.get("action_params", {}),
+                        source_payload=control_data.get("source_payload", {}),
+                        sort_order=control_data.get("sort_order", 0),
+                    )
 
             for anomaly_data in payload["anomalies"]:
                 DeviceAnomaly.objects.create(
@@ -286,6 +343,38 @@ class DeviceDashboardService:
         return cls.get_dashboard(account)
 
     @classmethod
+    def execute_control(
+        cls,
+        account: Account,
+        *,
+        device_external_id: str,
+        control_external_id: str,
+        action: str = "",
+        value: Any = None,
+    ) -> dict:
+        device = DeviceSnapshot.objects.filter(account=account, external_id=device_external_id).first()
+        if device is None:
+            raise ValueError("Device not found")
+
+        control = DeviceControl.objects.filter(account=account, device=device, external_id=control_external_id).first()
+        if control is None:
+            raise ValueError("Control not found")
+        if not control.writable:
+            raise ValueError("Control is read only")
+
+        if control.source_type == DeviceControl.SourceTypeChoices.HA_ENTITY:
+            cls._execute_home_assistant_control(account, control=control, action=action, value=value)
+        elif control.source_type in {
+            DeviceControl.SourceTypeChoices.MIJIA_PROPERTY,
+            DeviceControl.SourceTypeChoices.MIJIA_ACTION,
+        }:
+            cls._execute_mijia_control(account, device=device, control=control, value=value)
+        else:
+            raise ValueError(f"Unsupported control source: {control.source_type}")
+
+        return cls.refresh(account, trigger="control")
+
+    @classmethod
     def has_active_device_provider_auth(cls, account: Account) -> bool:
         return PlatformAuth.objects.filter(
             account=account,
@@ -296,8 +385,11 @@ class DeviceDashboardService:
     @classmethod
     def sync_after_provider_change(cls, account: Account, *, trigger: str) -> None:
         if cls.has_active_device_provider_auth(account):
-            cls.refresh(account, trigger=trigger)
+            logger.info(f"[Device Sync] 平台授权有变（触发源: {trigger}），正在申请后台全量同步...")
+            cls.request_refresh(account, trigger=trigger)
             return
+
+        logger.info(f"[Device Sync] 所有设备提供商已失效（触发源: {trigger}），正在清理本地业务数据快照...")
         cls.clear_all_data(account)
 
     @classmethod
@@ -326,156 +418,288 @@ class DeviceDashboardService:
             if not state.requested_trigger:
                 state.requested_trigger = trigger
             state.last_error = str(error)
-            state.save(
-                update_fields=[
-                    "requested_trigger",
-                    "refresh_requested_at",
-                    "last_error",
-                    "updated_at",
-                ]
-            )
+            state.save(update_fields=["requested_trigger", "refresh_requested_at", "last_error", "updated_at"])
             raise
 
     @classmethod
     def _build_mijia_snapshot(cls, account: Account) -> dict:
+        from mijiaAPI import get_device_info, mijiaDevice
         from providers.services import MijiaAuthService
 
         try:
             api = MijiaAuthService.get_authenticated_api(account=account)
             devices = api.get_devices_list()
             homes = api.get_homes_list()
-        except Exception as e:
-            logger.error(f"[Device Sync] Failed to fetch real MiJia data, falling back to demo: {e}")
-            return cls._build_demo_snapshot()
+        except Exception as error:
+            logger.error(f"[Device Sync] Failed to fetch real MiJia data, falling back to empty: {error}")
+            return cls._build_empty_snapshot()
 
-        home_map = {str(h["id"]): h["name"] for h in homes}
+        home_map = {str(h.get("id")): h.get("name") or "默认家庭" for h in homes}
+        room_index: dict[str, dict] = {}
+        devices_data: list[dict] = []
 
-        rooms_data = []
-        for h_id, h_name in home_map.items():
-            rooms_data.append(
+        for index, dev in enumerate(devices, start=1):
+            did = str(dev.get("did", "")).strip()
+            if not did:
+                continue
+
+            home_id = str(dev.get("home_id") or "default")
+            home_name = home_map.get(home_id) or "默认家庭"
+            room_name = dev.get("room_name") or home_name
+            room_key = f"{home_name}:{room_name}"
+            room_id = cls._make_room_id("mijia", room_key)
+            room_index.setdefault(
+                room_id,
                 {
-                    "id": f"mijia:{h_id}",
-                    "name": h_name,
-                    "climate": "已连接",
-                    "summary": f"来自米家家庭: {h_name}",
-                    "sort_order": 10,
-                }
+                    "id": room_id,
+                    "name": room_name,
+                    "climate": home_name,
+                    "summary": f"来自米家家庭: {home_name}",
+                    "sort_order": 10 + len(room_index) * 10,
+                },
             )
 
-        # Ensure at least one room exists if devices have no home_id or if homes list is empty
-        if not rooms_data:
-            rooms_data.append(
-                {
-                    "id": "mijia:default",
-                    "name": "默认家庭",
-                    "climate": "未知",
-                    "summary": "未检测到明确的米家家庭分组",
-                    "sort_order": 10,
-                }
-            )
+            model = str(dev.get("model", "")).strip()
+            controls = []
+            control_capabilities = []
+            device_client = None
 
-        devices_data = []
-        for dev in devices:
-            is_online = dev.get("isOnline", False)
-            raw_home_id = str(dev.get("home_id", "default"))
-            if raw_home_id not in home_map and raw_home_id != "default":
-                raw_home_id = "default"
+            try:
+                spec = get_device_info(model)
+            except Exception as error:
+                logger.warning(f"[Device Sync] Failed to load MiJia spec for {model}: {error}")
+                spec = {}
 
+            if spec:
+                try:
+                    device_client = mijiaDevice(api, did=did)
+                except Exception as error:
+                    logger.warning(f"[Device Sync] Failed to create MiJia device client for {did}: {error}")
+
+            for control in cls._build_mijia_controls(dev=dev, spec=spec, device_client=device_client):
+                controls.append(control)
+                if control["kind"] != DeviceControl.KindChoices.SENSOR and control["key"] not in control_capabilities:
+                    control_capabilities.append(control["key"])
+
+            is_online = bool(dev.get("isOnline", False))
             devices_data.append(
                 {
-                    "id": f"mijia:{dev['did']}",
-                    "room_id": f"mijia:{raw_home_id}",
-                    "name": dev["name"],
-                    "category": cls._map_model_to_category(dev["model"]),
+                    "id": f"mijia:{did}",
+                    "room_id": room_id,
+                    "name": dev.get("name") or did,
+                    "category": cls._map_model_to_category(model),
                     "status": "online" if is_online else "offline",
-                    "telemetry": "已连接" if is_online else "离线",
-                    "note": f"DID: {dev['did']} | IP: {dev.get('localip', 'N/A')} | 模型: {dev.get('model', 'unknown')}",
-                    "capabilities": [],
+                    "telemetry": cls._summarize_mijia_telemetry(controls, is_online=is_online),
+                    "note": f"DID: {did} | 模型: {model or 'unknown'}",
+                    "capabilities": control_capabilities[:8],
+                    "controls": controls,
                     "last_seen": timezone.now(),
-                    "sort_order": 10,
+                    "sort_order": index * 10,
                     "source_payload": dev,
                 }
             )
 
         return {
             "source": "mijia",
-            "rooms": rooms_data,
+            "rooms": list(room_index.values()),
             "devices": devices_data,
             "anomalies": [],
             "rules": [],
         }
 
     @classmethod
+    def _build_mijia_controls(
+        cls,
+        *,
+        dev: dict,
+        spec: dict,
+        device_client: Any = None,
+    ) -> list[dict]:
+        did = str(dev.get("did"))
+        controls: list[dict] = []
+        sort_order = 10
+
+        for prop in spec.get("properties", []) or []:
+            name = str(prop.get("name") or "").strip()
+            if not name:
+                continue
+
+            rw = str(prop.get("rw") or "")
+            value = None
+            if "r" in rw and device_client is not None:
+                try:
+                    value = device_client.get(name)
+                except Exception:
+                    value = None
+
+            kind = cls._infer_mijia_control_kind(prop)
+            range_spec = {}
+            if prop.get("range"):
+                range_values = prop.get("range") or []
+                if len(range_values) >= 2:
+                    range_spec = {
+                        "min": range_values[0],
+                        "max": range_values[1],
+                        "step": range_values[2] if len(range_values) >= 3 else 1,
+                    }
+
+            controls.append(
+                {
+                    "id": f"mijia:{did}:property:{name}",
+                    "source_type": DeviceControl.SourceTypeChoices.MIJIA_PROPERTY,
+                    "kind": kind,
+                    "key": name,
+                    "label": cls._pick_mijia_label(prop, fallback=name),
+                    "group_label": cls._extract_mijia_group_label(name),
+                    "writable": "w" in rw,
+                    "value": value,
+                    "unit": prop.get("unit") or "",
+                    "options": cls._normalize_mijia_options(prop.get("value-list")),
+                    "range_spec": range_spec,
+                    "action_params": {
+                        "kind": "property",
+                        "did": did,
+                        "property": name,
+                    },
+                    "source_payload": prop,
+                    "sort_order": sort_order,
+                }
+            )
+            sort_order += 10
+
+        for action in spec.get("actions", []) or []:
+            name = str(action.get("name") or "").strip()
+            if not name:
+                continue
+
+            controls.append(
+                {
+                    "id": f"mijia:{did}:action:{name}",
+                    "source_type": DeviceControl.SourceTypeChoices.MIJIA_ACTION,
+                    "kind": DeviceControl.KindChoices.ACTION,
+                    "key": name,
+                    "label": cls._pick_mijia_label(action, fallback=name),
+                    "group_label": cls._extract_mijia_group_label(name),
+                    "writable": True,
+                    "value": None,
+                    "unit": "",
+                    "options": [],
+                    "range_spec": {},
+                    "action_params": {
+                        "kind": "action",
+                        "did": did,
+                        "action": name,
+                    },
+                    "source_payload": action,
+                    "sort_order": sort_order,
+                }
+            )
+            sort_order += 10
+
+        return controls
+
+    @classmethod
     def _build_home_assistant_snapshot(cls, account: Account) -> dict:
         from providers.services import HomeAssistantAuthService
 
-        config, states = HomeAssistantAuthService.get_states(account=account)
+        config, states, registry = HomeAssistantAuthService.get_graph(account=account)
         default_room_name = config.get("location_name") or "Home Assistant"
-        room_bucket_id = cls._make_room_id("home_assistant", "default")
-        room_map = {
-            room_bucket_id: {
-                "id": room_bucket_id,
-                "name": default_room_name,
-                "climate": config.get("time_zone", ""),
-                "summary": f"来自 Home Assistant 实例: {default_room_name}",
-                "sort_order": 10,
-            }
+        room_map: dict[str, dict] = {}
+        grouped_entities: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        area_map = {str(area.get("area_id")): area for area in (registry.get("areas") or [])}
+        device_registry_map = {str(device.get("id")): device for device in (registry.get("devices") or [])}
+        entity_registry_map = {
+            str(entity.get("entity_id")): entity
+            for entity in (registry.get("entities") or [])
+            if entity.get("entity_id")
         }
 
-        devices_data = []
-        for index, entity in enumerate(states, start=1):
+        for entity in states:
             entity_id = str(entity.get("entity_id", "")).strip()
             if not entity_id:
                 continue
 
             domain = entity_id.split(".", 1)[0]
-            if domain not in {
-                "light",
-                "switch",
-                "fan",
-                "climate",
-                "sensor",
-                "binary_sensor",
-                "cover",
-                "lock",
-                "camera",
-                "media_player",
-                "humidifier",
-                "vacuum",
-            }:
+            if domain not in cls.supported_ha_domains:
                 continue
 
             attributes = entity.get("attributes") or {}
-            room_name = (
-                attributes.get("room")
+            friendly_name = str(attributes.get("friendly_name") or entity_id)
+            if any(keyword in friendly_name for keyword in ["Backup", "Sun Next", "Sun next"]):
+                continue
+            entity_registry = entity_registry_map.get(entity_id, {})
+            if entity_registry.get("hidden_by") or entity_registry.get("disabled_by"):
+                continue
+
+            registry_device = device_registry_map.get(str(entity_registry.get("device_id") or ""), {})
+            registry_area = area_map.get(
+                str(entity_registry.get("area_id") or registry_device.get("area_id") or "")
+            )
+
+            room_name = str(
+                registry_area.get("name")
+                or attributes.get("room")
                 or attributes.get("area_name")
                 or attributes.get("floor_name")
                 or default_room_name
             )
             room_id = cls._make_room_id("home_assistant", room_name)
-            if room_id not in room_map:
-                room_map[room_id] = {
+            room_map.setdefault(
+                room_id,
+                {
                     "id": room_id,
-                    "name": str(room_name),
-                    "climate": "",
+                    "name": room_name,
+                    "climate": config.get("time_zone", ""),
                     "summary": f"来自 Home Assistant 分组: {room_name}",
                     "sort_order": 10 + len(room_map) * 10,
-                }
+                },
+            )
 
-            state = str(entity.get("state", "")).strip()
+            device_key = cls._infer_home_assistant_device_key(
+                entity_id=entity_id,
+                friendly_name=friendly_name,
+                attributes=attributes,
+                registry_entity=entity_registry,
+                registry_device=registry_device,
+            )
+            grouped_entities[(room_id, device_key)].append(entity)
+
+        devices_data: list[dict] = []
+        for index, ((room_id, device_key), entities) in enumerate(grouped_entities.items(), start=1):
+            primary_entity = cls._pick_home_assistant_primary_entity(entities)
+            attributes = primary_entity.get("attributes") or {}
+            friendly_name = str(attributes.get("friendly_name") or primary_entity.get("entity_id"))
+            entity_id = str(primary_entity.get("entity_id"))
+            domain = entity_id.split(".", 1)[0]
+            entity_registry = entity_registry_map.get(entity_id, {})
+            registry_device = device_registry_map.get(str(entity_registry.get("device_id") or ""), {})
+            controls = cls._build_home_assistant_controls(
+                entities,
+                entity_registry_map=entity_registry_map,
+            )
             devices_data.append(
                 {
-                    "id": f"home_assistant:{entity_id}",
+                    "id": f"home_assistant:{device_key}",
                     "room_id": room_id,
-                    "name": attributes.get("friendly_name") or entity_id,
+                    "name": cls._infer_home_assistant_device_name(
+                        device_key=device_key,
+                        friendly_name=friendly_name,
+                        registry_device=registry_device,
+                    ),
                     "category": cls._map_home_assistant_domain_to_category(domain),
-                    "status": cls._map_home_assistant_status(state),
-                    "telemetry": cls._describe_home_assistant_telemetry(state, attributes),
-                    "note": f"Entity: {entity_id} | Domain: {domain}",
-                    "capabilities": cls._extract_home_assistant_capabilities(domain, attributes),
+                    "status": cls._map_home_assistant_status(str(primary_entity.get("state", ""))),
+                    "telemetry": cls._summarize_home_assistant_device(entities),
+                    "note": f"{len(entities)} 个 HA 实体已归属到该设备",
+                    "capabilities": [control["key"] for control in controls if control["kind"] != DeviceControl.KindChoices.SENSOR][:8],
+                    "controls": controls,
                     "last_seen": timezone.now(),
                     "sort_order": index * 10,
-                    "source_payload": entity,
+                    "source_payload": {
+                        "entity_ids": [item.get("entity_id") for item in entities],
+                        "device_id": registry_device.get("id"),
+                        "device_name": registry_device.get("name_by_user") or registry_device.get("name"),
+                        "area_id": entity_registry.get("area_id") or registry_device.get("area_id"),
+                    },
                 }
             )
 
@@ -486,6 +710,662 @@ class DeviceDashboardService:
             "anomalies": [],
             "rules": [],
         }
+
+    @classmethod
+    def _build_home_assistant_controls(
+        cls,
+        entities: list[dict],
+        *,
+        entity_registry_map: dict[str, dict] | None = None,
+    ) -> list[dict]:
+        entity_registry_map = entity_registry_map or {}
+        controls: list[dict] = []
+        sort_order = 10
+        for entity in entities:
+            entity_id = str(entity.get("entity_id", ""))
+            domain = entity_id.split(".", 1)[0]
+            attributes = entity.get("attributes") or {}
+            registry_entity = entity_registry_map.get(entity_id, {})
+            friendly_name = str(
+                registry_entity.get("name")
+                or registry_entity.get("original_name")
+                or attributes.get("friendly_name")
+                or entity_id
+            )
+            group_label = cls._extract_home_assistant_group_label(
+                friendly_name,
+                entity_id=entity_id,
+                attributes=attributes,
+                registry_entity=registry_entity,
+            )
+            state = entity.get("state")
+
+            if domain in {"sensor", "binary_sensor", "camera"}:
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=entity_id,
+                        label=friendly_name,
+                        kind=DeviceControl.KindChoices.SENSOR,
+                        writable=False,
+                        value=state,
+                        unit=attributes.get("unit_of_measurement") or "",
+                        group_label=group_label,
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+                continue
+
+            if domain in {"switch", "input_boolean", "light", "fan", "humidifier", "lock"}:
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=entity_id,
+                        label=friendly_name,
+                        kind=DeviceControl.KindChoices.TOGGLE,
+                        writable=True,
+                        value=state,
+                        group_label=group_label,
+                        action_params={
+                            "service_domain": "lock" if domain == "lock" else domain,
+                            "entity_id": entity_id,
+                            "actions": cls._build_ha_toggle_actions(domain),
+                        },
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+
+                if domain == "light" and attributes.get("brightness") is not None:
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:brightness",
+                            label=f"{friendly_name} 亮度",
+                            kind=DeviceControl.KindChoices.RANGE,
+                            writable=True,
+                            value=attributes.get("brightness"),
+                            range_spec={"min": 0, "max": 255, "step": 1},
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "light",
+                                "entity_id": entity_id,
+                                "service": "turn_on",
+                                "value_field": "brightness",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+
+                if domain == "light" and attributes.get("color_temp_kelvin") is not None:
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:color_temp_kelvin",
+                            label=f"{friendly_name} 色温",
+                            kind=DeviceControl.KindChoices.RANGE,
+                            writable=True,
+                            value=attributes.get("color_temp_kelvin"),
+                            range_spec={
+                                "min": attributes.get("min_color_temp_kelvin", 2000),
+                                "max": attributes.get("max_color_temp_kelvin", 6500),
+                                "step": 100,
+                            },
+                            unit="K",
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "light",
+                                "entity_id": entity_id,
+                                "service": "turn_on",
+                                "value_field": "color_temp_kelvin",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+
+                if domain == "fan" and attributes.get("percentage") is not None:
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:percentage",
+                            label=f"{friendly_name} 风速",
+                            kind=DeviceControl.KindChoices.RANGE,
+                            writable=True,
+                            value=attributes.get("percentage"),
+                            range_spec={"min": 0, "max": 100, "step": 1},
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "fan",
+                                "entity_id": entity_id,
+                                "service": "set_percentage",
+                                "value_field": "percentage",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+
+                if domain == "fan" and attributes.get("preset_modes"):
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:preset_mode",
+                            label=f"{friendly_name} 预设模式",
+                            kind=DeviceControl.KindChoices.ENUM,
+                            writable=True,
+                            value=attributes.get("preset_mode") or state,
+                            options=cls._build_enum_options(attributes.get("preset_modes")),
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "fan",
+                                "entity_id": entity_id,
+                                "service": "set_preset_mode",
+                                "value_field": "preset_mode",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+
+                if domain == "humidifier" and attributes.get("available_modes"):
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:mode",
+                            label=f"{friendly_name} 模式",
+                            kind=DeviceControl.KindChoices.ENUM,
+                            writable=True,
+                            value=attributes.get("mode") or state,
+                            options=cls._build_enum_options(attributes.get("available_modes")),
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "humidifier",
+                                "entity_id": entity_id,
+                                "service": "set_mode",
+                                "value_field": "mode",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+                continue
+
+            if domain in {"number", "input_number"}:
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=entity_id,
+                        label=friendly_name,
+                        kind=DeviceControl.KindChoices.RANGE,
+                        writable=True,
+                        value=cls._parse_numeric_value(state),
+                        range_spec={
+                            "min": attributes.get("min", 0),
+                            "max": attributes.get("max", 100),
+                            "step": attributes.get("step", 1),
+                        },
+                        unit=attributes.get("unit_of_measurement") or "",
+                        group_label=group_label,
+                        action_params={
+                            "service_domain": domain,
+                            "entity_id": entity_id,
+                            "service": "set_value",
+                            "value_field": "value",
+                        },
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+                continue
+
+            if domain == "select":
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=entity_id,
+                        label=friendly_name,
+                        kind=DeviceControl.KindChoices.ENUM,
+                        writable=True,
+                        value=state,
+                        options=[{"label": str(item), "value": item} for item in (attributes.get("options") or [])],
+                        group_label=group_label,
+                        action_params={
+                            "service_domain": "select",
+                            "entity_id": entity_id,
+                            "service": "select_option",
+                            "value_field": "option",
+                        },
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+                continue
+
+            if domain in {"button", "scene", "script"}:
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=entity_id,
+                        label=friendly_name,
+                        kind=DeviceControl.KindChoices.ACTION,
+                        writable=True,
+                        value=None,
+                        group_label=group_label,
+                        action_params={
+                            "service_domain": domain,
+                            "entity_id": entity_id,
+                            "service": "press" if domain == "button" else "turn_on",
+                        },
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+                continue
+
+            if domain == "climate":
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=f"{entity_id}:hvac_mode",
+                        label=f"{friendly_name} 模式",
+                        kind=DeviceControl.KindChoices.ENUM,
+                        writable=True,
+                        value=state,
+                        options=[{"label": str(item), "value": item} for item in (attributes.get("hvac_modes") or [])],
+                        group_label=group_label,
+                        action_params={
+                            "service_domain": "climate",
+                            "entity_id": entity_id,
+                            "service": "set_hvac_mode",
+                            "value_field": "hvac_mode",
+                        },
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+                if attributes.get("temperature") is not None:
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:target_temperature",
+                            label=f"{friendly_name} 目标温度",
+                            kind=DeviceControl.KindChoices.RANGE,
+                            writable=True,
+                            value=attributes.get("temperature"),
+                            range_spec={
+                                "min": attributes.get("min_temp", 16),
+                                "max": attributes.get("max_temp", 30),
+                                "step": attributes.get("target_temp_step", 1),
+                            },
+                            unit=attributes.get("temperature_unit") or "°C",
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "climate",
+                                "entity_id": entity_id,
+                                "service": "set_temperature",
+                                "value_field": "temperature",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+                if attributes.get("current_temperature") is not None:
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:current_temperature",
+                            label=f"{friendly_name} 当前温度",
+                            kind=DeviceControl.KindChoices.SENSOR,
+                            writable=False,
+                            value=attributes.get("current_temperature"),
+                            unit=attributes.get("temperature_unit") or "°C",
+                            group_label=group_label,
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+                for extra_key, label_text, service_name, value_field in (
+                    ("preset_modes", "预设模式", "set_preset_mode", "preset_mode"),
+                    ("fan_modes", "风速模式", "set_fan_mode", "fan_mode"),
+                    ("swing_modes", "扫风模式", "set_swing_mode", "swing_mode"),
+                ):
+                    if attributes.get(extra_key):
+                        controls.append(
+                            cls._build_ha_control_record(
+                                entity_id=entity_id,
+                                key=f"{entity_id}:{value_field}",
+                                label=f"{friendly_name} {label_text}",
+                                kind=DeviceControl.KindChoices.ENUM,
+                                writable=True,
+                                value=attributes.get(value_field) or state,
+                                options=cls._build_enum_options(attributes.get(extra_key)),
+                                group_label=group_label,
+                                action_params={
+                                    "service_domain": "climate",
+                                    "entity_id": entity_id,
+                                    "service": service_name,
+                                    "value_field": value_field,
+                                },
+                                source_payload=entity,
+                                sort_order=sort_order,
+                            )
+                        )
+                        sort_order += 10
+                continue
+
+            if domain == "cover":
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=entity_id,
+                        label=friendly_name,
+                        kind=DeviceControl.KindChoices.ACTION,
+                        writable=True,
+                        value=state,
+                        group_label=group_label,
+                        action_params={
+                            "service_domain": "cover",
+                            "entity_id": entity_id,
+                            "actions": [
+                                {"id": "open_cover", "label": "打开"},
+                                {"id": "close_cover", "label": "关闭"},
+                                {"id": "stop_cover", "label": "停止"},
+                            ],
+                        },
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+                if attributes.get("current_position") is not None:
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:position",
+                            label=f"{friendly_name} 开合度",
+                            kind=DeviceControl.KindChoices.RANGE,
+                            writable=True,
+                            value=attributes.get("current_position"),
+                            range_spec={"min": 0, "max": 100, "step": 1},
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "cover",
+                                "entity_id": entity_id,
+                                "service": "set_cover_position",
+                                "value_field": "position",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+                continue
+
+            if domain == "media_player":
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=entity_id,
+                        label=friendly_name,
+                        kind=DeviceControl.KindChoices.ACTION,
+                        writable=True,
+                        value=state,
+                        group_label=group_label,
+                        action_params={
+                            "service_domain": "media_player",
+                            "entity_id": entity_id,
+                            "actions": [
+                                {"id": "turn_on", "label": "开启"},
+                                {"id": "turn_off", "label": "关闭"},
+                                {"id": "media_play_pause", "label": "播放/暂停"},
+                            ],
+                        },
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+                if attributes.get("volume_level") is not None:
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:volume_level",
+                            label=f"{friendly_name} 音量",
+                            kind=DeviceControl.KindChoices.RANGE,
+                            writable=True,
+                            value=attributes.get("volume_level"),
+                            range_spec={"min": 0, "max": 1, "step": 0.05},
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "media_player",
+                                "entity_id": entity_id,
+                                "service": "volume_set",
+                                "value_field": "volume_level",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+                if attributes.get("source_list"):
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:source",
+                            label=f"{friendly_name} 输入源",
+                            kind=DeviceControl.KindChoices.ENUM,
+                            writable=True,
+                            value=attributes.get("source") or state,
+                            options=cls._build_enum_options(attributes.get("source_list")),
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "media_player",
+                                "entity_id": entity_id,
+                                "service": "select_source",
+                                "value_field": "source",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+                continue
+
+            if domain == "vacuum":
+                controls.append(
+                    cls._build_ha_control_record(
+                        entity_id=entity_id,
+                        key=entity_id,
+                        label=friendly_name,
+                        kind=DeviceControl.KindChoices.ACTION,
+                        writable=True,
+                        value=state,
+                        group_label=group_label,
+                        action_params={
+                            "service_domain": "vacuum",
+                            "entity_id": entity_id,
+                            "actions": [
+                                {"id": "start", "label": "开始"},
+                                {"id": "pause", "label": "暂停"},
+                                {"id": "return_to_base", "label": "回充"},
+                            ],
+                        },
+                        source_payload=entity,
+                        sort_order=sort_order,
+                    )
+                )
+                sort_order += 10
+                if attributes.get("fan_speed_list"):
+                    controls.append(
+                        cls._build_ha_control_record(
+                            entity_id=entity_id,
+                            key=f"{entity_id}:fan_speed",
+                            label=f"{friendly_name} 吸力模式",
+                            kind=DeviceControl.KindChoices.ENUM,
+                            writable=True,
+                            value=attributes.get("fan_speed") or state,
+                            options=cls._build_enum_options(attributes.get("fan_speed_list")),
+                            group_label=group_label,
+                            action_params={
+                                "service_domain": "vacuum",
+                                "entity_id": entity_id,
+                                "service": "set_fan_speed",
+                                "value_field": "fan_speed",
+                            },
+                            source_payload=entity,
+                            sort_order=sort_order,
+                        )
+                    )
+                    sort_order += 10
+                continue
+
+            controls.append(
+                cls._build_ha_control_record(
+                    entity_id=entity_id,
+                    key=entity_id,
+                    label=friendly_name,
+                    kind=DeviceControl.KindChoices.SENSOR,
+                    writable=False,
+                    value=state,
+                    group_label=group_label,
+                    source_payload=entity,
+                    sort_order=sort_order,
+                )
+            )
+            sort_order += 10
+
+        return controls
+
+    @staticmethod
+    def _build_enum_options(values: Any) -> list[dict]:
+        if not isinstance(values, list):
+            return []
+        return [{"label": str(item), "value": item} for item in values]
+
+    @staticmethod
+    def _build_ha_control_record(
+        *,
+        entity_id: str,
+        key: str,
+        label: str,
+        kind: str,
+        writable: bool,
+        value: Any,
+        group_label: str,
+        source_payload: dict,
+        sort_order: int,
+        unit: str = "",
+        options: list[dict] | None = None,
+        range_spec: dict | None = None,
+        action_params: dict | None = None,
+    ) -> dict:
+        return {
+            "id": f"home_assistant:{key}",
+            "parent_id": f"home_assistant:{entity_id}",
+            "source_type": DeviceControl.SourceTypeChoices.HA_ENTITY,
+            "kind": kind,
+            "key": key,
+            "label": label,
+            "group_label": group_label,
+            "writable": writable,
+            "value": value,
+            "unit": unit,
+            "options": options or [],
+            "range_spec": range_spec or {},
+            "action_params": action_params or {},
+            "source_payload": source_payload,
+            "sort_order": sort_order,
+        }
+
+    @classmethod
+    def _execute_home_assistant_control(cls, account: Account, *, control: DeviceControl, action: str, value: Any) -> None:
+        from providers.services import HomeAssistantAuthService
+
+        auth_obj = HomeAssistantAuthService.get_auth_record(account=account, active_only=True)
+        payload = HomeAssistantAuthService._extract_payload(auth_obj)
+        if not payload:
+            raise ValueError("No active Home Assistant authorization found")
+
+        base_url = HomeAssistantAuthService._normalize_base_url(payload.get("base_url", ""))
+        headers = HomeAssistantAuthService._build_headers(payload.get("access_token", ""))
+        params = control.action_params or {}
+        service_domain = params.get("service_domain")
+        entity_id = params.get("entity_id")
+        if not service_domain or not entity_id:
+            raise ValueError("Home Assistant control metadata is incomplete")
+
+        if control.kind == DeviceControl.KindChoices.TOGGLE:
+            service = action or "toggle"
+            if service not in {"turn_on", "turn_off", "toggle", "lock", "unlock"}:
+                raise ValueError("Unsupported toggle action")
+            body = {"entity_id": entity_id}
+        elif control.kind == DeviceControl.KindChoices.ACTION:
+            service = action or params.get("service")
+            if not service:
+                raise ValueError("Missing action name")
+            body = {"entity_id": entity_id}
+        else:
+            service = params.get("service")
+            value_field = params.get("value_field")
+            if not service or not value_field:
+                raise ValueError("Home Assistant control metadata is incomplete")
+            if value is None:
+                raise ValueError("Missing control value")
+            body = {
+                "entity_id": entity_id,
+                value_field: value,
+            }
+
+        response = requests.post(
+            f"{base_url}/api/services/{service_domain}/{service}",
+            headers=headers,
+            json=body,
+            timeout=15,
+        )
+        response.raise_for_status()
+
+    @classmethod
+    def _execute_mijia_control(cls, account: Account, *, device: DeviceSnapshot, control: DeviceControl, value: Any) -> None:
+        from mijiaAPI import mijiaDevice
+        from providers.services import MijiaAuthService
+
+        params = control.action_params or {}
+        did = params.get("did")
+        if not did:
+            raw_payload = device.source_payload or {}
+            did = raw_payload.get("did")
+        if not did:
+            raise ValueError("MiJia device identifier is missing")
+
+        api = MijiaAuthService.get_authenticated_api(account=account)
+        client = mijiaDevice(api, did=str(did))
+
+        if control.source_type == DeviceControl.SourceTypeChoices.MIJIA_PROPERTY:
+            if value is None:
+                raise ValueError("Missing property value")
+            client.set(control.key, value)
+            return
+
+        action_value = value
+        if action_value == "":
+            action_value = None
+        client.run_action(control.key, value=action_value)
 
     @classmethod
     def _merge_snapshots(cls, payloads: list[dict]) -> dict:
@@ -505,23 +1385,25 @@ class DeviceDashboardService:
 
     @staticmethod
     def _map_model_to_category(model: str) -> str:
-        model = (model or "").lower()
-        if "light" in model:
+        normalized = (model or "").lower()
+        if "light" in normalized:
             return "灯光"
-        if "sensor" in model:
+        if "sensor" in normalized:
             return "传感器"
-        if "airpurifier" in model or "purifier" in model:
+        if "airpurifier" in normalized or "purifier" in normalized:
             return "空气护理"
-        if "acpartner" in model or "aircondition" in model or "climate" in model:
+        if "acpartner" in normalized or "aircondition" in normalized or "climate" in normalized:
             return "空调"
-        if "fountain" in model or "feeder" in model:
+        if "fountain" in normalized or "feeder" in normalized:
             return "宠物照护"
-        if "switch" in model or "plug" in model:
+        if "switch" in normalized or "plug" in normalized:
             return "开关"
-        if "curtain" in model:
+        if "curtain" in normalized:
             return "窗帘"
-        if "camera" in model:
+        if "camera" in normalized:
             return "监控"
+        if "fridge" in normalized or "refrigerator" in normalized:
+            return "冰箱"
         return "其他设备"
 
     @staticmethod
@@ -548,6 +1430,8 @@ class DeviceDashboardService:
             "media_player": "媒体设备",
             "humidifier": "空气护理",
             "vacuum": "清洁设备",
+            "number": "数值控制",
+            "select": "模式控制",
         }
         return mapping.get(domain, "其他设备")
 
@@ -556,30 +1440,219 @@ class DeviceDashboardService:
         normalized = (state or "").lower()
         if normalized in {"unavailable", "unknown", "offline"}:
             return "offline"
-        if normalized in {"on", "open", "unlocking", "locking", "jammed", "problem"}:
+        if normalized in {"on", "open", "unlocking", "locking", "jammed", "problem", "triggered"}:
             return "attention"
         return "online"
 
-    @staticmethod
-    def _describe_home_assistant_telemetry(state: str, attributes: dict) -> str:
-        candidates = [
-            attributes.get("current_temperature"),
-            attributes.get("temperature"),
-            attributes.get("humidity"),
-            attributes.get("power"),
-            attributes.get("brightness"),
-        ]
-        details = [str(item) for item in candidates if item not in (None, "", [])]
-        return " / ".join([state] + details[:2]) if details else state
+    @classmethod
+    def _summarize_home_assistant_device(cls, entities: list[dict]) -> str:
+        parts: list[str] = []
+        for entity in entities[:4]:
+            attributes = entity.get("attributes") or {}
+            friendly_name = str(attributes.get("friendly_name") or entity.get("entity_id"))
+            state = str(entity.get("state", ""))
+            unit = attributes.get("unit_of_measurement") or ""
+            short_name = friendly_name[:14]
+            parts.append(f"{short_name}: {state}{unit}")
+        return " | ".join(parts)
 
     @staticmethod
-    def _extract_home_assistant_capabilities(domain: str, attributes: dict) -> list[str]:
-        capabilities = [domain]
-        for key in ("supported_color_modes", "hvac_modes", "preset_modes", "effect_list"):
-            value = attributes.get(key)
-            if isinstance(value, list) and value:
-                capabilities.extend(str(item) for item in value[:4])
-        return capabilities
+    def _parse_numeric_value(value: Any) -> Any:
+        try:
+            parsed = float(value)
+            return int(parsed) if parsed.is_integer() else parsed
+        except (TypeError, ValueError):
+            return value
+
+    @staticmethod
+    def _pick_home_assistant_primary_entity(entities: list[dict]) -> dict:
+        for preferred_domain in ("switch", "light", "climate", "fan", "humidifier", "select", "number"):
+            for entity in entities:
+                entity_id = str(entity.get("entity_id", ""))
+                if entity_id.startswith(f"{preferred_domain}."):
+                    return entity
+        return entities[0]
+
+    @classmethod
+    def _infer_home_assistant_device_key(
+        cls,
+        *,
+        entity_id: str,
+        friendly_name: str,
+        attributes: dict,
+        registry_entity: dict | None = None,
+        registry_device: dict | None = None,
+    ) -> str:
+        registry_entity = registry_entity or {}
+        registry_device = registry_device or {}
+        registry_device_id = registry_entity.get("device_id") or registry_device.get("id")
+        if registry_device_id:
+            return f"device_{cls._slugify(str(registry_device_id))}"
+
+        explicit = attributes.get("device_id") or attributes.get("device_name")
+        if explicit:
+            return cls._slugify(str(explicit))
+
+        object_id = entity_id.split(".", 1)[1] if "." in entity_id else entity_id
+        tokens = [token for token in object_id.split("_") if token]
+        if len(tokens) >= 3:
+            return "_".join(tokens[: max(2, len(tokens) - 1)])
+        if len(tokens) >= 2:
+            return "_".join(tokens[:-1])
+
+        normalized_name = cls._slugify(friendly_name)
+        return normalized_name or cls._slugify(object_id)
+
+    @classmethod
+    def _infer_home_assistant_device_name(
+        cls,
+        *,
+        device_key: str,
+        friendly_name: str,
+        registry_device: dict | None = None,
+    ) -> str:
+        registry_device = registry_device or {}
+        registry_name = registry_device.get("name_by_user") or registry_device.get("name")
+        if registry_name:
+            return str(registry_name)
+        if " " in friendly_name:
+            return friendly_name.split(" ", 1)[0]
+        if "·" in friendly_name:
+            return friendly_name.split("·", 1)[0]
+        return cls._titleize_slug(device_key)
+
+    @classmethod
+    def _extract_home_assistant_group_label(
+        cls,
+        friendly_name: str,
+        *,
+        entity_id: str = "",
+        attributes: dict | None = None,
+        registry_entity: dict | None = None,
+    ) -> str:
+        attributes = attributes or {}
+        registry_entity = registry_entity or {}
+        haystacks = [
+            friendly_name.lower(),
+            entity_id.lower(),
+            str(registry_entity.get("original_name") or "").lower(),
+            str(registry_entity.get("name") or "").lower(),
+            str(attributes.get("device_class") or "").lower(),
+        ]
+
+        keyword_groups = [
+            ("整机", ("power", "main", "master", "total", "overall", "整机", "总电源", "运行状态", "status")),
+            ("冷藏区", ("冷藏", "refrigerator", "fridge", "cool")),
+            ("冷冻区", ("冷冻", "freezer", "freeze")),
+            ("变温区", ("变温", "variable", "middle", "flex")),
+            ("门体", ("door", "门")),
+            ("照明", ("light", "lamp", "led", "照明", "灯")),
+            ("模式", ("mode", "preset", "program", "模式")),
+            ("系统", ("diagnostic", "config", "battery", "signal", "system", "firmware")),
+        ]
+        for label, keywords in keyword_groups:
+            if any(any(keyword in haystack for keyword in keywords) for haystack in haystacks):
+                return label
+
+        entity_category = str(registry_entity.get("entity_category") or "").lower()
+        if entity_category == "diagnostic":
+            return "系统"
+        if entity_category == "config":
+            return "设置"
+
+        object_id = entity_id.split(".", 1)[1] if "." in entity_id else entity_id
+        tokens = [token for token in re.split(r"[_\-\s]+", object_id) if token]
+        stop_words = {"sensor", "switch", "binary", "number", "select", "button", "input", "temperature", "humidity"}
+        candidates = [token for token in tokens if token not in stop_words]
+        if candidates:
+            first = candidates[0]
+            if first in {"fridge", "refrigerator", "freezer", "cool"}:
+                return "冷藏区" if first != "freezer" else "冷冻区"
+            return cls._titleize_slug(first)
+
+        for separator in (" ", "·", "-", "_"):
+            if separator in friendly_name:
+                return friendly_name.split(separator, 1)[1].strip()
+        return "通用"
+
+    @staticmethod
+    def _build_ha_toggle_actions(domain: str) -> list[dict]:
+        if domain == "lock":
+            return [
+                {"id": "lock", "label": "上锁"},
+                {"id": "unlock", "label": "解锁"},
+            ]
+        return [
+            {"id": "turn_on", "label": "开启"},
+            {"id": "turn_off", "label": "关闭"},
+            {"id": "toggle", "label": "切换"},
+        ]
+
+    @staticmethod
+    def _infer_mijia_control_kind(prop: dict) -> str:
+        rw = str(prop.get("rw") or "")
+        if "w" not in rw:
+            return DeviceControl.KindChoices.SENSOR
+        value_list = prop.get("value-list") or []
+        if value_list:
+            return DeviceControl.KindChoices.ENUM
+        value_type = prop.get("type")
+        if value_type == "bool":
+            return DeviceControl.KindChoices.TOGGLE
+        if value_type in {"int", "uint", "float"}:
+            return DeviceControl.KindChoices.RANGE
+        if value_type == "string":
+            return DeviceControl.KindChoices.TEXT
+        return DeviceControl.KindChoices.SENSOR
+
+    @staticmethod
+    def _normalize_mijia_options(value_list: list[dict] | None) -> list[dict]:
+        if not value_list:
+            return []
+        options = []
+        for item in value_list:
+            label = item.get("description") or item.get("desc_zh_cn") or item.get("name") or str(item.get("value"))
+            options.append({"label": str(label), "value": item.get("value")})
+        return options
+
+    @staticmethod
+    def _pick_mijia_label(payload: dict, *, fallback: str) -> str:
+        raw = str(payload.get("description") or payload.get("desc_zh_cn") or payload.get("name") or fallback)
+        if " / " in raw:
+            zh, _, en = raw.partition(" / ")
+            return zh.strip() or en.strip() or fallback
+        return raw
+
+    @staticmethod
+    def _extract_mijia_group_label(name: str) -> str:
+        if "-" in name:
+            return name.split("-", 1)[0].replace("_", " ").strip()
+        return ""
+
+    @staticmethod
+    def _summarize_mijia_telemetry(controls: list[dict], *, is_online: bool) -> str:
+        if not is_online:
+            return "离线"
+        interesting = []
+        for control in controls:
+            if control["kind"] == DeviceControl.KindChoices.ACTION:
+                continue
+            value = control.get("value")
+            if value in (None, "", [], {}):
+                continue
+            suffix = control.get("unit", "")
+            interesting.append(f"{control['label']}: {value}{suffix}")
+            if len(interesting) >= 3:
+                break
+        return " | ".join(interesting) if interesting else "已连接"
+
+    @staticmethod
+    def _slugify(value: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9]+", "_", str(value or "").strip()).strip("_").lower()
+
+    @staticmethod
+    def _titleize_slug(value: str) -> str:
+        return str(value or "").replace("_", " ").replace("-", " ").strip().title() or "Home Assistant Device"
 
     @staticmethod
     def _build_empty_snapshot() -> dict:
@@ -589,186 +1662,4 @@ class DeviceDashboardService:
             "devices": [],
             "anomalies": [],
             "rules": [],
-        }
-
-    @staticmethod
-    def _build_demo_snapshot() -> dict:
-        now = timezone.now()
-
-        return {
-            "source": "demo-cache",
-            "rooms": [
-                {
-                    "id": "living",
-                    "name": "客厅",
-                    "climate": "26°C / 58% RH",
-                    "summary": "主要观察照明、门口传感器和离家状态是否一致。",
-                    "sort_order": 10,
-                },
-                {
-                    "id": "bedroom",
-                    "name": "主卧",
-                    "climate": "24°C / 自动",
-                    "summary": "主卧设备整体稳定，适合作为逐步自动化的样板房间。",
-                    "sort_order": 20,
-                },
-                {
-                    "id": "studio",
-                    "name": "书房",
-                    "climate": "AQI 82 / 稍差",
-                    "summary": "空气质量和净化器策略是书房当前的重点。",
-                    "sort_order": 30,
-                },
-                {
-                    "id": "pet",
-                    "name": "宠物角",
-                    "climate": "饮水余量 18%",
-                    "summary": "宠物相关设备保持保守策略，优先保证安全。",
-                    "sort_order": 40,
-                },
-            ],
-            "devices": [
-                {
-                    "id": "living-light",
-                    "room_id": "living",
-                    "name": "客厅灯",
-                    "category": "灯光",
-                    "status": "attention",
-                    "telemetry": "已开 / 68% 亮度",
-                    "note": "离家模式下仍保持开启，和预期策略不一致。",
-                    "capabilities": ["亮度控制", "场景联动"],
-                    "last_seen": now - timedelta(minutes=3),
-                    "sort_order": 10,
-                },
-                {
-                    "id": "entry-sensor",
-                    "room_id": "living",
-                    "name": "入户传感器",
-                    "category": "传感器",
-                    "status": "online",
-                    "telemetry": "门已关闭 / 空闲",
-                    "note": "在线且状态正常，是离家判断的重要参考。",
-                    "capabilities": ["开合检测", "离家联动"],
-                    "last_seen": now - timedelta(minutes=1),
-                    "sort_order": 20,
-                },
-                {
-                    "id": "bedroom-ac",
-                    "room_id": "bedroom",
-                    "name": "主卧空调",
-                    "category": "空调",
-                    "status": "online",
-                    "telemetry": "24°C / 自动模式",
-                    "note": "温控稳定，适合尝试更细的自动化策略。",
-                    "capabilities": ["温度设定", "风速模式"],
-                    "last_seen": now - timedelta(minutes=6),
-                    "sort_order": 30,
-                },
-                {
-                    "id": "studio-purifier",
-                    "room_id": "studio",
-                    "name": "书房净化器",
-                    "category": "空气护理",
-                    "status": "attention",
-                    "telemetry": "AQI 82 / 自动挡",
-                    "note": "设备在线，但空气质量已进入需要关注的区间。",
-                    "capabilities": ["空气质量监测", "自动净化"],
-                    "last_seen": now - timedelta(minutes=8),
-                    "sort_order": 40,
-                },
-                {
-                    "id": "pet-fountain",
-                    "room_id": "pet",
-                    "name": "宠物饮水机",
-                    "category": "宠物照护",
-                    "status": "offline",
-                    "telemetry": "最近一次心跳 27 分钟前",
-                    "note": "需要同时确认水量和在线状态。",
-                    "capabilities": ["低水位提醒", "运行状态监测"],
-                    "last_seen": now - timedelta(minutes=27),
-                    "sort_order": 50,
-                },
-            ],
-            "anomalies": [
-                {
-                    "id": "alert-living-light",
-                    "room_id": "living",
-                    "device_id": "living-light",
-                    "severity": "medium",
-                    "title": "离家模式下客厅灯仍然开启",
-                    "body": "系统判断这是一条低风险但值得自动化的节能动作。",
-                    "recommendation": "先人工确认一次关灯，再决定是否升级成自动执行。",
-                    "sort_order": 10,
-                },
-                {
-                    "id": "alert-studio-air",
-                    "room_id": "studio",
-                    "device_id": "studio-purifier",
-                    "severity": "medium",
-                    "title": "书房空气质量持续走低",
-                    "body": "净化器在线，但主动关怀尚未提前介入。",
-                    "recommendation": "检查书房规则阈值，必要时提高净化触发优先级。",
-                    "sort_order": 20,
-                },
-                {
-                    "id": "alert-pet-fountain",
-                    "room_id": "pet",
-                    "device_id": "pet-fountain",
-                    "severity": "high",
-                    "title": "宠物饮水机状态异常",
-                    "body": "设备心跳变旧且水量偏低，需要优先人工确认。",
-                    "recommendation": "先确认供电和余量，再判断是否需要重新配对或更换。",
-                    "sort_order": 30,
-                },
-            ],
-            "rules": [
-                {
-                    "id": "rule-away-light",
-                    "room_id": "living",
-                    "device_id": "living-light",
-                    "mode_key": "away",
-                    "mode_label": "离家",
-                    "target": "客厅灯 / 开关",
-                    "condition": "离家 10 分钟后，客厅灯亮度仍大于 0。",
-                    "decision": "ask",
-                    "rationale": "这条规则已经很接近自动化，但仍保留一次确认。",
-                    "sort_order": 10,
-                },
-                {
-                    "id": "rule-away-ac",
-                    "room_id": "bedroom",
-                    "device_id": "bedroom-ac",
-                    "mode_key": "away",
-                    "mode_label": "离家",
-                    "target": "主卧空调 / 开关",
-                    "condition": "离家 20 分钟后，主卧无人活动。",
-                    "decision": "always",
-                    "rationale": "误判成本较低，节能收益明确，适合自动执行。",
-                    "sort_order": 20,
-                },
-                {
-                    "id": "rule-home-purifier",
-                    "room_id": "studio",
-                    "device_id": "studio-purifier",
-                    "mode_key": "home",
-                    "mode_label": "在家",
-                    "target": "书房净化器 / 开关",
-                    "condition": "AQI 高于 75 且主人正在书房停留。",
-                    "decision": "ask",
-                    "rationale": "人在场时先说明原因再执行，更容易建立信任。",
-                    "sort_order": 30,
-                },
-                {
-                    "id": "rule-pet-fountain",
-                    "room_id": "pet",
-                    "device_id": "pet-fountain",
-                    "mode_key": "all-day",
-                    "mode_label": "全天",
-                    "target": "宠物饮水机 / 断电",
-                    "condition": "任何自动关闭动作都必须先通过人工确认。",
-                    "decision": "never",
-                    "rationale": "涉及宠物安全的设备默认不允许自动断电。",
-                    "sort_order": 40,
-                },
-            ],
         }

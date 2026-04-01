@@ -15,7 +15,7 @@ export default {
     actions: {
       tasks: "Go to tasks",
       devices: "View details",
-      authorize: "Authorize Service",
+      authorize: "No devices, please authorize",
     },
     metrics: {
       online: "Online",
@@ -23,7 +23,7 @@ export default {
       tasks: "Pending Tasks",
     },
     empty: {
-      auth: "No authorized platforms yet",
+      auth: "No authorized devices",
       sync: "Authorized but no device data, waiting for sync",
       noEvents: "Running normally, no abnormal activity",
     },
@@ -93,6 +93,8 @@ export default {
       attention: "Needs attention",
       anomalies: "Anomalies",
       rooms: "Rooms",
+      offline: "Offline devices",
+      controls: "Control nodes",
     },
     sections: {
       rooms: "Rooms",
@@ -120,6 +122,23 @@ export default {
     meta: {
       devices: "devices",
       alerts: "alerts",
+      controls: "controls",
+    },
+    groups: {
+      general: "General",
+    },
+    highlights: {
+      mode: "Mode",
+      targetTemp: "Target temp",
+      currentTemp: "Current temp",
+      refrigerator: "Fridge",
+      freezer: "Freezer",
+      power: "Power",
+      state: "State",
+      volume: "Volume",
+      source: "Source",
+      primary: "Primary",
+      secondary: "Secondary",
     },
     detail: {
       room: "Room",
@@ -148,8 +167,59 @@ export default {
       policies: "There are no policies for the current mode and room.",
       anomalies: "There are no anomalies to handle right now.",
     },
+    actions: {
+      refresh: "Refresh structure",
+      apply: "Apply",
+      run: "Run",
+      expand: "Expand",
+      collapse: "Collapse",
+    },
+    controlKinds: {
+      sensor: "Read",
+      toggle: "Toggle",
+      range: "Range",
+      enum: "Enum",
+      action: "Action",
+      text: "Text",
+    },
+    values: {
+      empty: "N/A",
+    },
+    enum: {
+      on: "On",
+      off: "Off",
+      cool: "Cool",
+      heat: "Heat",
+      auto: "Auto",
+      dry: "Dry",
+      fanOnly: "Fan only",
+      heatCool: "Heat/Cool auto",
+      swing: "Swing",
+      vertical: "Vertical",
+      horizontal: "Horizontal",
+      low: "Low",
+      medium: "Medium",
+      high: "High",
+      sleep: "Sleep",
+      none: "None",
+      playing: "Playing",
+      paused: "Paused",
+      idle: "Idle",
+      docked: "Docked",
+      cleaning: "Cleaning",
+      returning: "Returning",
+    },
+    hints: {
+      readOnly: "This node is currently read only.",
+    },
+    feedback: {
+      refreshQueued: "Refresh requested. The device structure will update in the background.",
+      actionSuccess: "{name} updated.",
+      actionFailed: "{name} failed to update and was rolled back.",
+    },
     errors: {
       load: "Unable to load device dashboard data. Please try again.",
+      action: "Unable to execute the device control. Please try again.",
     },
   },
   manage: {
@@ -207,7 +277,8 @@ export default {
       hint: {
         mijia: "Scan the QR code with the Mijia app to finish authorization.",
         wechat: "After the WeChat authorization completes, return to this page.",
-        home_assistant: "Enter the Home Assistant instance URL and a long-lived access token. Wanny will verify the connection immediately.",
+        home_assistant: "",
+        ha_token_info: "Getting Token: Open Home Assistant -> Click your profile (bottom left) -> 'Security' -> 'Long-Lived Access Tokens'.",
       },
       currentInstance: "Current instance",
       providerStatus: {

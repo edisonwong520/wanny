@@ -2,6 +2,7 @@ export default {
   login: "Login",
   logout: "Logout",
   register: "Register",
+  loginRegister: "Login / Register",
   loginTitle: "Login",
   loginSubtitle: "Login to access the console",
   registerTitle: "Register",

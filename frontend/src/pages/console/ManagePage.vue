@@ -28,7 +28,7 @@ const busyAction = ref("");
 const pollingTimers = new Map<string, number>();
 const modalPlatform = ref<string | null>(null);
 const modalLoading = ref(false);
-const homeAssistantBaseUrl = ref("");
+const homeAssistantBaseUrl = ref("http://127.0.0.1:8123");
 const homeAssistantAccessToken = ref("");
 
 const modalProvider = computed(() =>
@@ -145,7 +145,9 @@ function openModal(platform: string) {
   if (platform === "home_assistant") {
     const preview = provider?.payload_preview ?? {};
     homeAssistantBaseUrl.value =
-      typeof preview.base_url === "string" ? preview.base_url : "";
+      typeof preview.base_url === "string" && preview.base_url
+        ? preview.base_url
+        : "http://127.0.0.1:8123";
     homeAssistantAccessToken.value = "";
   }
 }
@@ -166,7 +168,7 @@ async function handleAuthorize(provider: ProviderRecord, force: boolean) {
   busyAction.value = `${provider.platform}:connect`;
   errorMessage.value = "";
   try {
-    const response = await startAuthorization(provider.platform, force);
+    const response = await startAuthorization(provider.platform, { force });
     updateProvider(response.provider);
     sessions.value = { ...sessions.value, [provider.platform]: response.session };
     ensurePolling(provider.platform);
@@ -179,6 +181,12 @@ async function handleAuthorize(provider: ProviderRecord, force: boolean) {
 }
 
 async function handleClick(provider: ProviderRecord) {
+  // Home Assistant 需要先输入配置信息，直接打开弹窗
+  if (provider.platform === "home_assistant") {
+    openModal(provider.platform);
+    return;
+  }
+
   const session = sessions.value[provider.platform];
   if (session && !session.is_terminal) {
     openModal(provider.platform);
@@ -326,9 +334,10 @@ onBeforeUnmount(() => stopAllPolling());
                 class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
               />
             </div>
-            <div class="rounded-2xl border border-[#E8F1EA] bg-[#F5FBF7] px-4 py-3 text-sm text-[#4E6A57]">
-              <div>{{ $t("manage.auth.hint.home_assistant") }}</div>
-              <div v-if="homeAssistantInstanceName" class="mt-1 text-xs text-[#6C8373]">
+            <div class="rounded-2xl border border-[#E8F1EA] bg-[#F5FBF7] px-4 py-3 text-xs text-[#4E6A57] leading-relaxed">
+              <div v-if="$t('manage.auth.hint.home_assistant')" class="font-medium mb-1">{{ $t("manage.auth.hint.home_assistant") }}</div>
+              <div class="text-[#6C8373]">{{ $t("manage.auth.hint.ha_token_info") }}</div>
+              <div v-if="homeAssistantInstanceName" class="mt-2 pt-2 border-t border-[#E8F1EA] text-[#6C8373]">
                 {{ $t("manage.auth.currentInstance") }}: {{ homeAssistantInstanceName }}
               </div>
             </div>

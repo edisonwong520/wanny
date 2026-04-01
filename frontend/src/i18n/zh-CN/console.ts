@@ -15,7 +15,7 @@ export default {
     actions: {
       tasks: "进入任务",
       devices: "查看详情",
-      authorize: "去授权平台",
+      authorize: "暂无设备，请去授权",
     },
     metrics: {
       online: "在线设备",
@@ -23,7 +23,7 @@ export default {
       tasks: "待处理任务",
     },
     empty: {
-      auth: "暂无已授权的平台",
+      auth: "暂无授权设备",
       sync: "已授权但暂无设备数据，请等待同步完成",
       noEvents: "设备运行正常，无异常动态",
     },
@@ -96,6 +96,8 @@ export default {
       attention: "需关注设备",
       anomalies: "异常事件",
       rooms: "房间",
+      offline: "离线设备",
+      controls: "控制节点",
     },
     sections: {
       rooms: "房间",
@@ -123,6 +125,23 @@ export default {
     meta: {
       devices: "台设备",
       alerts: "条异常",
+      controls: "项控制",
+    },
+    groups: {
+      general: "通用",
+    },
+    highlights: {
+      mode: "模式",
+      targetTemp: "目标温度",
+      currentTemp: "当前温度",
+      refrigerator: "冷藏区",
+      freezer: "冷冻区",
+      power: "电源",
+      state: "状态",
+      volume: "音量",
+      source: "输入源",
+      primary: "主要参数",
+      secondary: "次要参数",
     },
     detail: {
       room: "房间",
@@ -151,8 +170,59 @@ export default {
       policies: "当前模式和房间下没有策略规则。",
       anomalies: "当前没有需要处理的异常。",
     },
+    actions: {
+      refresh: "刷新设备结构",
+      apply: "应用",
+      run: "执行",
+      expand: "展开",
+      collapse: "收起",
+    },
+    controlKinds: {
+      sensor: "读取",
+      toggle: "开关",
+      range: "范围",
+      enum: "枚举",
+      action: "动作",
+      text: "文本",
+    },
+    values: {
+      empty: "暂无",
+    },
+    enum: {
+      on: "开启",
+      off: "关闭",
+      cool: "制冷",
+      heat: "制热",
+      auto: "自动",
+      dry: "除湿",
+      fanOnly: "送风",
+      heatCool: "冷热自动",
+      swing: "扫风",
+      vertical: "上下扫风",
+      horizontal: "左右扫风",
+      low: "低",
+      medium: "中",
+      high: "高",
+      sleep: "睡眠",
+      none: "无",
+      playing: "播放中",
+      paused: "已暂停",
+      idle: "空闲",
+      docked: "已回充",
+      cleaning: "清扫中",
+      returning: "返回中",
+    },
+    hints: {
+      readOnly: "这个节点当前是只读状态。",
+    },
+    feedback: {
+      refreshQueued: "刷新请求已提交，设备结构会在后台更新。",
+      actionSuccess: "{name} 已更新。",
+      actionFailed: "{name} 执行失败，已回滚到之前状态。",
+    },
     errors: {
       load: "读取设备页数据失败，请稍后重试。",
+      action: "设备控制执行失败，请稍后重试。",
     },
   },
   manage: {
@@ -210,7 +280,8 @@ export default {
       hint: {
         mijia: "使用米家 App 扫描二维码完成授权",
         wechat: "扫码授权完成后请回到本页",
-        home_assistant: "输入 Home Assistant 实例地址和长期访问令牌，系统会立即校验连接并启用设备同步。",
+        home_assistant: "",
+        ha_token_info: "获取令牌：打开 Home Assistant 控制台 -> 点击左下角用户头像 -> ‘安全’ -> ‘长期访问令牌’。",
       },
       currentInstance: "当前实例",
       providerStatus: {

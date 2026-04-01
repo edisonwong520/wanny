@@ -1,7 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from django.test import TestCase, Client
 from django.urls import reverse
@@ -415,3 +415,37 @@ class HomeAssistantAuthServiceTest(TestCase):
         self.assertEqual(auth_obj.auth_payload["base_url"], "http://ha.local:8123")
         self.assertEqual(auth_obj.auth_payload["instance_name"], "My Home")
         self.assertEqual(auth_obj.auth_payload["version"], "2026.3.0")
+
+    def test_get_graph_returns_registry_payload(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="home_assistant",
+            auth_payload={
+                "base_url": "http://ha.local:8123",
+                "access_token": "ha-token",
+            },
+            is_active=True,
+        )
+
+        registry_payload = {
+            "areas": [{"area_id": "kitchen", "name": "厨房"}],
+            "devices": [{"id": "device-fridge", "area_id": "kitchen", "name": "多开门冰箱"}],
+            "entities": [{"entity_id": "sensor.fridge_cold", "device_id": "device-fridge"}],
+        }
+        with patch.object(
+            HomeAssistantAuthService,
+            "get_states",
+            return_value=(
+                {"location_name": "My Home"},
+                [{"entity_id": "sensor.fridge_cold", "state": "4", "attributes": {}}],
+            ),
+        ), patch.object(
+            HomeAssistantAuthService,
+            "_fetch_registry_via_websocket",
+            new=AsyncMock(return_value=registry_payload),
+        ):
+            config, states, registry = HomeAssistantAuthService.get_graph(self.account)
+
+        self.assertEqual(config["location_name"], "My Home")
+        self.assertEqual(states[0]["entity_id"], "sensor.fridge_cold")
+        self.assertEqual(registry["areas"][0]["name"], "厨房")

@@ -79,11 +79,10 @@ const hasAuth = computed(() => {
     <div v-else-if="error" class="text-center py-10 text-[#E84343]">{{ error }}</div>
 
     <!-- 无授权状态 -->
-    <div v-else-if="!hasAuth" class="text-center py-10">
-      <div class="text-[#888888] mb-4">{{ $t("overview.empty.auth") }}</div>
+    <div v-else-if="!hasAuth" class="text-center py-20">
       <RouterLink
         to="/console/manage"
-        class="inline-block px-4 py-2 bg-[#07C160] text-white rounded-lg hover:bg-[#06AD56] transition-colors"
+        class="inline-block px-6 py-2.5 bg-[#07C160] text-white rounded-full font-medium transition-all duration-300 hover:bg-[#06AD56] hover:shadow-lg hover:shadow-[#07C160]/20 hover:-translate-y-0.5 active:translate-y-0"
       >
         {{ $t("overview.actions.authorize") }}
       </RouterLink>

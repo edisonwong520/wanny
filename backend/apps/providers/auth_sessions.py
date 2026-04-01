@@ -251,6 +251,13 @@ class WeChatAuthorizationService:
                         status="completed",
                         detail="微信授权完成，Bot 已可读取这份凭证。",
                     )
+
+                    # 触发后台同步挂图（虽然微信暂时没有对应的 IOT 映射但保持通用逻辑）
+                    try:
+                        from devices.services import DeviceDashboardService
+                        DeviceDashboardService.sync_after_provider_change(account, trigger="connect_wechat")
+                    except Exception as e:
+                        logger.error(f"[WeChat Auth Sync] Trigger sync failed: {e}")
                     return
 
                 time.sleep(QR_POLL_INTERVAL)
@@ -400,6 +407,13 @@ class MijiaAuthorizationService:
                 status="completed",
                 detail="米家授权完成，设备侧接口已可复用这份凭证。",
             )
+
+            # 立即触发后台同步以拉取最新设备数据
+            try:
+                from devices.services import DeviceDashboardService
+                DeviceDashboardService.sync_after_provider_change(account, trigger="connect_mijia")
+            except Exception as e:
+                logger.error(f"[Mijia Auth Sync] Trigger sync failed: {e}")
         except requests.exceptions.Timeout:
             AuthorizationSessionStore.update(
                 session_id,

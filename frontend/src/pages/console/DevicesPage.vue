@@ -208,6 +208,12 @@ function handleSearchInput() {
   }, 300);
 }
 
+function clearSearch() {
+  searchQuery.value = "";
+  pagination.value.page = 1;
+  void loadDevices();
+}
+
 function goToPage(page: number) {
   pagination.value.page = page;
   void loadDevices();
@@ -506,9 +512,15 @@ onBeforeUnmount(() => {
               type="text"
               :placeholder="$t('common.search')"
               class="w-full px-3 py-1.5 pl-8 rounded-full border border-[#EDEDED] bg-white text-sm focus:outline-none focus:border-[#07C160] transition-colors"
+              :class="searchQuery ? 'pr-8' : ''"
               @input="handleSearchInput"
             />
             <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#888888] text-sm">🔍</span>
+            <button
+              v-if="searchQuery"
+              @click="clearSearch"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#333333] text-sm"
+            >✕</button>
           </div>
           <!-- Room Filters -->
           <div class="flex gap-1.5">

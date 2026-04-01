@@ -213,7 +213,7 @@ export default {
       readOnly: "This node is currently read only.",
     },
     feedback: {
-      refreshQueued: "Refresh requested. The device structure will update in the background.",
+      refreshQueued: "Refresh requested. The device information will update in the background.",
       actionSuccess: "{name} updated.",
       actionFailed: "{name} failed to update and was rolled back.",
     },

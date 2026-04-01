@@ -216,7 +216,7 @@ export default {
       readOnly: "这个节点当前是只读状态。",
     },
     feedback: {
-      refreshQueued: "刷新请求已提交，设备结构会在后台更新。",
+      refreshQueued: "刷新请求已提交，设备信息会在后台更新。",
       actionSuccess: "{name} 已更新。",
       actionFailed: "{name} 执行失败，已回滚到之前状态。",
     },

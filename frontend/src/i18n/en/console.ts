@@ -94,7 +94,7 @@ export default {
       anomalies: "Anomalies",
       rooms: "Rooms",
       offline: "Offline devices",
-      controls: "Control nodes",
+      controls: "Functional controls",
     },
     sections: {
       rooms: "Rooms",

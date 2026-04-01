@@ -133,12 +133,16 @@ export async function fetchDeviceList(params: {
   page_size?: number;
   search?: string;
   room_id?: string;
+  platforms?: string[];
 } = {}) {
   const query = new URLSearchParams();
   if (params.page) query.set("page", String(params.page));
   if (params.page_size) query.set("page_size", String(params.page_size));
   if (params.search) query.set("search", params.search);
   if (params.room_id) query.set("room_id", params.room_id);
+  if (params.platforms?.length) {
+    params.platforms.forEach((platform) => query.append("platforms", platform));
+  }
 
   const queryString = query.toString();
   const path = queryString ? `/api/devices/list/?${queryString}` : "/api/devices/list/";

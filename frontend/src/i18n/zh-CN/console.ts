@@ -93,11 +93,11 @@ export default {
     },
     metrics: {
       online: "在线设备",
-      attention: "需关注设备",
+      attention: "异常设备",
       anomalies: "异常事件",
       rooms: "房间",
       offline: "离线设备",
-      controls: "控制节点",
+      controls: "功能控制",
     },
     sections: {
       rooms: "房间",
@@ -109,7 +109,7 @@ export default {
     },
     status: {
       online: "在线",
-      attention: "留意",
+      attention: "异常",
       offline: "离线",
     },
     decisions: {

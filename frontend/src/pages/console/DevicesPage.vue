@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import {
@@ -26,9 +26,11 @@ const errorMessage = ref("");
 // Device list state
 const devices = ref<DeviceListItem[]>([]);
 const devicesLoading = ref(false);
-const pagination = ref({ page: 1, page_size: 8, total: 0, total_pages: 0 });
+const pagination = ref({ page: 1, page_size: 5, total: 0, total_pages: 0 });
 const searchQuery = ref("");
 const activeRoomId = ref("all");
+const activePlatforms = ref<string[]>([]);
+const platformSelectOpen = ref(false);
 let searchTimeout: number | null = null;
 
 // Selected device detail
@@ -61,6 +63,44 @@ const metrics = computed(() => {
     offline: devicesList.filter((item) => item.status === "offline").length,
     controls: selectedDevice.value?.controls.length ?? 0,
   };
+});
+
+const platformOptions = computed(() => {
+  const knownPlatforms = new Map([
+    [
+      "home_assistant",
+      {
+        id: "home_assistant",
+        label: "Home Assistant",
+        className: "bg-[#FFF2E8] text-[#C96B2C] border-[#F3C9A8]",
+      },
+    ],
+    [
+      "mijia",
+      {
+        id: "mijia",
+        label: "米家",
+        className: "bg-[#EAF3FF] text-[#2F6FDB] border-[#BDD4FF]",
+      },
+    ],
+  ]);
+
+  (dashboard.value?.devices ?? []).forEach((device) => {
+    const platform = inferDevicePlatform(device.id);
+    if (!knownPlatforms.has(platform.id)) {
+      knownPlatforms.set(platform.id, platform);
+    }
+  });
+
+  return Array.from(knownPlatforms.values());
+});
+
+const platformSelectLabel = computed(() => {
+  if (activePlatforms.value.length === 0) return "全部";
+  if (activePlatforms.value.length === 1) {
+    return platformOptions.value.find((item) => item.id === activePlatforms.value[0])?.label ?? "全部";
+  }
+  return `已选 ${activePlatforms.value.length} 项`;
 });
 
 const groupedControls = computed(() => {
@@ -124,7 +164,7 @@ function stopPolling() {
   }
 }
 
-function schedulePolling(delay = 3000) {
+function schedulePolling(delay = 10000) {
   stopPolling();
   pollTimer = window.setTimeout(() => void loadDashboard({ silent: true }), delay);
 }
@@ -156,6 +196,7 @@ async function loadDevices(options: { silent?: boolean } = {}) {
       page_size: pagination.value.page_size,
       search: searchQuery.value || undefined,
       room_id: activeRoomId.value !== "all" ? activeRoomId.value : undefined,
+      platforms: activePlatforms.value.length ? activePlatforms.value : undefined,
     });
     devices.value = response.devices;
     pagination.value = response.pagination;
@@ -214,9 +255,64 @@ function clearSearch() {
   void loadDevices();
 }
 
+function togglePlatformSelect() {
+  platformSelectOpen.value = !platformSelectOpen.value;
+}
+
+function togglePlatform(platformId: string) {
+  activePlatforms.value = activePlatforms.value.includes(platformId)
+    ? activePlatforms.value.filter((item) => item !== platformId)
+    : [...activePlatforms.value, platformId];
+  pagination.value.page = 1;
+  void loadDevices();
+}
+
+function clearPlatforms() {
+  if (activePlatforms.value.length === 0) return;
+  activePlatforms.value = [];
+  pagination.value.page = 1;
+  void loadDevices();
+}
+
+function handleWindowClick(event: MouseEvent) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target.closest("[data-platform-select]")) return;
+  platformSelectOpen.value = false;
+}
+
 function goToPage(page: number) {
   pagination.value.page = page;
   void loadDevices();
+}
+
+function inferDevicePlatform(deviceId: string) {
+  const normalized = String(deviceId || "").toLowerCase();
+  if (normalized.startsWith("home_assistant:")) {
+    return {
+      id: "home_assistant",
+      label: "Home Assistant",
+      className: "bg-[#FFF2E8] text-[#C96B2C] border-[#F3C9A8]",
+    };
+  }
+  if (normalized.startsWith("mijia:")) {
+    return {
+      id: "mijia",
+      label: "米家",
+      className: "bg-[#EAF3FF] text-[#2F6FDB] border-[#BDD4FF]",
+    };
+  }
+  return {
+    id: "unknown",
+    label: "未知平台",
+    className: "bg-[#F2F4F7] text-[#667085] border-[#D0D5DD]",
+  };
+}
+
+function statusLightClass(status: string) {
+  if (status === "online") return "bg-[#07C160]";
+  if (status === "attention") return "bg-[#E8A223]";
+  return "bg-[#E84343]";
 }
 
 function groupKey(deviceId: string, label: string) {
@@ -285,22 +381,29 @@ function writeDraftValue(controlId: string, value: unknown) {
   };
 }
 
+function normalizeDisplayUnit(unit = "") {
+  const normalized = String(unit || "").trim().toLowerCase();
+  if (normalized === "percentage" || normalized === "percent") return "%";
+  return unit;
+}
+
 function formatValue(value: unknown, unit = "") {
   if (value === null || value === undefined || value === "") return t("devices.values.empty");
   if (typeof value === "object") return JSON.stringify(value);
+  const displayUnit = normalizeDisplayUnit(unit);
   if (typeof value === "number") {
-    if (unit === "%" && value <= 1) {
+    if (displayUnit === "%" && value <= 1) {
       return `${Math.round(value * 100)}%`;
     }
-    if (unit === "" && value >= 0 && value <= 1) {
+    if (displayUnit === "" && value >= 0 && value <= 1) {
       return `${Math.round(value * 100)}%`;
     }
     if (Number.isInteger(value)) {
-      return `${value}${unit}`;
+      return `${value}${displayUnit}`;
     }
-    return `${value.toFixed(2).replace(/\.?0+$/, "")}${unit}`;
+    return `${value.toFixed(2).replace(/\.?0+$/, "")}${displayUnit}`;
   }
-  return `${formatEnumLabel(value)}${unit}`;
+  return `${formatEnumLabel(value)}${displayUnit}`;
 }
 
 function showFeedback(type: "success" | "error" | "info", message: string) {
@@ -322,6 +425,38 @@ function controlActions(control: DeviceControlRecord) {
 
   const service = control.action_params.service;
   return [{ id: String(service ?? "run"), label: t("devices.actions.run") }];
+}
+
+function normalizeToggleState(value: unknown) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["on", "true", "1", "open", "opened", "unlock", "unlocked"].includes(normalized)) return "on";
+  if (["off", "false", "0", "closed", "close", "locked", "lock"].includes(normalized)) return "off";
+  return "unknown";
+}
+
+function visibleToggleActions(control: DeviceControlRecord) {
+  const actions = controlActions(control);
+  const state = normalizeToggleState(control.value);
+
+  const filtered = actions.filter((action) => {
+    if (state === "on" && ["turn_on", "unlock"].includes(action.id)) return false;
+    if (state === "off" && ["turn_off", "lock"].includes(action.id)) return false;
+    return true;
+  });
+
+  const nonToggleActions = filtered.filter((action) => action.id !== "toggle");
+  if (nonToggleActions.length === 1) {
+    return nonToggleActions;
+  }
+
+  return filtered;
+}
+
+function controlValueBadgeClass(control: DeviceControlRecord) {
+  if (control.kind === "toggle" && normalizeToggleState(control.value) === "off") {
+    return "bg-[#F2F4F7] text-[#98A2B3]";
+  }
+  return "bg-[#E8F8EC] text-[#07C160]";
 }
 
 function formatEnumLabel(value: unknown) {
@@ -444,11 +579,13 @@ async function saveValue(control: DeviceControlRecord) {
 }
 
 onMounted(async () => {
+  window.addEventListener("click", handleWindowClick);
   await loadDashboard();
   await loadDevices();
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("click", handleWindowClick);
   stopPolling();
   if (searchTimeout !== null) {
     window.clearTimeout(searchTimeout);
@@ -511,11 +648,10 @@ onBeforeUnmount(() => {
               v-model="searchQuery"
               type="text"
               :placeholder="$t('common.search')"
-              class="w-full px-3 py-1.5 pl-8 rounded-full border border-[#EDEDED] bg-white text-sm focus:outline-none focus:border-[#07C160] transition-colors"
+              class="h-[34px] w-full rounded-full border border-[#EDEDED] bg-white px-3 pl-4 text-sm focus:outline-none focus:border-[#07C160] transition-colors"
               :class="searchQuery ? 'pr-8' : ''"
               @input="handleSearchInput"
             />
-            <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#888888] text-sm">🔍</span>
             <button
               v-if="searchQuery"
               @click="clearSearch"
@@ -528,7 +664,7 @@ onBeforeUnmount(() => {
               v-for="room in rooms"
               :key="room.id"
               @click="selectRoom(room.id)"
-              class="px-3 py-1.5 rounded-full text-xs transition-all duration-200"
+              class="inline-flex h-[34px] items-center rounded-full px-3 text-xs transition-all duration-200"
               :class="activeRoomId === room.id
                 ? 'bg-[#07C160] text-white shadow-sm'
                 : 'bg-[#F7F7F7] text-[#888888] hover:bg-[#EDEDED]'"
@@ -536,12 +672,48 @@ onBeforeUnmount(() => {
               {{ room.name }} ({{ room.count }})
             </button>
           </div>
+          <div class="flex items-center gap-2 text-sm text-[#667085] ml-4">
+            <div class="relative" data-platform-select>
+              <button
+                @click.stop="togglePlatformSelect"
+                class="inline-flex h-[34px] min-w-[160px] items-center justify-between rounded-full border border-[#E4E7EC] bg-white px-3 text-sm text-[#344054] transition-all duration-200 hover:border-[#CBD5E1]"
+              >
+                <span>{{ platformSelectLabel }}</span>
+                <span class="ml-3 text-xs text-[#98A2B3]">{{ platformSelectOpen ? "▲" : "▼" }}</span>
+              </button>
+
+              <div
+                v-if="platformSelectOpen"
+                class="absolute left-0 top-[calc(100%+8px)] z-10 min-w-[220px] rounded-2xl border border-[#E4E7EC] bg-white p-2 shadow-lg"
+              >
+                <button
+                  @click.stop="clearPlatforms"
+                  class="mb-1 w-full rounded-xl px-3 py-2 text-left text-sm text-[#98A2B3] transition-colors hover:bg-[#F8FAFC] hover:text-[#344054]"
+                >
+                  清空选项
+                </button>
+                <label
+                  v-for="platform in platformOptions"
+                  :key="platform.id"
+                  class="flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-[#344054] transition-colors hover:bg-[#F8FAFC]"
+                >
+                  <span>{{ platform.label }}</span>
+                  <input
+                    :checked="activePlatforms.includes(platform.id)"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-[#D0D5DD] text-[#07C160] focus:ring-[#07C160]"
+                    @change="togglePlatform(platform.id)"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
         </div>
         <!-- Refresh Button -->
         <button
           @click="handleRefresh"
           :disabled="syncing"
-          class="px-4 py-1.5 rounded-full bg-[#07C160] text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="inline-flex h-[34px] items-center rounded-full bg-[#07C160] px-4 text-sm font-medium text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {{ syncing ? $t("common.loading") : $t("devices.actions.refresh") }}
         </button>
@@ -570,20 +742,18 @@ onBeforeUnmount(() => {
                 : 'bg-white border-[#EDEDED] hover:border-[#07C160]/20 hover:bg-[#F7F7F7]'"
             >
               <div class="flex items-center justify-between">
-                <span class="font-medium text-[#333333]">{{ device.name }}</span>
-                <span
-                  class="px-2 py-0.5 rounded-full text-xs font-medium"
-                  :class="{
-                    'bg-[#E8F8EC] text-[#07C160]': device.status === 'online',
-                    'bg-[#FFF7E6] text-[#E8A223]': device.status === 'attention',
-                    'bg-[#FFE8E8] text-[#E84343]': device.status === 'offline'
-                  }"
-                >
-                  {{ t(`devices.status.${device.status}`) }}
+                <div class="flex min-w-0 items-center gap-2">
+                  <span class="truncate font-medium text-[#333333]">{{ device.name }}</span>
+                  <span
+                    class="inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold tracking-[0.02em]"
+                    :class="inferDevicePlatform(device.id).className"
+                  >
+                    {{ inferDevicePlatform(device.id).label }}
+                  </span>
+                </div>
+                <span class="ml-3 inline-flex shrink-0 items-center">
+                  <span class="h-2.5 w-2.5 rounded-full" :class="statusLightClass(device.status)" />
                 </span>
-              </div>
-              <div class="mt-1 text-xs text-[#888888] truncate">
-                {{ device.telemetry || $t("devices.values.empty") }}
               </div>
             </button>
 
@@ -628,33 +798,6 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-else-if="selectedDevice" class="p-5">
-            <!-- Device Info -->
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-base font-semibold text-[#333333]">{{ selectedDevice.name }}</h2>
-              <span
-                class="px-2 py-0.5 rounded-full text-xs font-medium"
-                :class="{
-                  'bg-[#E8F8EC] text-[#07C160]': selectedDevice.status === 'online',
-                  'bg-[#FFF7E6] text-[#E8A223]': selectedDevice.status === 'attention',
-                  'bg-[#FFE8E8] text-[#E84343]': selectedDevice.status === 'offline'
-                }"
-              >
-                {{ t(`devices.status.${selectedDevice.status}`) }}
-              </span>
-            </div>
-
-            <!-- Highlights -->
-            <div v-if="selectedDeviceHighlights.length" class="flex gap-2 mb-5">
-              <div
-                v-for="item in selectedDeviceHighlights"
-                :key="item.label"
-                class="px-3 py-2 rounded-xl bg-[#F7F7F7]"
-              >
-                <div class="text-xs text-[#888888]">{{ item.label }}</div>
-                <div class="text-sm font-medium text-[#333333]">{{ item.value }}</div>
-              </div>
-            </div>
-
             <!-- Controls -->
             <div class="space-y-4">
               <div v-for="group in groupedControls" :key="group.label">
@@ -675,20 +818,20 @@ onBeforeUnmount(() => {
                   >
                     <div class="flex items-center justify-between mb-2">
                       <span class="text-sm text-[#333333]">{{ control.label }}</span>
-                      <span class="text-xs font-medium text-[#07C160] bg-[#E8F8EC] px-2 py-0.5 rounded-full">
+                      <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="controlValueBadgeClass(control)">
                         {{ formatValue(control.value, control.unit) }}
                       </span>
                     </div>
 
                     <!-- Sensor -->
                     <p v-if="control.kind === 'sensor'" class="text-xs text-[#888888]">
-                      {{ $t("devices.hints.readOnly") }}
+                      只读
                     </p>
 
                     <!-- Toggle -->
                     <div v-else-if="control.kind === 'toggle'" class="flex gap-2">
                       <button
-                        v-for="action in controlActions(control)"
+                        v-for="action in visibleToggleActions(control)"
                         :key="action.id"
                         @click="runToggle(control, action.id)"
                         :disabled="executingControlId === control.id"

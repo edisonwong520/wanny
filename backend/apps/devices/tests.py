@@ -8,7 +8,7 @@ from django.urls import reverse
 from accounts.models import Account
 from providers.models import PlatformAuth
 
-from .models import DeviceDashboardState
+from .models import DeviceControl, DeviceDashboardState, DeviceRoom, DeviceSnapshot
 from .services import DeviceDashboardService
 
 
@@ -212,6 +212,34 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertEqual(snapshot["devices"][0]["controls"][0]["group_label"], "整机")
         self.assertEqual(snapshot["devices"][0]["controls"][1]["group_label"], "冷藏区")
 
+    def test_home_assistant_snapshot_falls_back_when_registry_name_is_numeric_identifier(self):
+        states = [
+            {
+                "entity_id": "switch.camera_power",
+                "state": "on",
+                "attributes": {"friendly_name": "Camera Pro 电源"},
+            }
+        ]
+        registry = {
+            "areas": [{"area_id": "study", "name": "书房"}],
+            "devices": [{"id": "device-camera", "area_id": "study", "name": "210006736906642"}],
+            "entities": [
+                {"entity_id": "switch.camera_power", "device_id": "device-camera"},
+            ],
+        }
+
+        with patch(
+            "providers.services.HomeAssistantAuthService.get_graph",
+            return_value=(
+                {"location_name": "My Home", "time_zone": "Asia/Shanghai"},
+                states,
+                registry,
+            ),
+        ):
+            snapshot = DeviceDashboardService._build_home_assistant_snapshot(self.account)
+
+        self.assertEqual(snapshot["devices"][0]["name"], "Camera")
+
     def test_home_assistant_climate_builds_rich_controls(self):
         controls = DeviceDashboardService._build_home_assistant_controls(
             [
@@ -238,6 +266,15 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertIn("climate.living_room_ac:current_temperature", keys)
         self.assertIn("climate.living_room_ac:preset_mode", keys)
         self.assertIn("climate.living_room_ac:fan_mode", keys)
+
+    def test_infer_mijia_device_name_avoids_numeric_identifier(self):
+        name = DeviceDashboardService._infer_mijia_device_name(
+            dev={"name": "210006736906642"},
+            did="210006736906642",
+            model="camera",
+        )
+
+        self.assertEqual(name, "监控")
 
     def test_execute_control_refreshes_snapshot_after_action(self):
         PlatformAuth.objects.create(
@@ -339,6 +376,7 @@ class DeviceDashboardApiTest(TestCase):
         )
         self.dashboard_url = reverse("devices:dashboard")
         self.refresh_url = reverse("devices:dashboard_refresh")
+        self.list_url = reverse("devices:device_list")
 
     def test_dashboard_endpoint_returns_pending_snapshot_when_worker_has_not_run(self):
         response = self.client.get(self.dashboard_url, HTTP_X_WANNY_EMAIL=self.account.email)
@@ -382,6 +420,143 @@ class DeviceDashboardApiTest(TestCase):
         state = DeviceDashboardState.objects.get(account=self.account, key=DeviceDashboardService.state_key)
         self.assertEqual(state.requested_trigger, "api")
         self.assertIsNotNone(state.refresh_requested_at)
+
+    def test_device_list_endpoint_filters_by_multiple_platforms(self):
+        room = DeviceRoom.objects.create(
+            account=self.account,
+            slug="living-room",
+            name="客厅",
+            climate="",
+            summary="",
+            sort_order=10,
+        )
+        DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:light-1",
+            room=room,
+            name="米家台灯",
+            category="灯光",
+            status="online",
+            telemetry="在线",
+            sort_order=10,
+        )
+        DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="home_assistant:ac-1",
+            room=room,
+            name="HA 空调",
+            category="空调",
+            status="online",
+            telemetry="制冷",
+            sort_order=20,
+        )
+        DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="unknown:device-1",
+            room=room,
+            name="未知设备",
+            category="其他设备",
+            status="offline",
+            telemetry="离线",
+            sort_order=30,
+        )
+
+        response = self.client.get(
+            f"{self.list_url}?platforms=mijia&platforms=home_assistant",
+            HTTP_X_WANNY_EMAIL=self.account.email,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["pagination"]["total"], 2)
+        self.assertEqual([device["id"] for device in payload["devices"]], ["mijia:light-1", "home_assistant:ac-1"])
+
+    def test_device_list_endpoint_sorts_by_status_then_enabled_then_platform(self):
+        room = DeviceRoom.objects.create(
+            account=self.account,
+            slug="bedroom",
+            name="卧室",
+            climate="",
+            summary="",
+            sort_order=10,
+        )
+        enabled_mijia = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:light-enabled",
+            room=room,
+            name="米家启用灯",
+            category="灯光",
+            status="online",
+            telemetry="在线",
+            sort_order=30,
+        )
+        disabled_home_assistant = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="home_assistant:light-disabled",
+            room=room,
+            name="HA 未启用灯",
+            category="灯光",
+            status="online",
+            telemetry="在线",
+            sort_order=10,
+        )
+        attention_home_assistant = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="home_assistant:fan-attention",
+            room=room,
+            name="HA 风扇",
+            category="风扇",
+            status="attention",
+            telemetry="需留意",
+            sort_order=20,
+        )
+        offline_mijia = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:plug-offline",
+            room=room,
+            name="米家插座",
+            category="开关",
+            status="offline",
+            telemetry="离线",
+            sort_order=40,
+        )
+
+        DeviceControl.objects.create(
+            account=self.account,
+            device=enabled_mijia,
+            external_id="mijia:light-enabled:power",
+            source_type=DeviceControl.SourceTypeChoices.MIJIA_PROPERTY,
+            kind=DeviceControl.KindChoices.TOGGLE,
+            key="power",
+            label="电源",
+            writable=True,
+            value="on",
+        )
+        DeviceControl.objects.create(
+            account=self.account,
+            device=disabled_home_assistant,
+            external_id="home_assistant:light-disabled:power",
+            source_type=DeviceControl.SourceTypeChoices.HA_ENTITY,
+            kind=DeviceControl.KindChoices.TOGGLE,
+            key="switch.light_disabled",
+            label="电源",
+            writable=True,
+            value="off",
+        )
+
+        response = self.client.get(self.list_url, HTTP_X_WANNY_EMAIL=self.account.email)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            [device["id"] for device in payload["devices"]],
+            [
+                "mijia:light-enabled",
+                "home_assistant:light-disabled",
+                "home_assistant:fan-attention",
+                "mijia:plug-offline",
+            ],
+        )
 
     def test_control_endpoint_executes_action(self):
         PlatformAuth.objects.create(

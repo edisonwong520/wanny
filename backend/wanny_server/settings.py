@@ -67,6 +67,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'accounts.middleware.AccountAuthenticationMiddleware',
+    'utils.http_logging_middleware.HttpRequestLoggingMiddleware',
 ]
 
 ROOT_URLCONF = 'wanny_server.urls'
@@ -150,3 +151,22 @@ USE_TZ = False
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Logging configuration
+# Disable Django's default request logging (uses different format)
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'null': {
+            'class': 'logging.NullHandler',
+        },
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['null'],
+            'propagate': False,
+            'level': 'WARNING',
+        },
+    },
+}

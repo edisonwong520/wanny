@@ -38,7 +38,7 @@ onMounted(() => {
   setInterval(() => {
     isTransitionsEnabled.value = true;
     currentPromptIndex.value++;
-    
+
     if (currentPromptIndex.value === displayPrompts.value.length - 1) {
       setTimeout(() => {
         isTransitionsEnabled.value = false;
@@ -63,7 +63,7 @@ onMounted(() => {
 
       <h1 class="text-5xl font-semibold text-[#333333] mb-4 tracking-tight">
         {{ $t("landing.titleLead") }}
-      </h1> 
+      </h1>
 
       <div class="flex items-center justify-center gap-2 text-lg text-[#888888] mb-12">
         <span>{{ $t("landing.questions") }}</span>
@@ -91,13 +91,6 @@ onMounted(() => {
           class="rounded-full bg-[#07C160] px-6 py-3 text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-lg hover:-translate-y-0.5"
         >
           {{ primaryLabel }}
-        </RouterLink>
-        <RouterLink
-          v-if="!isAuthenticated"
-          to="/login"
-          class="rounded-full border border-[#EDEDED] px-6 py-3 text-[#333333] text-sm font-medium transition-all duration-200 hover:border-[#07C160]/30 hover:bg-[#E8F8EC]/30 hover:-translate-y-0.5"
-        >
-          {{ $t("auth.login") }}
         </RouterLink>
       </div>
 

@@ -1,12 +1,13 @@
 import json
 
+from django.db.models import Case, Exists, IntegerField, OuterRef, Q, Value, When
 from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from utils.logger import logger
 
-from .models import DeviceSnapshot
+from .models import DeviceControl, DeviceSnapshot
 from .services import DeviceDashboardService
 
 
@@ -42,6 +43,16 @@ def handle_device_list(request):
         page_size = int(request.GET.get("page_size", 10))
         search = request.GET.get("search", "").strip()
         room_id = request.GET.get("room_id", "").strip()
+        raw_platforms = request.GET.getlist("platforms")
+        if not raw_platforms:
+            comma_separated_platforms = request.GET.get("platforms", "").strip()
+            if comma_separated_platforms:
+                raw_platforms = comma_separated_platforms.split(",")
+        platforms = {
+            str(platform).strip().lower()
+            for platform in raw_platforms
+            if str(platform).strip()
+        }
 
         # 限制page_size范围
         page_size = min(max(page_size, 1), 50)
@@ -55,8 +66,43 @@ def handle_device_list(request):
         if room_id and room_id != "all":
             queryset = queryset.filter(room__slug=room_id)
 
-        # 排序
-        queryset = queryset.order_by("sort_order", "id")
+        if platforms:
+            platform_query = Q()
+            for platform in platforms:
+                platform_query |= Q(external_id__startswith=f"{platform}:")
+            queryset = queryset.filter(platform_query)
+
+        enabled_toggle_subquery = DeviceControl.objects.filter(
+            account=account,
+            device=OuterRef("pk"),
+            kind=DeviceControl.KindChoices.TOGGLE,
+        ).filter(
+            Q(value="on") | Q(value=True) | Q(value=1) | Q(value="true")
+        )
+
+        queryset = queryset.annotate(
+            status_order=Case(
+                When(status=DeviceSnapshot.StatusChoices.ONLINE, then=Value(0)),
+                When(status=DeviceSnapshot.StatusChoices.ATTENTION, then=Value(1)),
+                When(status=DeviceSnapshot.StatusChoices.OFFLINE, then=Value(2)),
+                default=Value(9),
+                output_field=IntegerField(),
+            ),
+            platform_order=Case(
+                When(external_id__startswith="home_assistant:", then=Value(0)),
+                When(external_id__startswith="mijia:", then=Value(1)),
+                default=Value(9),
+                output_field=IntegerField(),
+            ),
+            enabled_order=Case(
+                When(Exists(enabled_toggle_subquery), then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            ),
+        )
+
+        # 排序：状态优先，其次启用中设备，再按平台，其余回退到既有权重
+        queryset = queryset.order_by("status_order", "enabled_order", "platform_order", "sort_order", "id")
 
         # 分页
         paginator = Paginator(queryset, page_size)

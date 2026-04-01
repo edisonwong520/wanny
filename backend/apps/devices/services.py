@@ -517,7 +517,7 @@ class DeviceDashboardService:
                 {
                     "id": f"mijia:{did}",
                     "room_id": room_id,
-                    "name": dev.get("name") or did,
+                    "name": cls._infer_mijia_device_name(dev=dev, did=did, model=model),
                     "category": cls._map_model_to_category(model),
                     "status": "online" if is_online else "offline",
                     "telemetry": cls._summarize_mijia_telemetry(controls, is_online=is_online),
@@ -1548,13 +1548,30 @@ class DeviceDashboardService:
     ) -> str:
         registry_device = registry_device or {}
         registry_name = registry_device.get("name_by_user") or registry_device.get("name")
-        if registry_name:
+        if registry_name and not cls._looks_like_device_identifier(registry_name):
             return str(registry_name)
-        if " " in friendly_name:
-            return friendly_name.split(" ", 1)[0]
-        if "·" in friendly_name:
-            return friendly_name.split("·", 1)[0]
+        if not cls._looks_like_device_identifier(friendly_name):
+            if " " in friendly_name:
+                return friendly_name.split(" ", 1)[0]
+            if "·" in friendly_name:
+                return friendly_name.split("·", 1)[0]
+            return friendly_name
         return cls._titleize_slug(device_key)
+
+    @classmethod
+    def _infer_mijia_device_name(cls, *, dev: dict, did: str, model: str) -> str:
+        raw_name = str(dev.get("name") or "").strip()
+        if raw_name and not cls._looks_like_device_identifier(raw_name):
+            return raw_name
+
+        model_name = str(model or "").strip()
+        if model_name:
+            category = cls._map_model_to_category(model_name)
+            if category and category != "其他设备":
+                return category
+            return cls._titleize_slug(model_name)
+
+        return f"米家设备 {did[-4:]}" if did else "米家设备"
 
     @classmethod
     def _extract_home_assistant_group_label(
@@ -1688,6 +1705,16 @@ class DeviceDashboardService:
     @staticmethod
     def _titleize_slug(value: str) -> str:
         return str(value or "").replace("_", " ").replace("-", " ").strip().title() or "Home Assistant Device"
+
+    @staticmethod
+    def _looks_like_device_identifier(value: Any) -> bool:
+        normalized = str(value or "").strip()
+        if not normalized:
+            return True
+        compact = re.sub(r"[\s\-_:]+", "", normalized)
+        if compact.isdigit() and len(compact) >= 6:
+            return True
+        return False
 
     @staticmethod
     def _build_empty_snapshot() -> dict:

@@ -168,7 +168,7 @@ export default {
       anomalies: "There are no anomalies to handle right now.",
     },
     actions: {
-      refresh: "Refresh structure",
+      refresh: "Refresh",
       apply: "Apply",
       run: "Run",
       expand: "Expand",

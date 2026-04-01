@@ -171,7 +171,7 @@ export default {
       anomalies: "当前没有需要处理的异常。",
     },
     actions: {
-      refresh: "刷新设备结构",
+      refresh: "刷新",
       apply: "应用",
       run: "执行",
       expand: "展开",

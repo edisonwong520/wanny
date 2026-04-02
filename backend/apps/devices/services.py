@@ -10,6 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from providers.models import PlatformAuth
+from providers.clients.midea_cloud import get_device_mapping
 from utils.logger import logger
 
 from .models import (
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 class DeviceDashboardService:
     state_key = "default"
     default_sync_interval_seconds = 300
-    device_provider_names = ("mijia", "home_assistant")
+    device_provider_names = ("mijia", "home_assistant", "midea_cloud")
     supported_ha_domains = {
         "light",
         "switch",
@@ -225,7 +226,7 @@ class DeviceDashboardService:
     def refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
         logger.info(f"[Device Sync] refresh() called for account_id={account.id} email={account.email} trigger={trigger}")
         provider_payloads: list[dict] = []
-        from providers.services import HomeAssistantAuthService, MijiaAuthService
+        from providers.services import HomeAssistantAuthService, MideaCloudAuthService, MijiaAuthService
 
         try:
             mijia_auth = MijiaAuthService.get_auth_record(account=account, active_only=True)
@@ -248,6 +249,20 @@ class DeviceDashboardService:
                 provider_payloads.append(ha_payload)
         except Exception as error:
             logger.error(f"[Device Sync] Failed to check Home Assistant auth state for user {account.email}: {error}")
+
+        try:
+            midea_cloud_auth = MideaCloudAuthService.get_auth_record(account=account, active_only=True)
+            logger.debug(f"[Device Sync] MideaCloud auth check for account_id={account.id}: found={midea_cloud_auth is not None}")
+            if midea_cloud_auth:
+                logger.info(f"[Device Sync] Building MideaCloud snapshot for account_id={account.id}")
+                midea_cloud_payload = cls._build_midea_cloud_snapshot(account)
+                logger.info(
+                    f"[Device Sync] MideaCloud snapshot built for account_id={account.id}: "
+                    f"devices={len(midea_cloud_payload.get('devices', []))}"
+                )
+                provider_payloads.append(midea_cloud_payload)
+        except Exception as error:
+            logger.error(f"[Device Sync] Failed to check Midea Cloud auth state for user {account.email}: {error}")
 
         logger.info(f"[Device Sync] Merging {len(provider_payloads)} provider payloads for account_id={account.id}")
         payload = cls._merge_snapshots(provider_payloads) if provider_payloads else cls._build_empty_snapshot()
@@ -385,6 +400,11 @@ class DeviceDashboardService:
             DeviceControl.SourceTypeChoices.MIJIA_ACTION,
         }:
             cls._execute_mijia_control(account, device=device, control=control, value=value)
+        elif control.source_type in {
+            DeviceControl.SourceTypeChoices.MIDEA_CLOUD_PROPERTY,
+            DeviceControl.SourceTypeChoices.MIDEA_CLOUD_ACTION,
+        }:
+            cls._execute_midea_cloud_control(account, device=device, control=control, action=action, value=value)
         else:
             raise ValueError(f"Unsupported control source: {control.source_type}")
 
@@ -537,6 +557,308 @@ class DeviceDashboardService:
             "anomalies": [],
             "rules": [],
         }
+
+    @classmethod
+    def _build_midea_cloud_snapshot(cls, account: Account) -> dict:
+        from providers.services import MideaCloudAuthService
+
+        logger.debug(f"[Device Sync] _build_midea_cloud_snapshot start for account_id={account.id}")
+        try:
+            client = MideaCloudAuthService.get_client(account=account)
+            devices = client.list_devices()
+            logger.info(f"[Device Sync] Midea Cloud devices fetched for account_id={account.id}: count={len(devices)}")
+        except Exception as error:
+            logger.error(f"[Device Sync] Failed to fetch Midea Cloud data, falling back to empty: {error}")
+            return cls._build_empty_snapshot()
+
+        room_index: dict[str, dict] = {}
+        devices_data: list[dict] = []
+        default_room_id = cls._make_room_id("midea_cloud", "default")
+
+        for index, raw_device in enumerate(devices, start=1):
+            if not isinstance(raw_device, dict):
+                continue
+
+            device_id = str(
+                raw_device.get("id")
+                or raw_device.get("device_id")
+                or raw_device.get("sn")
+                or raw_device.get("appliance_code")
+                or ""
+            ).strip()
+            if not device_id:
+                continue
+
+            room_name = str(raw_device.get("room_name") or raw_device.get("home_name") or "美的云设备").strip()
+            room_id = cls._make_room_id("midea_cloud", room_name) if room_name else default_room_id
+            room_index.setdefault(
+                room_id,
+                {
+                    "id": room_id,
+                    "name": room_name or "美的云设备",
+                    "climate": str(raw_device.get("home_name") or "Midea Cloud").strip(),
+                    "summary": "来自美的云直连接入",
+                    "sort_order": 10 + len(room_index) * 10,
+                },
+            )
+
+            controls = cls._build_midea_cloud_controls(raw_device)
+            capabilities = [
+                control["key"]
+                for control in controls
+                if control["kind"] != DeviceControl.KindChoices.SENSOR
+            ][:8]
+            category = str(raw_device.get("category") or raw_device.get("device_type") or "美的设备").strip()
+            device_type_value = raw_device.get("device_type")
+            if isinstance(device_type_value, str) and device_type_value.startswith("0x"):
+                try:
+                    device_type_value = int(device_type_value, 16)
+                except ValueError:
+                    device_type_value = None
+            if isinstance(device_type_value, int):
+                mapping = get_device_mapping(
+                    device_type_value,
+                    sn8=str(raw_device.get("sn8") or ""),
+                    category=str(raw_device.get("category") or ""),
+                )
+                category = str(mapping.get("category") or category)
+
+            devices_data.append(
+                {
+                    "id": f"midea_cloud:{device_id}",
+                    "room_id": room_id,
+                    "name": str(raw_device.get("name") or raw_device.get("device_name") or f"美的设备 {device_id[-4:]}").strip(),
+                    "category": category,
+                    "status": cls._map_midea_cloud_status(raw_device),
+                    "telemetry": cls._summarize_midea_cloud_device(raw_device, controls),
+                    "note": f"Midea Cloud Device: {device_id}",
+                    "capabilities": capabilities,
+                    "controls": controls,
+                    "last_seen": timezone.now(),
+                    "sort_order": index * 10,
+                    "source_payload": raw_device,
+                }
+            )
+
+        return {
+            "source": "midea_cloud",
+            "rooms": list(room_index.values()),
+            "devices": devices_data,
+            "anomalies": [],
+            "rules": [],
+        }
+
+    @classmethod
+    def _build_midea_cloud_controls(cls, raw_device: dict) -> list[dict]:
+        controls: list[dict] = []
+        raw_controls = raw_device.get("controls") or []
+        device_id = str(
+            raw_device.get("id")
+            or raw_device.get("device_id")
+            or raw_device.get("sn")
+            or raw_device.get("appliance_code")
+            or ""
+        ).strip()
+        sort_order = 10
+
+        device_type_value = raw_device.get("device_type")
+        if isinstance(device_type_value, str) and device_type_value.startswith("0x"):
+            try:
+                device_type_value = int(device_type_value, 16)
+            except ValueError:
+                device_type_value = None
+        mapping = (
+            get_device_mapping(
+                device_type_value,
+                sn8=str(raw_device.get("sn8") or ""),
+                subtype=raw_device.get("model_number"),
+                category=str(raw_device.get("category") or ""),
+            )
+            if isinstance(device_type_value, int)
+            else {}
+        )
+        status_payload = raw_device.get("status_payload") or {}
+
+        mapping_controls = mapping.get("controls") or []
+        for mapping_control in mapping_controls:
+            if not isinstance(mapping_control, dict):
+                continue
+            label = str(mapping_control.get("label") or mapping_control.get("key") or "")
+            name_attribute = str(mapping_control.get("name_attribute") or "").strip()
+            if name_attribute:
+                dynamic_label = status_payload.get(name_attribute)
+                if dynamic_label not in (None, ""):
+                    label = str(dynamic_label)
+            action_params = {
+                "device_id": device_id,
+                "control_key": mapping_control.get("key"),
+            }
+            if isinstance(mapping_control.get("control_template"), dict):
+                action_params["control_template"] = dict(mapping_control["control_template"])
+            if isinstance(mapping_control.get("value_transform"), dict):
+                action_params["value_transform"] = dict(mapping_control["value_transform"])
+            if isinstance(mapping_control.get("actions"), dict):
+                # toggle / action controls use named actions
+                actions = []
+                for action_id, action_payload in mapping_control["actions"].items():
+                    actions.append({"id": action_id, "label": cls._titleize_slug(action_id)})
+                action_params["actions"] = actions
+            options = []
+            for option in mapping_control.get("options") or []:
+                if not isinstance(option, dict):
+                    continue
+                option_record = {"label": option.get("label"), "value": option.get("value")}
+                if isinstance(option.get("control"), dict):
+                    option_record["control"] = option["control"]
+                options.append(option_record)
+            value = status_payload.get(mapping_control.get("value_key"))
+            controls.append(
+                {
+                    "id": f"midea_cloud:{device_id}:{mapping_control['key']}",
+                    "parent_id": f"midea_cloud:{device_id}",
+                    "source_type": (
+                        DeviceControl.SourceTypeChoices.MIDEA_CLOUD_ACTION
+                        if mapping_control["kind"] == DeviceControl.KindChoices.ACTION
+                        else DeviceControl.SourceTypeChoices.MIDEA_CLOUD_PROPERTY
+                    ),
+                    "kind": mapping_control["kind"],
+                    "key": mapping_control["key"],
+                    "label": label,
+                    "group_label": mapping_control.get("group_label", ""),
+                    "writable": bool(mapping_control.get("writable", False)),
+                    "value": value if value is not None else {},
+                    "unit": mapping_control.get("unit", ""),
+                    "options": options,
+                    "range_spec": dict(mapping_control.get("range_spec") or {}),
+                    "action_params": action_params,
+                    "source_payload": {
+                        "mapping": mapping_control,
+                        "status_value": value,
+                    },
+                    "sort_order": sort_order,
+                }
+            )
+            sort_order += 10
+
+        if controls:
+            # Add any extra unmapped status keys as read-only sensors after the curated controls.
+            mapped_value_keys = {
+                str(mapping_control.get("value_key"))
+                for mapping_control in mapping_controls
+                if mapping_control.get("value_key")
+            }
+            mapped_auxiliary_keys = {
+                str(mapping_control.get("name_attribute"))
+                for mapping_control in mapping_controls
+                if mapping_control.get("name_attribute")
+            }
+            for status_key, status_value in (status_payload or {}).items():
+                if status_key in mapped_value_keys:
+                    continue
+                if status_key in mapped_auxiliary_keys:
+                    continue
+                if str(status_key).startswith("_"):
+                    continue
+                if isinstance(status_value, (dict, list)) or status_value in (None, ""):
+                    continue
+                controls.append(
+                    {
+                        "id": f"midea_cloud:{device_id}:status:{status_key}",
+                        "parent_id": f"midea_cloud:{device_id}",
+                        "source_type": DeviceControl.SourceTypeChoices.MIDEA_CLOUD_PROPERTY,
+                        "kind": DeviceControl.KindChoices.SENSOR,
+                        "key": status_key,
+                        "label": cls._titleize_slug(status_key),
+                        "group_label": "运行状态",
+                        "writable": False,
+                        "value": status_value,
+                        "unit": "",
+                        "options": [],
+                        "range_spec": {},
+                        "action_params": {},
+                        "source_payload": {"key": status_key, "value": status_value},
+                        "sort_order": sort_order,
+                    }
+                )
+                sort_order += 10
+            return controls
+
+        if isinstance(raw_controls, list):
+            for raw_control in raw_controls:
+                if not isinstance(raw_control, dict):
+                    continue
+
+                control_key = str(raw_control.get("key") or raw_control.get("name") or "").strip()
+                if not control_key:
+                    continue
+
+                control_type = str(raw_control.get("kind") or raw_control.get("type") or "").strip().lower()
+                source_type = (
+                    DeviceControl.SourceTypeChoices.MIDEA_CLOUD_ACTION
+                    if control_type == "action"
+                    else DeviceControl.SourceTypeChoices.MIDEA_CLOUD_PROPERTY
+                )
+                kind = cls._infer_midea_cloud_control_kind(raw_control)
+                action_params = dict(raw_control.get("action_params") or {})
+                action_params.setdefault("device_id", device_id)
+                action_params.setdefault("control_key", control_key)
+
+                controls.append(
+                    {
+                        "id": f"midea_cloud:{device_id}:{control_key}",
+                        "parent_id": f"midea_cloud:{device_id}",
+                        "source_type": source_type,
+                        "kind": kind,
+                        "key": control_key,
+                        "label": str(raw_control.get("label") or raw_control.get("name") or control_key),
+                        "group_label": str(raw_control.get("group_label") or ""),
+                        "writable": bool(raw_control.get("writable", kind != DeviceControl.KindChoices.SENSOR)),
+                        "value": raw_control.get("value") if raw_control.get("value") is not None else {},
+                        "unit": str(raw_control.get("unit") or ""),
+                        "options": list(raw_control.get("options") or []),
+                        "range_spec": dict(raw_control.get("range_spec") or {}),
+                        "action_params": action_params,
+                        "source_payload": raw_control,
+                        "sort_order": sort_order,
+                    }
+                )
+                sort_order += 10
+
+        if controls:
+            return controls
+
+        if not isinstance(status_payload, dict):
+            return controls
+
+        ignored_keys = {"error", "msg", "message", "ts", "timestamp"}
+        for status_key, status_value in status_payload.items():
+            if status_key in ignored_keys:
+                continue
+            if isinstance(status_value, (dict, list)) or status_value in (None, ""):
+                continue
+
+            controls.append(
+                {
+                    "id": f"midea_cloud:{device_id}:status:{status_key}",
+                    "parent_id": f"midea_cloud:{device_id}",
+                    "source_type": DeviceControl.SourceTypeChoices.MIDEA_CLOUD_PROPERTY,
+                    "kind": DeviceControl.KindChoices.SENSOR,
+                    "key": status_key,
+                    "label": cls._titleize_slug(status_key),
+                    "group_label": "运行状态",
+                    "writable": False,
+                    "value": status_value,
+                    "unit": "",
+                    "options": [],
+                    "range_spec": {},
+                    "action_params": {},
+                    "source_payload": {"key": status_key, "value": status_value},
+                    "sort_order": sort_order,
+                }
+            )
+            sort_order += 10
+
+        return controls
 
     @classmethod
     def _build_mijia_controls(
@@ -1403,6 +1725,53 @@ class DeviceDashboardService:
         client.run_action(control.key, value=action_value)
 
     @classmethod
+    def _execute_midea_cloud_control(
+        cls,
+        account: Account,
+        *,
+        device: DeviceSnapshot,
+        control: DeviceControl,
+        action: str,
+        value: Any,
+    ) -> None:
+        from providers.services import MideaCloudAuthService
+
+        client = MideaCloudAuthService.get_client(account=account)
+        params = control.action_params or {}
+        device_id = params.get("device_id") or (device.source_payload or {}).get("device_id")
+        if not device_id:
+            device_id = device.external_id.removeprefix("midea_cloud:")
+        if not device_id:
+            raise ValueError("Midea Cloud device identifier is missing")
+
+        merged_action_params = dict(params)
+        actions = merged_action_params.get("actions") or []
+        if control.kind == DeviceControl.KindChoices.TOGGLE:
+            action_id = action or ("turn_on" if value in (True, 1, "on", "true") else "turn_off")
+            for action_item in actions:
+                if action_item.get("id") == action_id:
+                    merged_action_params["control"] = cls._find_midea_cloud_action_payload(control, action_id)
+                    break
+        elif control.kind == DeviceControl.KindChoices.ENUM:
+            selected_payload = cls._find_midea_cloud_option_payload(control, value)
+            if selected_payload:
+                merged_action_params["control"] = selected_payload
+        elif control.kind == DeviceControl.KindChoices.ACTION:
+            selected_payload = cls._find_midea_cloud_action_payload(control, value)
+            if not selected_payload:
+                selected_payload = cls._find_midea_cloud_option_payload(control, action or value or "press")
+            if selected_payload:
+                merged_action_params["control"] = selected_payload
+
+        payload = {
+            "key": control.key,
+            "kind": control.kind,
+            "source_type": control.source_type,
+            "action_params": merged_action_params,
+        }
+        client.execute_control(device_id=device_id, control=payload, value=value)
+
+    @classmethod
     def _merge_snapshots(cls, payloads: list[dict]) -> dict:
         merged = cls._build_empty_snapshot()
         source_names = []
@@ -1697,6 +2066,70 @@ class DeviceDashboardService:
             if len(interesting) >= 3:
                 break
         return " | ".join(interesting) if interesting else "已连接"
+
+    @staticmethod
+    def _infer_midea_cloud_control_kind(control: dict) -> str:
+        kind = str(control.get("kind") or control.get("type") or "").strip().lower()
+        if kind in {"toggle", "switch", "bool"}:
+            return DeviceControl.KindChoices.TOGGLE
+        if kind in {"range", "number", "slider"}:
+            return DeviceControl.KindChoices.RANGE
+        if kind in {"enum", "select", "mode"}:
+            return DeviceControl.KindChoices.ENUM
+        if kind in {"action", "button"}:
+            return DeviceControl.KindChoices.ACTION
+        if kind in {"text", "string"}:
+            return DeviceControl.KindChoices.TEXT
+        return DeviceControl.KindChoices.SENSOR
+
+    @staticmethod
+    def _map_midea_cloud_status(raw_device: dict) -> str:
+        for key in ("status", "online_status", "device_status", "state"):
+            value = str(raw_device.get(key) or "").strip().lower()
+            if not value:
+                continue
+            if value in {"offline", "disconnected", "unavailable", "0"}:
+                return DeviceSnapshot.StatusChoices.OFFLINE
+            if value in {"warning", "attention", "alarm", "fault"}:
+                return DeviceSnapshot.StatusChoices.ATTENTION
+            return DeviceSnapshot.StatusChoices.ONLINE
+        return DeviceSnapshot.StatusChoices.ONLINE
+
+    @staticmethod
+    def _summarize_midea_cloud_device(raw_device: dict, controls: list[dict]) -> str:
+        telemetry = str(raw_device.get("telemetry") or "").strip()
+        if telemetry:
+            return telemetry
+
+        interesting = []
+        for control in controls:
+            if control["kind"] == DeviceControl.KindChoices.ACTION:
+                continue
+            value = control.get("value")
+            if value in (None, "", [], {}):
+                continue
+            interesting.append(f"{control['label']}: {value}{control.get('unit', '')}")
+            if len(interesting) >= 3:
+                break
+        return " | ".join(interesting) if interesting else "已连接"
+
+    @staticmethod
+    def _find_midea_cloud_option_payload(control: DeviceControl, value: Any) -> dict | None:
+        for option in control.options or []:
+            if not isinstance(option, dict):
+                continue
+            if option.get("value") == value:
+                payload = option.get("control")
+                return payload if isinstance(payload, dict) else None
+        return None
+
+    @staticmethod
+    def _find_midea_cloud_action_payload(control: DeviceControl, action_id: Any) -> dict | None:
+        source_payload = control.source_payload or {}
+        mapping = source_payload.get("mapping") if isinstance(source_payload, dict) else {}
+        actions = mapping.get("actions") if isinstance(mapping, dict) else {}
+        payload = actions.get(action_id) if isinstance(actions, dict) else None
+        return payload if isinstance(payload, dict) else None
 
     @staticmethod
     def _slugify(value: str) -> str:

@@ -290,6 +290,10 @@ export default {
         midea_cloud: "美的云授权",
         midea_server_info: "请使用美的美居或 MSmartHome App 的账号密码。不同服务器对应不同 App 平台。",
       },
+      servers: {
+        msmartHome: "MSmartHome",
+        meiju: "美的美居",
+      },
       currentInstance: "当前实例",
       providerStatus: {
         connected: "已连接",

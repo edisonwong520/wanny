@@ -36,10 +36,10 @@ const mideaCloudPassword = ref("");
 const mideaCloudServer = ref<"1" | "2">("2"); // 默认美的美居
 
 // 美的云服务器选项
-const mideaServerOptions = [
-  { value: "1", label: "MSmartHome" },
-  { value: "2", label: "美的美居" },
-];
+const mideaServerOptions = computed(() => [
+  { value: "1", label: t("manage.auth.servers.msmartHome") },
+  { value: "2", label: t("manage.auth.servers.meiju") },
+]);
 
 const modalProvider = computed(() =>
   modalPlatform.value
@@ -78,18 +78,6 @@ const mideaCloudInstanceName = computed(() => {
   const preview = modalProvider.value?.payload_preview ?? {};
   const value = preview.instance_name;
   return typeof value === "string" ? value : "";
-});
-
-const mideaCloudSavedAccount = computed(() => {
-  const preview = modalProvider.value?.payload_preview ?? {};
-  const value = preview.account;
-  return typeof value === "string" ? value : "";
-});
-
-const mideaCloudSavedServer = computed(() => {
-  const preview = modalProvider.value?.payload_preview ?? {};
-  const value = preview.server;
-  return typeof value === "number" ? String(value) : "2";
 });
 
 function stopPolling(platform: string) {

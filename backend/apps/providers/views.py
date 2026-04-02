@@ -11,8 +11,7 @@ from .auth_sessions import (
     MijiaAuthorizationService,
 )
 from .models import PlatformAuth
-from .services import MijiaAuthService, WeChatAuthService
-from .services import HomeAssistantAuthService
+from .services import HomeAssistantAuthService, MideaCloudAuthService, MijiaAuthService, WeChatAuthService
 
 
 PLATFORM_CATALOG = {
@@ -34,12 +33,20 @@ PLATFORM_CATALOG = {
         "category": "iot",
         "auth_mode": "form",
     },
+    "midea_cloud": {
+        "display_name": "Midea Cloud",
+        "display_name_zh": "美的云",
+        "category": "iot",
+        "auth_mode": "form",
+    },
 }
 
 PLATFORM_ALIASES = {
     "xiaomi": MijiaAuthService.platform_name,
     "ha": HomeAssistantAuthService.platform_name,
     "homeassistant": HomeAssistantAuthService.platform_name,
+    "midea": MideaCloudAuthService.platform_name,
+    "midea-cloud": MideaCloudAuthService.platform_name,
 }
 
 SENSITIVE_KEYWORDS = (
@@ -63,6 +70,8 @@ def _normalize_platform_name(value) -> str:
 def _get_platform_lookup_names(platform_name: str) -> tuple[str, ...]:
     if platform_name == MijiaAuthService.platform_name:
         return MijiaAuthService.platform_aliases
+    if platform_name == MideaCloudAuthService.platform_name:
+        return MideaCloudAuthService.platform_aliases
     return (platform_name,)
 
 
@@ -73,6 +82,8 @@ def _get_platform_auth(request, platform_name: str) -> PlatformAuth | None:
     normalized_name = _normalize_platform_name(platform_name)
     if normalized_name == MijiaAuthService.platform_name:
         return MijiaAuthService.get_auth_record(account=account)
+    if normalized_name == MideaCloudAuthService.platform_name:
+        return MideaCloudAuthService.get_auth_record(account=account)
 
     return PlatformAuth.objects.filter(account=account, platform_name=normalized_name).first()
 
@@ -293,6 +304,21 @@ def handle_platform_auth_authorize(request, platform_name: str):
                 instruction="已完成 Home Assistant 服务校验并保存授权信息。",
                 detail=f"实例 {auth_obj.auth_payload.get('instance_name') or 'Home Assistant'} 已可用于设备同步。",
             )
+        elif normalized_name == MideaCloudAuthService.platform_name:
+            auth_payload = data.get("payload", {})
+            auth_obj = MideaCloudAuthService.validate_and_store(account=account, payload=auth_payload)
+
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.sync_after_provider_change(account, trigger="connect_midea_cloud")
+
+            session = AuthorizationSessionStore.create(
+                platform=normalized_name,
+                auth_kind="form",
+                status="completed",
+                title="美的云已连接",
+                instruction="已保存美的云配置，后续可继续补充协议与设备映射能力。",
+                detail=f"配置 {auth_obj.auth_payload.get('instance_name') or 'Midea Cloud'} 已加入设备同步流程。",
+            )
         else:
             return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
 
@@ -386,6 +412,9 @@ def handle_platform_auth_detail(request, platform_name: str):
             MijiaAuthService.write_auth_file_from_db(account)
             from devices.services import DeviceDashboardService
             DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_mijia")
+        elif normalized_name == MideaCloudAuthService.platform_name:
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_midea_cloud")
         elif normalized_name == HomeAssistantAuthService.platform_name:
             from devices.services import DeviceDashboardService
             DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_home_assistant")

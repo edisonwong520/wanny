@@ -287,6 +287,10 @@ export default {
         midea_cloud: "Midea Cloud Authorization",
         midea_server_info: "Use your Midea Meiju or MSmartHome App account. Different servers correspond to different App platforms.",
       },
+      servers: {
+        msmartHome: "MSmartHome",
+        meiju: "Midea Meiju",
+      },
       currentInstance: "Current instance",
       providerStatus: {
         connected: "Connected",

@@ -14,9 +14,11 @@ from mijiaAPI import mijiaAPI
 from wechatbot.auth import save_credentials
 from wechatbot.types import Credentials
 
+from utils.crypto import encrypt_value, decrypt_value
 from utils.logger import logger
 
 from .models import PlatformAuth
+from .clients.midea_cloud import MideaCloudClient
 
 
 class WeChatAuthService:
@@ -397,3 +399,77 @@ class HomeAssistantAuthService:
             }
 
         return config, states, registry
+
+
+class MideaCloudAuthService:
+    platform_name = "midea_cloud"
+    platform_aliases = ("midea_cloud", "midea", "midea-cloud")
+
+    @classmethod
+    def get_auth_record(cls, account: Account, active_only: bool = False) -> PlatformAuth | None:
+        queryset = PlatformAuth.objects.filter(account=account, platform_name__in=cls.platform_aliases)
+        if active_only:
+            queryset = queryset.filter(is_active=True)
+
+        records = list(queryset.order_by("platform_name"))
+        for record in records:
+            if record.platform_name == cls.platform_name:
+                return record
+        return records[0] if records else None
+
+    @classmethod
+    def _extract_payload(cls, auth_obj: PlatformAuth | None) -> dict:
+        payload = getattr(auth_obj, "auth_payload", None)
+        return payload if isinstance(payload, dict) else {}
+
+    @classmethod
+    def validate_payload(cls, payload: dict) -> dict:
+        return MideaCloudClient.validate_payload(payload)
+
+    @classmethod
+    def validate_and_store(cls, account: Account, payload: dict) -> PlatformAuth:
+        validated_payload = cls.validate_payload(payload)
+        client = MideaCloudClient(validated_payload)
+        profile = client.get_account_profile()
+        auth_state = profile.get("auth_state", {})
+        validated_payload.update(auth_state)
+        validated_payload["account"] = profile.get("account", "")
+        validated_payload["api_base"] = profile.get("api_base", "")
+        validated_payload["server_name"] = profile.get("server_name", "")
+        validated_payload["nickname"] = profile.get("nickname", "")
+        validated_payload["homes"] = profile.get("homes", [])
+        validated_payload["instance_name"] = f"Midea Cloud ({profile.get('server_name', '')})".strip()
+
+        # 安全：加密存储密码，便于后续重新登录
+        if validated_payload.get("password"):
+            validated_payload["password"] = encrypt_value(validated_payload["password"])
+
+        auth_obj, _ = PlatformAuth.objects.update_or_create(
+            account=account,
+            platform_name=cls.platform_name,
+            defaults={
+                "auth_payload": validated_payload,
+                "is_active": True,
+            },
+        )
+        logger.info(f"[Midea Cloud Auth] 已保存账户 {account.email} 的美的云配置。")
+        return auth_obj
+
+    @classmethod
+    def get_client(cls, account: Account) -> MideaCloudClient:
+        auth_obj = cls.get_auth_record(account=account, active_only=True)
+        payload = cls._extract_payload(auth_obj)
+        if not payload:
+            raise ValueError("No active Midea Cloud authorization found")
+
+        # 解密密码（如果存在加密存储的密码）
+        if payload.get("password"):
+            # 检查是否是加密后的密码（base64 格式）
+            try:
+                payload["password"] = decrypt_value(payload["password"])
+            except Exception:
+                # 如果解密失败，可能是明文密码（兼容旧数据）
+                pass
+
+        validated_payload = cls.validate_payload(payload)
+        return MideaCloudClient(validated_payload)

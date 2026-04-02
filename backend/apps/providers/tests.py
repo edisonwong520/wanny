@@ -8,8 +8,11 @@ from django.urls import reverse
 
 from accounts.models import Account
 from .auth_sessions import AuthorizationSessionStore
+from .clients.midea_cloud.client import MideaCloudClient
+from .clients.midea_cloud.lua_codec import MideaLuaCodec, ensure_lua_support_files, lua_runtime_available
+from .clients.midea_cloud.mappings import UPSTREAM_MAPPING_ROOT, get_device_mapping
 from .models import PlatformAuth
-from .services import HomeAssistantAuthService, MijiaAuthService
+from .services import HomeAssistantAuthService, MideaCloudAuthService, MijiaAuthService
 
 
 class PlatformAuthAPITest(TestCase):
@@ -84,6 +87,7 @@ class PlatformAuthAPITest(TestCase):
         self.assertIn("wechat", providers)
         self.assertIn("mijia", providers)
         self.assertIn("home_assistant", providers)
+        self.assertIn("midea_cloud", providers)
         self.assertEqual(providers["wechat"]["status"], "connected")
         self.assertTrue(providers["wechat"]["configured"])
         self.assertNotEqual(
@@ -303,6 +307,129 @@ class PlatformAuthAPITest(TestCase):
         self.assertEqual(payload["session"]["auth_kind"], "form")
         self.assertEqual(payload["session"]["status"], "completed")
 
+    def test_authorize_midea_cloud_endpoint_validates_and_stores_payload(self):
+        auth_obj = PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="midea_cloud",
+            auth_payload={
+                "account": "demo@example.com",
+                "access_token": "midea-token",
+                "instance_name": "Midea Cloud",
+            },
+            is_active=True,
+        )
+
+        with patch("providers.views.MideaCloudAuthService.validate_and_store", return_value=auth_obj):
+            response = self.client.post(
+                self.authorize_url("midea"),
+                data=json.dumps(
+                    {
+                        "payload": {
+                            "account": "demo@example.com",
+                            "access_token": "midea-token",
+                        }
+                    }
+                ),
+                content_type="application/json",
+                **self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"]["platform"], "midea_cloud")
+        self.assertEqual(payload["session"]["auth_kind"], "form")
+        self.assertEqual(payload["session"]["status"], "completed")
+
+    def test_authorize_midea_cloud_endpoint_persists_account_password_payload(self):
+        with patch.object(
+            MideaCloudClient,
+            "get_account_profile",
+            return_value={
+                "account": "demo@example.com",
+                "api_base": "https://midea.example.com",
+                "server_name": "美的美居",
+                "nickname": "Edison",
+                "homes": [{"id": "1001", "name": "我的家"}],
+                "auth_state": {
+                    "server": 2,
+                    "server_name": "美的美居",
+                    "api_base": "https://midea.example.com",
+                    "device_id": "device-123",
+                    "access_token": "midea-token",
+                },
+            },
+        ), patch("devices.services.DeviceDashboardService.sync_after_provider_change") as mocked_sync:
+            response = self.client.post(
+                self.authorize_url("midea"),
+                data=json.dumps(
+                    {
+                        "payload": {
+                            "username": "demo@example.com",
+                            "password": "secret",
+                            "server": "美的美居",
+                            "base_url": "https://midea.example.com/",
+                        }
+                    }
+                ),
+                content_type="application/json",
+                **self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"]["platform"], "midea_cloud")
+        self.assertEqual(payload["provider"]["status"], "connected")
+        self.assertEqual(payload["session"]["status"], "completed")
+        mocked_sync.assert_called_once_with(self.account, trigger="connect_midea_cloud")
+
+        auth_obj = PlatformAuth.objects.get(account=self.account, platform_name="midea_cloud")
+        self.assertEqual(auth_obj.auth_payload["account"], "demo@example.com")
+        self.assertEqual(auth_obj.auth_payload["password"], "secret")
+        self.assertEqual(auth_obj.auth_payload["server"], 2)
+        self.assertEqual(auth_obj.auth_payload["api_base"], "https://midea.example.com")
+        self.assertEqual(auth_obj.auth_payload["access_token"], "midea-token")
+        self.assertEqual(auth_obj.auth_payload["instance_name"], "Midea Cloud (美的美居)")
+
+    def test_authorize_midea_cloud_endpoint_masks_password_in_provider_preview(self):
+        with patch.object(
+            MideaCloudClient,
+            "get_account_profile",
+            return_value={
+                "account": "demo@example.com",
+                "api_base": "https://midea.example.com",
+                "server_name": "美的美居",
+                "nickname": "Edison",
+                "homes": [],
+                "auth_state": {
+                    "server": 2,
+                    "server_name": "美的美居",
+                    "api_base": "https://midea.example.com",
+                    "access_token": "midea-token",
+                },
+            },
+        ), patch("devices.services.DeviceDashboardService.sync_after_provider_change"):
+            self.client.post(
+                self.authorize_url("midea"),
+                data=json.dumps(
+                    {
+                        "payload": {
+                            "account": "demo@example.com",
+                            "password": "secret",
+                            "server": 2,
+                        }
+                    }
+                ),
+                content_type="application/json",
+                **self.auth_headers,
+            )
+
+        detail_response = self.client.get(self.detail_url("midea"), **self.auth_headers)
+        self.assertEqual(detail_response.status_code, 200)
+        provider = detail_response.json()["provider"]
+        self.assertEqual(provider["platform"], "midea_cloud")
+        self.assertNotEqual(provider["payload_preview"]["password"], "secret")
+        self.assertEqual(provider["payload_preview"]["password"], "se***et")
+
     def test_authorize_get_returns_latest_session_for_platform(self):
         AuthorizationSessionStore.create(
             platform="wechat",
@@ -449,3 +576,423 @@ class HomeAssistantAuthServiceTest(TestCase):
         self.assertEqual(config["location_name"], "My Home")
         self.assertEqual(states[0]["entity_id"], "sensor.fridge_cold")
         self.assertEqual(registry["areas"][0]["name"], "厨房")
+
+
+class MideaCloudAuthServiceTest(TestCase):
+    def setUp(self):
+        self.account = Account.objects.create(
+            email="midea-cloud-test@example.com",
+            name="Midea Cloud Test",
+            password="pwd",
+        )
+
+    def test_validate_and_store_normalizes_alias_fields(self):
+        with patch.object(MideaCloudClient, "get_account_profile", return_value={
+                "account": "demo@example.com",
+                "api_base": "https://midea.example.com",
+                "server_name": "美的美居",
+                "nickname": "Edison",
+                "homes": [{"id": "1001", "name": "我的家"}],
+                "auth_state": {
+                    "server": 2,
+                    "server_name": "美的美居",
+                    "api_base": "https://midea.example.com",
+                    "device_id": "device-123",
+                    "access_token": "midea-token",
+                },
+            }):
+            auth_obj = MideaCloudAuthService.validate_and_store(
+                self.account,
+                {
+                    "username": "demo@example.com",
+                    "password": "secret",
+                    "base_url": "https://midea.example.com/",
+                },
+            )
+
+        self.assertEqual(auth_obj.platform_name, "midea_cloud")
+        self.assertEqual(auth_obj.auth_payload["account"], "demo@example.com")
+        self.assertEqual(auth_obj.auth_payload["access_token"], "midea-token")
+        self.assertEqual(auth_obj.auth_payload["api_base"], "https://midea.example.com")
+        self.assertEqual(auth_obj.auth_payload["nickname"], "Edison")
+        self.assertEqual(auth_obj.auth_payload["homes"][0]["id"], "1001")
+
+
+class MideaCloudClientTest(TestCase):
+    def test_validate_payload_requires_password_without_token(self):
+        with self.assertRaises(ValueError):
+            MideaCloudClient.validate_payload(
+                {
+                    "account": "demo@example.com",
+                    "server": 2,
+                }
+            )
+
+    def test_get_account_profile_uses_cloud_login_and_home_listing(self):
+        client = MideaCloudClient(
+            {
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            }
+        )
+
+        with patch.object(client.cloud_api, "login", return_value=True) as mocked_login, patch.object(
+            client.cloud_api,
+            "list_homes",
+            return_value={"1001": "我的家", "1002": "父母家"},
+        ):
+            profile = client.get_account_profile()
+
+        mocked_login.assert_called_once()
+        self.assertEqual(profile["server_name"], "美的美居")
+        self.assertEqual(profile["homes"][0]["id"], "1001")
+        self.assertEqual(profile["homes"][1]["name"], "父母家")
+
+    def test_list_devices_enriches_status_payload(self):
+        client = MideaCloudClient(
+            {
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+                "selected_homes": ["1001"],
+            }
+        )
+
+        with patch.object(client.cloud_api, "login", return_value=True), patch.object(
+            client.cloud_api,
+            "list_homes",
+            return_value={"1001": "我的家"},
+        ), patch.object(
+            client.cloud_api,
+            "list_appliances",
+            return_value={
+                998877: {
+                    "name": "客厅空调",
+                    "type": 0xAC,
+                    "sn": "123456789ABCDEFG",
+                    "sn8": "9ABCDEFG",
+                    "category": "air_conditioner",
+                    "smart_product_id": "sp-1",
+                    "model_number": "KFR-35GW",
+                    "manufacturer_code": "0000",
+                    "model": "9ABCDEFG",
+                    "online": True,
+                    "home_name": "我的家",
+                    "room_name": "客厅",
+                    "home_id": "1001",
+                }
+            },
+        ), patch.object(
+            client.cloud_api,
+            "get_device_status",
+            return_value={"power": "on", "target_temperature": 24},
+        ):
+            devices = client.list_devices()
+
+        self.assertEqual(len(devices), 1)
+        self.assertEqual(devices[0]["id"], "998877")
+        self.assertEqual(devices[0]["room_name"], "客厅")
+        self.assertEqual(devices[0]["status_payload"]["power"], "on")
+        self.assertIn("_meta", devices[0]["status_payload"])
+
+    def test_list_devices_uses_mapping_queries_and_downloads_lua(self):
+        client = MideaCloudClient(
+            {
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+                "selected_homes": ["1001"],
+            }
+        )
+
+        with patch.object(client.cloud_api, "login", return_value=True), patch.object(
+            client.cloud_api,
+            "list_homes",
+            return_value={"1001": "我的家"},
+        ), patch.object(
+            client.cloud_api,
+            "list_appliances",
+            return_value={
+                998877: {
+                    "name": "客厅空调",
+                    "type": 0xAC,
+                    "sn": "123456789ABCDEFG",
+                    "sn8": "9ABCDEFG",
+                    "category": "wall-air-conditioner",
+                    "smart_product_id": "sp-1",
+                    "model_number": "KFR-35GW",
+                    "manufacturer_code": "0000",
+                    "model": "9ABCDEFG",
+                    "online": True,
+                    "home_name": "我的家",
+                    "room_name": "客厅",
+                    "home_id": "1001",
+                }
+            },
+        ), patch.object(
+            client.cloud_api,
+            "get_device_status",
+            side_effect=[
+                {"power": "on"},
+                {"indoor_humidity": 51},
+                {"indoor_temperature": 27},
+            ],
+        ) as mocked_status, patch.object(
+            client.cloud_api,
+            "download_lua",
+            return_value=Path("/tmp/test.lua"),
+        ) as mocked_download:
+            devices = client.list_devices()
+
+        self.assertEqual(devices[0]["status_payload"]["power"], "on")
+        self.assertEqual(devices[0]["status_payload"]["indoor_humidity"], 51)
+        self.assertEqual(devices[0]["status_payload"]["indoor_temperature"], 27)
+        self.assertEqual(devices[0]["status_payload"]["_meta"]["lua_file"], "/tmp/test.lua")
+        self.assertIn("lua_runtime_available", devices[0]["status_payload"]["_meta"])
+        self.assertGreaterEqual(mocked_status.call_count, 3)
+        mocked_download.assert_called_once()
+
+    def test_upstream_mapping_root_is_symlinked_to_submodule(self):
+        self.assertTrue(UPSTREAM_MAPPING_ROOT.exists())
+        self.assertTrue(UPSTREAM_MAPPING_ROOT.is_symlink())
+
+    def test_get_device_mapping_loads_upstream_ac_mapping_without_homeassistant_installed(self):
+        mapping = get_device_mapping(0xAC, sn8="", category="wall-air-conditioner")
+
+        self.assertTrue(mapping["controls"])
+        keys = {control["key"] for control in mapping["controls"]}
+        self.assertIn("hvac_mode", keys)
+        self.assertIn("target_temperature", keys)
+
+    def test_get_device_mapping_prefers_subtype_specific_mapping(self):
+        mapping = get_device_mapping(0x21, sn8="00000000", subtype="68", category="")
+
+        switch_controls = [control for control in mapping["controls"] if control["kind"] == "toggle"]
+        self.assertEqual(len(switch_controls), 1)
+        self.assertEqual(switch_controls[0]["key"], "endpoint_1_OnOff")
+        self.assertEqual(switch_controls[0]["label"], "endpoint_1_name")
+        self.assertEqual(
+            switch_controls[0]["actions"]["turn_on"],
+            {"endpoint_1_OnOff": "1"},
+        )
+
+    def test_get_device_mapping_keeps_multiple_button_controls_distinct(self):
+        mapping = get_device_mapping(0x21, sn8="00000000", subtype="78", category="")
+
+        action_controls = [control for control in mapping["controls"] if control["kind"] == "action"]
+        self.assertEqual(len(action_controls), 4)
+        keys = {control["key"] for control in action_controls}
+        self.assertEqual(
+            keys,
+            {"endpoint_1_OnOff", "endpoint_2_OnOff", "endpoint_3_OnOff", "endpoint_4_OnOff"},
+        )
+
+    def test_get_device_mapping_preserves_sensor_semantics_from_upstream(self):
+        mapping = get_device_mapping(0xFA, sn8="", category="")
+
+        pm25_control = next(control for control in mapping["controls"] if control["key"] == "pm25")
+        self.assertEqual(pm25_control["unit"], "ug/m3")
+        self.assertEqual(pm25_control["group_label"], "环境")
+        self.assertEqual(pm25_control["device_class"], "pm25")
+
+    def test_get_device_mapping_marks_half_degree_temperature_transform(self):
+        mapping = get_device_mapping(0x21, sn8="NOTFOUND", subtype="999", category="")
+
+        target_control = next(
+            control for control in mapping["controls"] if control["key"] == "target_temperature"
+        )
+        self.assertEqual(
+            target_control["value_transform"],
+            {
+                "type": "temperature_halves",
+                "integer_key": "temperature",
+                "fraction_key": "small_temperature",
+            },
+        )
+
+    def test_ensure_lua_support_files_creates_cjson_and_bit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cjson_path, bit_path = ensure_lua_support_files(Path(temp_dir))
+
+            self.assertTrue(cjson_path.exists())
+            self.assertTrue(bit_path.exists())
+            self.assertEqual(cjson_path.name, "cjson.lua")
+            self.assertEqual(bit_path.name, "bit.lua")
+
+    def test_lua_codec_loads_device_script_when_runtime_available(self):
+        if not lua_runtime_available():
+            self.skipTest("lupa runtime is not available")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            ensure_lua_support_files(temp_path)
+            lua_file = temp_path / "demo.lua"
+            lua_file.write_text(
+                """
+                function jsonToData(param)
+                  return param
+                end
+
+                function dataToJson(param)
+                  return param
+                end
+                """.strip(),
+                encoding="utf-8",
+            )
+
+            codec = MideaLuaCodec(lua_file, device_type="T0xAC", sn="123456789ABCDEFG", subtype="KFR-35GW")
+
+            query_payload = codec.build_query({"power": "on"})
+
+        self.assertIsInstance(query_payload, str)
+        self.assertIn('"power": "on"', query_payload)
+
+    def test_execute_control_falls_back_to_generic_nested_payload(self):
+        client = MideaCloudClient(
+            {
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            }
+        )
+
+        with patch.object(client.cloud_api, "login", return_value=True), patch.object(
+            client,
+            "list_devices",
+            return_value=[
+                {
+                    "id": "998877",
+                    "appliance_code": 998877,
+                    "device_type": 0xAC,
+                    "sn": "123456789ABCDEFG",
+                    "model_number": "KFR-35GW",
+                    "manufacturer_code": "0000",
+                    "status_payload": {
+                        "power": "on",
+                        "_meta": {"lua_file": "/tmp/test.lua"},
+                    },
+                }
+            ],
+        ), patch.object(
+            client.cloud_api,
+            "send_device_control",
+            return_value=True,
+        ) as mocked_send:
+            client.execute_control(
+                device_id="998877",
+                control={
+                    "key": "target_temperature",
+                    "action_params": {"control_key": "mode.target_temperature"},
+                },
+                value=26,
+            )
+
+        mocked_send.assert_called_once()
+        payload = mocked_send.call_args.kwargs
+        self.assertEqual(payload["control"], {"mode": {"target_temperature": 26}})
+        self.assertEqual(payload["status"], {"power": "on"})
+
+    def test_execute_control_merges_centralized_fields_from_current_status(self):
+        client = MideaCloudClient(
+            {
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            }
+        )
+
+        with patch.object(client.cloud_api, "login", return_value=True), patch(
+            "providers.clients.midea_cloud.client.get_device_mapping",
+            return_value={"centralized": ["run_mode", "fan_speed"]},
+        ), patch.object(
+            client,
+            "list_devices",
+            return_value=[
+                {
+                    "id": "2468",
+                    "appliance_code": 2468,
+                    "device_type": 0xAC,
+                    "sn": "123456789ABCDEFG",
+                    "sn8": "9ABCDEFG",
+                    "category": "wall-air-conditioner",
+                    "model_number": "KFR-35GW",
+                    "manufacturer_code": "0000",
+                    "status_payload": {
+                        "run_mode": "2",
+                        "fan_speed": "3",
+                        "_meta": {},
+                    },
+                }
+            ],
+        ), patch.object(
+            client.cloud_api,
+            "send_device_control",
+            return_value=True,
+        ) as mocked_send:
+            client.execute_control(
+                device_id="2468",
+                control={
+                    "key": "power",
+                    "kind": "toggle",
+                    "action_params": {"control_key": "power"},
+                },
+                value="1",
+            )
+
+        mocked_send.assert_called_once()
+        payload = mocked_send.call_args.kwargs
+        self.assertEqual(payload["control"], {"power": "1", "run_mode": "2", "fan_speed": "3"})
+
+    def test_execute_control_applies_half_degree_temperature_transform(self):
+        client = MideaCloudClient(
+            {
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            }
+        )
+
+        with patch.object(client.cloud_api, "login", return_value=True), patch.object(
+            client,
+            "list_devices",
+            return_value=[
+                {
+                    "id": "998877",
+                    "appliance_code": 998877,
+                    "device_type": 0xAC,
+                    "sn": "123456789ABCDEFG",
+                    "sn8": "9ABCDEFG",
+                    "category": "wall-air-conditioner",
+                    "model_number": "KFR-35GW",
+                    "manufacturer_code": "0000",
+                    "status_payload": {"power": "on", "_meta": {}},
+                }
+            ],
+        ), patch(
+            "providers.clients.midea_cloud.client.get_device_mapping",
+            return_value={"centralized": []},
+        ), patch.object(
+            client.cloud_api,
+            "send_device_control",
+            return_value=True,
+        ) as mocked_send:
+            client.execute_control(
+                device_id="998877",
+                control={
+                    "key": "target_temperature",
+                    "action_params": {
+                        "control_key": "target_temperature",
+                        "control_template": {"temperature": "{value}"},
+                        "value_transform": {
+                            "type": "temperature_halves",
+                            "integer_key": "temperature",
+                            "fraction_key": "small_temperature",
+                        },
+                    },
+                },
+                value=24.5,
+            )
+
+        payload = mocked_send.call_args.kwargs
+        self.assertEqual(payload["control"], {"temperature": 24, "small_temperature": 5})

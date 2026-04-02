@@ -13,6 +13,13 @@ from .services import DeviceDashboardService
 
 
 def build_sample_snapshot(source: str = "home_assistant") -> dict:
+    source_type_map = {
+        "home_assistant": "ha_entity",
+        "midea_cloud": "midea_cloud_property",
+    }
+    default_source_type = source_type_map.get(source, "mijia_property")
+    key_prefix = "switch.fridge_power" if source == "home_assistant" else "power"
+    sensor_key_prefix = "sensor.fridge_refrigerator_temperature" if source == "home_assistant" else "refrigerator-temperature"
     return {
         "source": source,
         "rooms": [
@@ -38,9 +45,9 @@ def build_sample_snapshot(source: str = "home_assistant") -> dict:
                     {
                         "id": f"{source}:switch.fridge_power",
                         "parent_id": f"{source}:switch.fridge_power",
-                        "source_type": "ha_entity" if source == "home_assistant" else "mijia_property",
+                        "source_type": default_source_type,
                         "kind": "toggle",
-                        "key": "switch.fridge_power" if source == "home_assistant" else "power",
+                        "key": key_prefix,
                         "label": "总电源",
                         "group_label": "整机",
                         "writable": True,
@@ -62,9 +69,9 @@ def build_sample_snapshot(source: str = "home_assistant") -> dict:
                     {
                         "id": f"{source}:sensor.fridge_refrigerator_temperature",
                         "parent_id": f"{source}:sensor.fridge_refrigerator_temperature",
-                        "source_type": "ha_entity" if source == "home_assistant" else "mijia_property",
+                        "source_type": default_source_type,
                         "kind": "sensor",
-                        "key": "sensor.fridge_refrigerator_temperature" if source == "home_assistant" else "refrigerator-temperature",
+                        "key": sensor_key_prefix,
                         "label": "冷藏区温度",
                         "group_label": "冷藏区",
                         "writable": False,
@@ -171,6 +178,226 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertEqual(payload["snapshot"]["source"], "home_assistant")
         self.assertEqual(payload["snapshot"]["devices"][0]["name"], "多开门冰箱")
         self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["label"], "总电源")
+
+    def test_refresh_uses_midea_cloud_snapshot_when_authorized(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="midea_cloud",
+            auth_payload={
+                "account": "demo@example.com",
+                "access_token": "midea-token",
+            },
+            is_active=True,
+        )
+
+        with patch(
+            "devices.services.DeviceDashboardService._build_midea_cloud_snapshot",
+            return_value=build_sample_snapshot("midea_cloud"),
+        ):
+            payload = DeviceDashboardService.refresh(self.account, trigger="test")
+
+        self.assertEqual(payload["snapshot"]["source"], "midea_cloud")
+        self.assertEqual(payload["snapshot"]["devices"][0]["name"], "多开门冰箱")
+        self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["source_type"], "midea_cloud_property")
+
+    def test_midea_cloud_snapshot_builds_sensor_controls_from_status_payload(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="midea_cloud",
+            auth_payload={
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            },
+            is_active=True,
+        )
+
+        with patch("providers.services.MideaCloudAuthService.get_client") as mocked_get_client:
+            mocked_get_client.return_value.list_devices.return_value = [
+                {
+                    "id": "998877",
+                    "device_id": "998877",
+                    "appliance_code": 998877,
+                    "home_id": "1001",
+                    "home_name": "我的家",
+                    "room_name": "客厅",
+                    "name": "客厅空调",
+                    "device_type": 0xAC,
+                    "category": "air_conditioner",
+                    "model": "9ABCDEFG",
+                    "model_number": "KFR-35GW",
+                    "manufacturer_code": "0000",
+                    "smart_product_id": "sp-1",
+                    "sn": "123456789ABCDEFG",
+                    "sn8": "9ABCDEFG",
+                    "online": True,
+                    "status": "online",
+                    "status_payload": {"power": "on", "target_temperature": 24, "indoor_temperature": 27},
+                }
+            ]
+
+            snapshot = DeviceDashboardService._build_midea_cloud_snapshot(self.account)
+
+        self.assertEqual(snapshot["source"], "midea_cloud")
+        self.assertEqual(snapshot["rooms"][0]["name"], "客厅")
+        self.assertEqual(snapshot["devices"][0]["id"], "midea_cloud:998877")
+        control_keys = {control["key"] for control in snapshot["devices"][0]["controls"]}
+        self.assertIn("power", control_keys)
+        self.assertIn("hvac_mode", control_keys)
+        self.assertIn("target_temperature", control_keys)
+        power_control = next(control for control in snapshot["devices"][0]["controls"] if control["key"] == "power")
+        self.assertTrue(power_control["writable"])
+        self.assertEqual(snapshot["devices"][0]["category"], "空调")
+
+    def test_midea_cloud_snapshot_uses_dynamic_name_attribute_for_control_label(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="midea_cloud",
+            auth_payload={
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            },
+            is_active=True,
+        )
+
+        with patch("providers.services.MideaCloudAuthService.get_client") as mocked_get_client:
+            mocked_get_client.return_value.list_devices.return_value = [
+                {
+                    "id": "2468",
+                    "device_id": "2468",
+                    "appliance_code": 2468,
+                    "home_id": "1001",
+                    "home_name": "我的家",
+                    "room_name": "客厅",
+                    "name": "四键面板",
+                    "device_type": 0x21,
+                    "category": "panel",
+                    "model": "00000000",
+                    "model_number": "68",
+                    "manufacturer_code": "0000",
+                    "smart_product_id": "sp-2",
+                    "sn": "123456789ABCDEFG",
+                    "sn8": "00000000",
+                    "online": True,
+                    "status": "online",
+                    "status_payload": {
+                        "endpoint_1_OnOff": "1",
+                        "endpoint_1_name": "客厅主灯",
+                    },
+                }
+            ]
+
+            snapshot = DeviceDashboardService._build_midea_cloud_snapshot(self.account)
+
+        control = next(control for control in snapshot["devices"][0]["controls"] if control["key"] == "endpoint_1_OnOff")
+        self.assertEqual(control["label"], "客厅主灯")
+        control_keys = {control["key"] for control in snapshot["devices"][0]["controls"]}
+        self.assertNotIn("endpoint_1_name", control_keys)
+
+    def test_midea_cloud_snapshot_marks_button_panel_controls_as_actions(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="midea_cloud",
+            auth_payload={
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            },
+            is_active=True,
+        )
+
+        with patch("providers.services.MideaCloudAuthService.get_client") as mocked_get_client:
+            mocked_get_client.return_value.list_devices.return_value = [
+                {
+                    "id": "1357",
+                    "device_id": "1357",
+                    "appliance_code": 1357,
+                    "home_id": "1001",
+                    "home_name": "我的家",
+                    "room_name": "玄关",
+                    "name": "四键按钮面板",
+                    "device_type": 0x21,
+                    "category": "panel",
+                    "model": "00000000",
+                    "model_number": "78",
+                    "manufacturer_code": "0000",
+                    "smart_product_id": "sp-3",
+                    "sn": "123456789ABCDEFG",
+                    "sn8": "00000000",
+                    "online": True,
+                    "status": "online",
+                    "status_payload": {
+                        "endpoint_1_name": "回家模式",
+                        "endpoint_2_name": "离家模式",
+                        "endpoint_3_name": "影院模式",
+                        "endpoint_4_name": "睡眠模式",
+                    },
+                }
+            ]
+
+            snapshot = DeviceDashboardService._build_midea_cloud_snapshot(self.account)
+
+        controls = snapshot["devices"][0]["controls"]
+        self.assertEqual(len([control for control in controls if control["kind"] == "action"]), 4)
+        first = next(control for control in controls if control["key"] == "endpoint_1_OnOff")
+        self.assertEqual(first["source_type"], DeviceControl.SourceTypeChoices.MIDEA_CLOUD_ACTION)
+        self.assertEqual(first["label"], "回家模式")
+
+    def test_execute_midea_cloud_control_passes_mapped_payload(self):
+        device = DeviceSnapshot(
+            external_id="midea_cloud:998877",
+            source_payload={"device_id": "998877"},
+        )
+        control = DeviceControl(
+            external_id="midea_cloud:998877:power",
+            key="power",
+            kind=DeviceControl.KindChoices.TOGGLE,
+            source_type=DeviceControl.SourceTypeChoices.MIDEA_CLOUD_PROPERTY,
+            writable=True,
+            action_params={
+                "device_id": "998877",
+                "actions": [
+                    {"id": "turn_on", "label": "Turn On"},
+                    {"id": "turn_off", "label": "Turn Off"},
+                ],
+            },
+            source_payload={
+                "mapping": {
+                    "actions": {
+                        "turn_on": {"power": "on"},
+                        "turn_off": {"power": "off"},
+                    }
+                }
+            },
+        )
+
+        with patch("providers.services.MideaCloudAuthService.get_client") as mocked_get_client:
+            DeviceDashboardService._execute_midea_cloud_control(
+                self.account,
+                device=device,
+                control=control,
+                action="turn_off",
+                value=None,
+            )
+
+        mocked_get_client.return_value.execute_control.assert_called_once_with(
+            device_id="998877",
+            control={
+                "key": "power",
+                "kind": DeviceControl.KindChoices.TOGGLE,
+                "source_type": DeviceControl.SourceTypeChoices.MIDEA_CLOUD_PROPERTY,
+                "action_params": {
+                    "device_id": "998877",
+                    "actions": [
+                        {"id": "turn_on", "label": "Turn On"},
+                        {"id": "turn_off", "label": "Turn Off"},
+                    ],
+                    "control": {"power": "off"},
+                },
+            },
+            value=None,
+        )
 
     def test_home_assistant_snapshot_prefers_registry_grouping(self):
         states = [
@@ -469,7 +696,7 @@ class DeviceDashboardApiTest(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["pagination"]["total"], 2)
-        self.assertEqual([device["id"] for device in payload["devices"]], ["mijia:light-1", "home_assistant:ac-1"])
+        self.assertEqual([device["id"] for device in payload["devices"]], ["home_assistant:ac-1", "mijia:light-1"])
 
     def test_device_list_endpoint_sorts_by_status_then_enabled_then_platform(self):
         room = DeviceRoom.objects.create(

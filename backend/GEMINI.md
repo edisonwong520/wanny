@@ -44,6 +44,12 @@
 - 严禁自行构造底层协议请求，优先通过 `mijiaDevice(api, dev_name="特定名称")` 进行设备抽象操作
 - 读写属性使用 `get()` / `set()`，动作调用使用 `run_action()`
 
+### 4.3 美的云参考实现
+
+- `third_party/midea_auto_cloud/` 是上游参考仓库 `sususweet/midea_auto_cloud` 的只读 submodule，用于协议分析、字段映射和移植对照。
+- 处理美的云接入时，应优先把可复用能力移植到 Wanny 自己的 provider/client 目录，例如 `backend/apps/providers/clients/midea_cloud/`，而不是直接把上游 Home Assistant 集成代码并入业务主路径。
+- 除非用户明确要求，不要在主业务逻辑中直接依赖或修改 `third_party/midea_auto_cloud/` 里的实现；该目录默认视为参考资料区。
+
 ## 5. 测试规范 (Pytest + TDD)
 
 所有测试代码必须统一存放在根目录 `tests/` 下，并遵循以下层级划分：

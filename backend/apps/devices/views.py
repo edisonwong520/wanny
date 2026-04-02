@@ -90,7 +90,8 @@ def handle_device_list(request):
             ),
             platform_order=Case(
                 When(external_id__startswith="home_assistant:", then=Value(0)),
-                When(external_id__startswith="mijia:", then=Value(1)),
+                When(external_id__startswith="midea_cloud:", then=Value(1)),
+                When(external_id__startswith="mijia:", then=Value(2)),
                 default=Value(9),
                 output_field=IntegerField(),
             ),

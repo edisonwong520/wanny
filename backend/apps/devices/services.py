@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from providers.models import PlatformAuth
 from providers.clients.midea_cloud import get_device_mapping
 from utils.logger import logger
 
+from .queue import enqueue_account_refresh, get_queue_backend, redis_queue_enabled
 from .models import (
     DeviceAnomaly,
     DeviceAutomationRule,
@@ -52,6 +54,23 @@ class DeviceDashboardService:
         "input_boolean",
     }
     ha_service_domains = {"light", "switch", "fan", "humidifier", "cover", "vacuum", "media_player", "script", "scene"}
+    # These are protocol/debug fields from Midea payloads that add noise on
+    # the device page and should not be shown as user-facing telemetry.
+    midea_cloud_extra_status_ignore_keys = {
+        "cmd",
+        "hex_length",
+        "msg_type",
+        "sub_msg_type",
+        "version",
+        "device_version",
+        "ota_version",
+        "cur_firmware_version",
+        "upgrade_firmware_version",
+        "firmware_state",
+        "firmware_upgrade_progress",
+        "app_flag",
+        "operator",
+    }
 
     @classmethod
     def _get_state(cls, account: Account) -> DeviceDashboardState:
@@ -166,7 +185,10 @@ class DeviceDashboardService:
             state.refresh_requested_at = timezone.now()
         state.last_error = ""
         state.save(update_fields=["requested_trigger", "refresh_requested_at", "last_error", "updated_at"])
-        logger.info(f"[Device Sync] Refresh queued for account_id={state.account_id}, waiting for worker to process")
+        logger.info(
+            f"[Device Sync] Refresh queued for account_id={state.account_id}, backend={get_queue_backend()} "
+            "and ready for worker pickup"
+        )
 
     @classmethod
     def get_dashboard(cls, account: Account) -> dict:
@@ -225,6 +247,7 @@ class DeviceDashboardService:
     @classmethod
     def refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
         logger.info(f"[Device Sync] refresh() called for account_id={account.id} email={account.email} trigger={trigger}")
+        refresh_started_at = time.perf_counter()
         provider_payloads: list[dict] = []
         from providers.services import HomeAssistantAuthService, MideaCloudAuthService, MijiaAuthService
 
@@ -233,8 +256,13 @@ class DeviceDashboardService:
             logger.debug(f"[Device Sync] Mijia auth check for account_id={account.id}: found={mijia_auth is not None}")
             if mijia_auth:
                 logger.info(f"[Device Sync] Building Mijia snapshot for account_id={account.id}")
+                provider_started_at = time.perf_counter()
                 mijia_payload = cls._build_mijia_snapshot(account)
-                logger.info(f"[Device Sync] Mijia snapshot built for account_id={account.id}: devices={len(mijia_payload.get('devices', []))}")
+                logger.info(
+                    f"[Device Sync] Mijia snapshot built for account_id={account.id}: "
+                    f"devices={len(mijia_payload.get('devices', []))} "
+                    f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
+                )
                 provider_payloads.append(mijia_payload)
         except Exception as error:
             logger.error(f"[Device Sync] Failed to check Mijia auth state for user {account.email}: {error}")
@@ -244,8 +272,13 @@ class DeviceDashboardService:
             logger.debug(f"[Device Sync] HomeAssistant auth check for account_id={account.id}: found={ha_auth is not None}")
             if ha_auth:
                 logger.info(f"[Device Sync] Building HomeAssistant snapshot for account_id={account.id}")
+                provider_started_at = time.perf_counter()
                 ha_payload = cls._build_home_assistant_snapshot(account)
-                logger.info(f"[Device Sync] HomeAssistant snapshot built for account_id={account.id}: devices={len(ha_payload.get('devices', []))}")
+                logger.info(
+                    f"[Device Sync] HomeAssistant snapshot built for account_id={account.id}: "
+                    f"devices={len(ha_payload.get('devices', []))} "
+                    f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
+                )
                 provider_payloads.append(ha_payload)
         except Exception as error:
             logger.error(f"[Device Sync] Failed to check Home Assistant auth state for user {account.email}: {error}")
@@ -255,19 +288,22 @@ class DeviceDashboardService:
             logger.debug(f"[Device Sync] MideaCloud auth check for account_id={account.id}: found={midea_cloud_auth is not None}")
             if midea_cloud_auth:
                 logger.info(f"[Device Sync] Building MideaCloud snapshot for account_id={account.id}")
+                provider_started_at = time.perf_counter()
                 midea_cloud_payload = cls._build_midea_cloud_snapshot(account)
                 logger.info(
                     f"[Device Sync] MideaCloud snapshot built for account_id={account.id}: "
-                    f"devices={len(midea_cloud_payload.get('devices', []))}"
+                    f"devices={len(midea_cloud_payload.get('devices', []))} "
+                    f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
                 )
                 provider_payloads.append(midea_cloud_payload)
         except Exception as error:
-            logger.error(f"[Device Sync] Failed to check Midea Cloud auth state for user {account.email}: {error}")
+            logger.error(f"[Device Sync] Failed to check Midea auth state for user {account.email}: {error}")
 
         logger.info(f"[Device Sync] Merging {len(provider_payloads)} provider payloads for account_id={account.id}")
         payload = cls._merge_snapshots(provider_payloads) if provider_payloads else cls._build_empty_snapshot()
         logger.info(f"[Device Sync] Final payload for account_id={account.id}: rooms={len(payload['rooms'])} devices={len(payload['devices'])}")
 
+        persistence_started_at = time.perf_counter()
         with transaction.atomic():
             state = cls._get_state(account)
 
@@ -364,6 +400,10 @@ class DeviceDashboardService:
             state.refreshed_at = timezone.now()
             state.save()
 
+        logger.info(
+            f"[Device Sync] Refresh persisted for account_id={account.id}: "
+            f"elapsed={time.perf_counter() - persistence_started_at:.2f}s total={time.perf_counter() - refresh_started_at:.2f}s"
+        )
         return cls.get_dashboard(account)
 
     @classmethod
@@ -371,6 +411,18 @@ class DeviceDashboardService:
         logger.info(f"[Device Sync] request_refresh called: account_id={account.id} email={account.email} trigger={trigger}")
         state = cls._get_state(account)
         cls._queue_refresh(state, trigger=trigger)
+        if redis_queue_enabled():
+            try:
+                enqueue_account_refresh(account.id)
+                logger.info(
+                    f"[Device Sync] Queued account_id={account.id} to Redis sync queue. "
+                    f"backend={get_queue_backend()}"
+                )
+            except Exception as error:
+                logger.error(
+                    f"[Device Sync] Failed to enqueue account_id={account.id} to Redis queue: {error}. "
+                    "Falling back to DB pending state."
+                )
         return cls.get_dashboard(account)
 
     @classmethod
@@ -408,7 +460,20 @@ class DeviceDashboardService:
         else:
             raise ValueError(f"Unsupported control source: {control.source_type}")
 
-        return cls.refresh(account, trigger="control")
+        cls._apply_optimistic_control_result(control, action=action, value=value)
+        try:
+            return cls._refresh_device_after_control(
+                account,
+                device=device,
+                control=control,
+                trigger="control",
+            )
+        except Exception as error:
+            logger.warning(
+                f"[Device Sync] Single-device refresh failed for account_id={account.id} "
+                f"device_id={device.external_id}: {error}. Falling back to queued full refresh."
+            )
+        return cls.request_refresh(account, trigger="control")
 
     @classmethod
     def has_active_device_provider_auth(cls, account: Account) -> bool:
@@ -566,9 +631,9 @@ class DeviceDashboardService:
         try:
             client = MideaCloudAuthService.get_client(account=account)
             devices = client.list_devices()
-            logger.info(f"[Device Sync] Midea Cloud devices fetched for account_id={account.id}: count={len(devices)}")
+            logger.info(f"[Device Sync] Midea devices fetched for account_id={account.id}: count={len(devices)}")
         except Exception as error:
-            logger.error(f"[Device Sync] Failed to fetch Midea Cloud data, falling back to empty: {error}")
+            logger.error(f"[Device Sync] Failed to fetch Midea data, falling back to empty: {error}")
             return cls._build_empty_snapshot()
 
         room_index: dict[str, dict] = {}
@@ -578,67 +643,10 @@ class DeviceDashboardService:
         for index, raw_device in enumerate(devices, start=1):
             if not isinstance(raw_device, dict):
                 continue
-
-            device_id = str(
-                raw_device.get("id")
-                or raw_device.get("device_id")
-                or raw_device.get("sn")
-                or raw_device.get("appliance_code")
-                or ""
-            ).strip()
-            if not device_id:
-                continue
-
-            room_name = str(raw_device.get("room_name") or raw_device.get("home_name") or "美的云设备").strip()
-            room_id = cls._make_room_id("midea_cloud", room_name) if room_name else default_room_id
-            room_index.setdefault(
-                room_id,
-                {
-                    "id": room_id,
-                    "name": room_name or "美的云设备",
-                    "climate": str(raw_device.get("home_name") or "Midea Cloud").strip(),
-                    "summary": "来自美的云直连接入",
-                    "sort_order": 10 + len(room_index) * 10,
-                },
-            )
-
-            controls = cls._build_midea_cloud_controls(raw_device)
-            capabilities = [
-                control["key"]
-                for control in controls
-                if control["kind"] != DeviceControl.KindChoices.SENSOR
-            ][:8]
-            category = str(raw_device.get("category") or raw_device.get("device_type") or "美的设备").strip()
-            device_type_value = raw_device.get("device_type")
-            if isinstance(device_type_value, str) and device_type_value.startswith("0x"):
-                try:
-                    device_type_value = int(device_type_value, 16)
-                except ValueError:
-                    device_type_value = None
-            if isinstance(device_type_value, int):
-                mapping = get_device_mapping(
-                    device_type_value,
-                    sn8=str(raw_device.get("sn8") or ""),
-                    category=str(raw_device.get("category") or ""),
-                )
-                category = str(mapping.get("category") or category)
-
-            devices_data.append(
-                {
-                    "id": f"midea_cloud:{device_id}",
-                    "room_id": room_id,
-                    "name": str(raw_device.get("name") or raw_device.get("device_name") or f"美的设备 {device_id[-4:]}").strip(),
-                    "category": category,
-                    "status": cls._map_midea_cloud_status(raw_device),
-                    "telemetry": cls._summarize_midea_cloud_device(raw_device, controls),
-                    "note": f"Midea Cloud Device: {device_id}",
-                    "capabilities": capabilities,
-                    "controls": controls,
-                    "last_seen": timezone.now(),
-                    "sort_order": index * 10,
-                    "source_payload": raw_device,
-                }
-            )
+            room_data, device_data = cls._build_midea_cloud_device_snapshot(raw_device, sort_order=index * 10)
+            room_id = room_data["id"] or default_room_id
+            room_index.setdefault(room_id, {**room_data, "id": room_id})
+            devices_data.append(device_data)
 
         return {
             "source": "midea_cloud",
@@ -647,6 +655,308 @@ class DeviceDashboardService:
             "anomalies": [],
             "rules": [],
         }
+
+    @classmethod
+    def _build_midea_cloud_device_snapshot(cls, raw_device: dict, *, sort_order: int) -> tuple[dict, dict]:
+        device_id = str(
+            raw_device.get("id")
+            or raw_device.get("device_id")
+            or raw_device.get("sn")
+            or raw_device.get("appliance_code")
+            or ""
+        ).strip()
+        room_name = str(raw_device.get("room_name") or raw_device.get("home_name") or "美的设备").strip()
+        room_id = cls._make_room_id("midea_cloud", room_name) if room_name else cls._make_room_id("midea_cloud", "default")
+        room_data = {
+            "id": room_id,
+            "name": room_name or "美的设备",
+            "climate": str(raw_device.get("home_name") or "Midea").strip(),
+            "summary": "来自美的直连接入",
+            "sort_order": 10,
+        }
+
+        controls = cls._build_midea_cloud_controls(raw_device)
+        capabilities = [control["key"] for control in controls if control["kind"] != DeviceControl.KindChoices.SENSOR][:8]
+        category = str(raw_device.get("category") or raw_device.get("device_type") or "美的设备").strip()
+        device_type_value = raw_device.get("device_type")
+        if isinstance(device_type_value, str) and device_type_value.startswith("0x"):
+            try:
+                device_type_value = int(device_type_value, 16)
+            except ValueError:
+                device_type_value = None
+        if isinstance(device_type_value, int):
+            mapping = get_device_mapping(
+                device_type_value,
+                sn8=str(raw_device.get("sn8") or ""),
+                category=str(raw_device.get("category") or ""),
+            )
+            category = str(mapping.get("category") or category)
+
+        device_data = {
+            "id": f"midea_cloud:{device_id}",
+            "room_id": room_id,
+            "name": str(raw_device.get("name") or raw_device.get("device_name") or f"美的设备 {device_id[-4:]}").strip(),
+            "category": category,
+            "status": cls._map_midea_cloud_status(raw_device),
+            "telemetry": cls._summarize_midea_cloud_device(raw_device, controls),
+            "note": f"Midea Device: {device_id}",
+            "capabilities": capabilities,
+            "controls": controls,
+            "last_seen": timezone.now(),
+            "sort_order": sort_order,
+            "source_payload": raw_device,
+        }
+        return room_data, device_data
+
+    @classmethod
+    def _refresh_midea_cloud_device(cls, account: Account, *, device_external_id: str, trigger: str) -> dict:
+        from providers.services import MideaCloudAuthService
+
+        device = DeviceSnapshot.objects.filter(account=account, external_id=device_external_id).first()
+        if device is None:
+            raise ValueError("Device not found")
+
+        client = MideaCloudAuthService.get_client(account=account)
+        raw_device = client.get_device(device.external_id.removeprefix("midea_cloud:"))
+        if not isinstance(raw_device, dict):
+            raise ValueError("Midea device refresh returned empty payload")
+
+        room_data, device_data = cls._build_midea_cloud_device_snapshot(raw_device, sort_order=device.sort_order or 10)
+        with transaction.atomic():
+            room, _ = DeviceRoom.objects.update_or_create(
+                account=account,
+                slug=room_data["id"],
+                defaults={
+                    "name": room_data["name"],
+                    "climate": room_data["climate"],
+                    "summary": room_data["summary"],
+                    "sort_order": room_data["sort_order"],
+                },
+            )
+
+            device.room = room
+            device.name = device_data["name"]
+            device.category = device_data["category"]
+            device.status = device_data["status"]
+            device.telemetry = device_data["telemetry"]
+            device.note = device_data["note"]
+            device.capabilities = device_data["capabilities"]
+            device.last_seen = device_data["last_seen"]
+            device.sort_order = device_data["sort_order"]
+            device.source_payload = device_data["source_payload"]
+            device.save()
+
+            DeviceControl.objects.filter(account=account, device=device).delete()
+            for control_data in device_data.get("controls", []):
+                DeviceControl.objects.create(
+                    account=account,
+                    device=device,
+                    external_id=control_data["id"],
+                    parent_external_id=control_data.get("parent_id", "") or "",
+                    source_type=control_data["source_type"],
+                    kind=control_data["kind"],
+                    key=control_data["key"],
+                    label=control_data["label"],
+                    group_label=control_data.get("group_label", ""),
+                    writable=control_data.get("writable", False),
+                    value=control_data.get("value") if control_data.get("value") is not None else {},
+                    unit=control_data.get("unit", ""),
+                    options=control_data.get("options", []),
+                    range_spec=control_data.get("range_spec", {}),
+                    action_params=control_data.get("action_params", {}),
+                    source_payload=control_data.get("source_payload", {}),
+                    sort_order=control_data.get("sort_order", 0),
+                )
+
+            state = cls._get_state(account)
+            state.last_trigger = trigger
+            state.requested_trigger = ""
+            state.refresh_requested_at = None
+            state.last_error = ""
+            state.refreshed_at = timezone.now()
+            state.save(update_fields=["last_trigger", "requested_trigger", "refresh_requested_at", "last_error", "refreshed_at", "updated_at"])
+
+        return cls.get_dashboard(account)
+
+    @classmethod
+    def _refresh_device_after_control(
+        cls,
+        account: Account,
+        *,
+        device: DeviceSnapshot,
+        control: DeviceControl,
+        trigger: str,
+    ) -> dict:
+        if control.source_type == DeviceControl.SourceTypeChoices.HA_ENTITY:
+            return cls._refresh_home_assistant_device(account, device=device, trigger=trigger)
+        if control.source_type in {
+            DeviceControl.SourceTypeChoices.MIJIA_PROPERTY,
+            DeviceControl.SourceTypeChoices.MIJIA_ACTION,
+        }:
+            return cls._refresh_mijia_device(account, device=device, trigger=trigger)
+        if control.source_type in {
+            DeviceControl.SourceTypeChoices.MIDEA_CLOUD_PROPERTY,
+            DeviceControl.SourceTypeChoices.MIDEA_CLOUD_ACTION,
+        }:
+            return cls._refresh_midea_cloud_device(account, device_external_id=device.external_id, trigger=trigger)
+        return cls.request_refresh(account, trigger=trigger)
+
+    @classmethod
+    def _refresh_home_assistant_device(cls, account: Account, *, device: DeviceSnapshot, trigger: str) -> dict:
+        from providers.services import HomeAssistantAuthService
+
+        raw_payload = device.source_payload or {}
+        entity_ids = [str(item) for item in (raw_payload.get("entity_ids") or []) if str(item).strip()]
+        if not entity_ids:
+            raise ValueError("Home Assistant device entity_ids are missing")
+
+        config, entities = HomeAssistantAuthService.get_entity_states(account=account, entity_ids=entity_ids)
+        if not entities:
+            raise ValueError("Home Assistant single-device refresh returned no entities")
+
+        primary_entity = cls._pick_home_assistant_primary_entity(entities)
+        attributes = primary_entity.get("attributes") or {}
+        primary_entity_id = str(primary_entity.get("entity_id") or "")
+        domain = primary_entity_id.split(".", 1)[0] if "." in primary_entity_id else primary_entity_id
+        controls = cls._build_home_assistant_controls(entities, entity_registry_map={})
+        room_data = {
+            "id": device.room.slug if device.room else cls._make_room_id("home_assistant", "Home Assistant"),
+            "name": device.room.name if device.room else str(config.get("location_name") or "Home Assistant"),
+            "climate": str(config.get("time_zone") or ""),
+            "summary": device.room.summary if device.room else "来自 Home Assistant 分组",
+            "sort_order": device.room.sort_order if device.room else 10,
+        }
+        device_data = {
+            "id": device.external_id,
+            "room_id": room_data["id"],
+            "name": device.name,
+            "category": cls._map_home_assistant_domain_to_category(domain),
+            "status": cls._map_home_assistant_status(str(primary_entity.get("state", ""))),
+            "telemetry": cls._summarize_home_assistant_device(entities),
+            "note": f"{len(entities)} 个 HA 实体已归属到该设备",
+            "capabilities": [item["key"] for item in controls if item["kind"] != DeviceControl.KindChoices.SENSOR][:8],
+            "controls": controls,
+            "last_seen": timezone.now(),
+            "sort_order": device.sort_order,
+            "source_payload": {
+                **raw_payload,
+                "entity_ids": [item.get("entity_id") for item in entities],
+                "device_name": raw_payload.get("device_name") or attributes.get("friendly_name") or device.name,
+            },
+        }
+        return cls._persist_single_device_refresh(account, device=device, room_data=room_data, device_data=device_data, trigger=trigger)
+
+    @classmethod
+    def _refresh_mijia_device(cls, account: Account, *, device: DeviceSnapshot, trigger: str) -> dict:
+        from mijiaAPI import get_device_info, mijiaDevice
+        from providers.services import MijiaAuthService
+
+        raw_payload = dict(device.source_payload or {})
+        did = str(raw_payload.get("did") or "").strip()
+        if not did:
+            raise ValueError("MiJia device DID is missing")
+
+        model = str(raw_payload.get("model") or "").strip()
+        api = MijiaAuthService.get_authenticated_api(account=account)
+        device_client = mijiaDevice(api, did=did)
+        try:
+            spec = get_device_info(model)
+        except Exception:
+            spec = {}
+
+        controls = cls._build_mijia_controls(dev=raw_payload, spec=spec, device_client=device_client)
+        device_data = {
+            "id": device.external_id,
+            "room_id": device.room.slug if device.room else None,
+            "name": cls._infer_mijia_device_name(dev=raw_payload, did=did, model=model),
+            "category": cls._map_model_to_category(model),
+            "status": device.status,
+            "telemetry": cls._summarize_mijia_telemetry(controls, is_online=device.status != "offline"),
+            "note": f"DID: {did} | 模型: {model or 'unknown'}",
+            "capabilities": [item["key"] for item in controls if item["kind"] != DeviceControl.KindChoices.SENSOR][:8],
+            "controls": controls,
+            "last_seen": timezone.now(),
+            "sort_order": device.sort_order,
+            "source_payload": raw_payload,
+        }
+        room_data = None
+        if device.room:
+            room_data = {
+                "id": device.room.slug,
+                "name": device.room.name,
+                "climate": device.room.climate,
+                "summary": device.room.summary,
+                "sort_order": device.room.sort_order,
+            }
+        return cls._persist_single_device_refresh(account, device=device, room_data=room_data, device_data=device_data, trigger=trigger)
+
+    @classmethod
+    def _persist_single_device_refresh(
+        cls,
+        account: Account,
+        *,
+        device: DeviceSnapshot,
+        room_data: dict | None,
+        device_data: dict,
+        trigger: str,
+    ) -> dict:
+        with transaction.atomic():
+            room = device.room
+            if room_data:
+                room, _ = DeviceRoom.objects.update_or_create(
+                    account=account,
+                    slug=room_data["id"],
+                    defaults={
+                        "name": room_data["name"],
+                        "climate": room_data["climate"],
+                        "summary": room_data["summary"],
+                        "sort_order": room_data["sort_order"],
+                    },
+                )
+
+            device.room = room
+            device.name = device_data["name"]
+            device.category = device_data["category"]
+            device.status = device_data["status"]
+            device.telemetry = device_data["telemetry"]
+            device.note = device_data["note"]
+            device.capabilities = device_data["capabilities"]
+            device.last_seen = device_data["last_seen"]
+            device.sort_order = device_data["sort_order"]
+            device.source_payload = device_data["source_payload"]
+            device.save()
+
+            DeviceControl.objects.filter(account=account, device=device).delete()
+            for control_data in device_data.get("controls", []):
+                DeviceControl.objects.create(
+                    account=account,
+                    device=device,
+                    external_id=control_data["id"],
+                    parent_external_id=control_data.get("parent_id", "") or "",
+                    source_type=control_data["source_type"],
+                    kind=control_data["kind"],
+                    key=control_data["key"],
+                    label=control_data["label"],
+                    group_label=control_data.get("group_label", ""),
+                    writable=control_data.get("writable", False),
+                    value=control_data.get("value") if control_data.get("value") is not None else {},
+                    unit=control_data.get("unit", ""),
+                    options=control_data.get("options", []),
+                    range_spec=control_data.get("range_spec", {}),
+                    action_params=control_data.get("action_params", {}),
+                    source_payload=control_data.get("source_payload", {}),
+                    sort_order=control_data.get("sort_order", 0),
+                )
+
+            state = cls._get_state(account)
+            state.last_trigger = trigger
+            state.requested_trigger = ""
+            state.refresh_requested_at = None
+            state.last_error = ""
+            state.refreshed_at = timezone.now()
+            state.save(update_fields=["last_trigger", "requested_trigger", "refresh_requested_at", "last_error", "refreshed_at", "updated_at"])
+
+        return cls.get_dashboard(account)
 
     @classmethod
     def _build_midea_cloud_controls(cls, raw_device: dict) -> list[dict]:
@@ -679,6 +989,8 @@ class DeviceDashboardService:
         )
         status_payload = raw_device.get("status_payload") or {}
 
+        # Prefer the curated upstream mapping first so we preserve vendor intent
+        # for writable controls, labels, grouping, and value transforms.
         mapping_controls = mapping.get("controls") or []
         for mapping_control in mapping_controls:
             if not isinstance(mapping_control, dict):
@@ -691,7 +1003,7 @@ class DeviceDashboardService:
                     label = str(dynamic_label)
             action_params = {
                 "device_id": device_id,
-                "control_key": mapping_control.get("key"),
+                "control_key": mapping_control.get("control_key") or mapping_control.get("key"),
             }
             if isinstance(mapping_control.get("control_template"), dict):
                 action_params["control_template"] = dict(mapping_control["control_template"])
@@ -741,7 +1053,8 @@ class DeviceDashboardService:
             sort_order += 10
 
         if controls:
-            # Add any extra unmapped status keys as read-only sensors after the curated controls.
+            # After the curated controls are built, append only meaningful scalar
+            # leftovers as read-only telemetry so useful state is still visible.
             mapped_value_keys = {
                 str(mapping_control.get("value_key"))
                 for mapping_control in mapping_controls
@@ -756,6 +1069,8 @@ class DeviceDashboardService:
                 if status_key in mapped_value_keys:
                     continue
                 if status_key in mapped_auxiliary_keys:
+                    continue
+                if status_key in cls.midea_cloud_extra_status_ignore_keys:
                     continue
                 if str(status_key).startswith("_"):
                     continue
@@ -1742,7 +2057,7 @@ class DeviceDashboardService:
         if not device_id:
             device_id = device.external_id.removeprefix("midea_cloud:")
         if not device_id:
-            raise ValueError("Midea Cloud device identifier is missing")
+            raise ValueError("Midea device identifier is missing")
 
         merged_action_params = dict(params)
         actions = merged_action_params.get("actions") or []
@@ -1770,6 +2085,33 @@ class DeviceDashboardService:
             "action_params": merged_action_params,
         }
         client.execute_control(device_id=device_id, control=payload, value=value)
+
+    @classmethod
+    def _apply_optimistic_control_result(cls, control: DeviceControl, *, action: str, value: Any) -> None:
+        next_value = value
+        if control.kind == DeviceControl.KindChoices.TOGGLE:
+            normalized_action = str(action or "").strip().lower()
+            if normalized_action in {"turn_on", "on", "open", "start", "lock"}:
+                next_value = "on"
+            elif normalized_action in {"turn_off", "off", "close", "stop", "unlock"}:
+                next_value = "off"
+            elif value in (True, 1, "1", "on", "true"):
+                next_value = "on"
+            elif value in (False, 0, "0", "off", "false"):
+                next_value = "off"
+
+        if control.kind not in {
+            DeviceControl.KindChoices.TOGGLE,
+            DeviceControl.KindChoices.RANGE,
+            DeviceControl.KindChoices.ENUM,
+            DeviceControl.KindChoices.TEXT,
+        }:
+            return
+        if next_value is None:
+            return
+
+        control.value = next_value
+        control.save(update_fields=["value", "updated_at"])
 
     @classmethod
     def _merge_snapshots(cls, payloads: list[dict]) -> dict:

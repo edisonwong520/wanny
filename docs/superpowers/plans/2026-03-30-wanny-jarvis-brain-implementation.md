@@ -77,7 +77,7 @@ class ObservationCounter(models.Model):
 ```
 
 - [ ] **Step 4: Run migrations and verify tests pass**
-Run: `python backend/manage.py makemigrations && python backend/manage.py migrate && pytest backend/tests/test_brain_models.py`
+Run: `cd backend && uv run python manage.py makemigrations && uv run python manage.py migrate && uv run pytest tests/test_brain_models.py`
 Expected: PASS
 
 - [ ] **Step 5: Commit**

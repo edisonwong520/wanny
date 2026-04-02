@@ -284,7 +284,7 @@ export default {
         wechat: "After the WeChat authorization completes, return to this page.",
         home_assistant: "",
         ha_token_info: "Getting Token: Open Home Assistant -> Click your profile (bottom left) -> 'Security' -> 'Long-Lived Access Tokens'.",
-        midea_cloud: "Midea Cloud Authorization",
+        midea_cloud: "Midea Authorization",
         midea_server_info: "Use your Midea Meiju or MSmartHome App account. Different servers correspond to different App platforms.",
       },
       servers: {

@@ -137,8 +137,8 @@ class DeviceControl(models.Model):
         HA_ENTITY = "ha_entity", "Home Assistant 实体"
         MIJIA_PROPERTY = "mijia_property", "米家属性"
         MIJIA_ACTION = "mijia_action", "米家动作"
-        MIDEA_CLOUD_PROPERTY = "midea_cloud_property", "美的云属性"
-        MIDEA_CLOUD_ACTION = "midea_cloud_action", "美的云动作"
+        MIDEA_CLOUD_PROPERTY = "midea_cloud_property", "美的属性"
+        MIDEA_CLOUD_ACTION = "midea_cloud_action", "美的动作"
 
     account = models.ForeignKey(
         'accounts.Account',

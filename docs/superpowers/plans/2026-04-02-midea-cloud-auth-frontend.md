@@ -1,10 +1,10 @@
-# 美的云授权前端功能实现计划
+# 美的授权前端功能实现计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在前端 ManagePage.vue 中新增美的云表单授权功能，允许用户输入账号、密码和选择服务器类型完成授权。
+**Goal:** 在前端 ManagePage.vue 中新增美的表单授权功能，允许用户输入账号、密码和选择服务器类型完成授权。
 
-**Architecture:** 复用现有 Home Assistant 弹窗模式，在 ManagePage.vue 中新增美的云表单状态变量、处理函数和 UI 区块，同时更新中英文国际化文案。
+**Architecture:** 复用现有 Home Assistant 弹窗模式，在 ManagePage.vue 中新增美的表单状态变量、处理函数和 UI 区块，同时更新中英文国际化文案。
 
 **Tech Stack:** Vue 3 + TypeScript + Tailwind CSS + vue-i18n
 
@@ -14,9 +14,9 @@
 
 | 文件 | 改动类型 | 责任 |
 |------|----------|------|
-| `frontend/src/i18n/zh-CN/console.ts` | 修改 | 新增美的云相关中文文案 |
-| `frontend/src/i18n/en/console.ts` | 修改 | 新增美的云相关英文文案 |
-| `frontend/src/pages/console/ManagePage.vue` | 修改 | 新增美的云表单 UI 和处理逻辑 |
+| `frontend/src/i18n/zh-CN/console.ts` | 修改 | 新增美的相关中文文案 |
+| `frontend/src/i18n/en/console.ts` | 修改 | 新增美的相关英文文案 |
+| `frontend/src/pages/console/ManagePage.vue` | 修改 | 新增美的表单 UI 和处理逻辑 |
 
 ---
 
@@ -25,7 +25,7 @@
 **Files:**
 - Modify: `frontend/src/i18n/zh-CN/console.ts`
 
-- [ ] **Step 1: 在 manage.auth.fields 中新增美的云表单字段标签**
+- [ ] **Step 1: 在 manage.auth.fields 中新增美的表单字段标签**
 
 在 `manage.auth.fields` 对象中添加以下字段（位于 `accessTokenPlaceholder` 之后）：
 
@@ -42,7 +42,7 @@ fields: {
 },
 ```
 
-- [ ] **Step 2: 在 manage.auth.hint 中新增美的云提示信息**
+- [ ] **Step 2: 在 manage.auth.hint 中新增美的提示信息**
 
 在 `manage.auth.hint` 对象中添加以下字段（位于 `ha_token_info` 之后）：
 
@@ -52,7 +52,7 @@ hint: {
   wechat: "扫码授权完成后请回到本页",
   home_assistant: "",
   ha_token_info: "获取令牌：打开 Home Assistant 控制台 -> 点击左下角用户头像 -> '安全' -> '长期访问令牌'。",
-  midea_cloud: "美的云授权",
+  midea_cloud: "美的授权",
   midea_server_info: "请使用美的美居或 MSmartHome App 的账号密码。不同服务器对应不同 App 平台。",
 },
 ```
@@ -71,7 +71,7 @@ Expected: 服务正常启动，无 TypeScript 编译错误
 
 ```bash
 git add frontend/src/i18n/zh-CN/console.ts
-git commit -m "feat(i18n): add Midea Cloud auth fields in zh-CN"
+git commit -m "feat(i18n): add Midea auth fields in zh-CN"
 ```
 
 ---
@@ -81,7 +81,7 @@ git commit -m "feat(i18n): add Midea Cloud auth fields in zh-CN"
 **Files:**
 - Modify: `frontend/src/i18n/en/console.ts`
 
-- [ ] **Step 1: 在 manage.auth.fields 中新增美的云表单字段标签**
+- [ ] **Step 1: 在 manage.auth.fields 中新增美的表单字段标签**
 
 在 `manage.auth.fields` 对象中添加以下字段（位于 `accessTokenPlaceholder` 之后）：
 
@@ -98,7 +98,7 @@ fields: {
 },
 ```
 
-- [ ] **Step 2: 在 manage.auth.hint 中新增美的云提示信息**
+- [ ] **Step 2: 在 manage.auth.hint 中新增美的提示信息**
 
 在 `manage.auth.hint` 对象中添加以下字段（位于 `ha_token_info` 之后）：
 
@@ -108,7 +108,7 @@ hint: {
   wechat: "After the WeChat authorization completes, return to this page.",
   home_assistant: "",
   ha_token_info: "Getting Token: Open Home Assistant -> Click your profile (bottom left) -> 'Security' -> 'Long-Lived Access Tokens'.",
-  midea_cloud: "Midea Cloud Authorization",
+  midea_cloud: "Midea Authorization",
   midea_server_info: "Use your Midea Meiju or MSmartHome App account. Different servers correspond to different App platforms.",
 },
 ```
@@ -127,29 +127,29 @@ Expected: 服务正常启动，无 TypeScript 编译错误
 
 ```bash
 git add frontend/src/i18n/en/console.ts
-git commit -m "feat(i18n): add Midea Cloud auth fields in en"
+git commit -m "feat(i18n): add Midea auth fields in en"
 ```
 
 ---
 
-### Task 3: 新增美的云表单状态变量和计算属性
+### Task 3: 新增美的表单状态变量和计算属性
 
 **Files:**
 - Modify: `frontend/src/pages/console/ManagePage.vue`
 
-- [ ] **Step 1: 新增美的云表单状态变量**
+- [ ] **Step 1: 新增美的表单状态变量**
 
-在 `<script setup>` 中，找到 `homeAssistantAccessToken` 变量定义位置（约第 33 行），在其后添加美的云状态变量：
+在 `<script setup>` 中，找到 `homeAssistantAccessToken` 变量定义位置（约第 33 行），在其后添加美的状态变量：
 
 ```typescript
 const homeAssistantBaseUrl = ref("http://127.0.0.1:8123");
 const homeAssistantAccessToken = ref("");
-// 美的云表单状态
+// 美的表单状态
 const mideaCloudAccount = ref("");
 const mideaCloudPassword = ref("");
 const mideaCloudServer = ref<"1" | "2">("2"); // 默认美的美居
 
-// 美的云服务器选项
+// 美的服务器选项
 const mideaServerOptions = [
   { value: "1", label: "MSmartHome" },
   { value: "2", label: "美的美居" },
@@ -158,7 +158,7 @@ const mideaServerOptions = [
 
 - [ ] **Step 2: 新增 isMideaCloudModal 计算属性**
 
-在 `isHomeAssistantModal` 计算属性定义之后（约第 58 行），添加美的云判断：
+在 `isHomeAssistantModal` 计算属性定义之后（约第 58 行），添加美的判断：
 
 ```typescript
 const isHomeAssistantModal = computed(() => modalProvider.value?.platform === "home_assistant");
@@ -167,7 +167,7 @@ const isMideaCloudModal = computed(() => modalProvider.value?.platform === "mide
 
 - [ ] **Step 3: 新增 mideaCloudInstanceName 计算属性**
 
-在 `homeAssistantInstanceName` 计算属性定义之后（约第 66 行），添加美的云实例名显示：
+在 `homeAssistantInstanceName` 计算属性定义之后（约第 66 行），添加美的实例名显示：
 
 ```typescript
 const homeAssistantInstanceName = computed(() => {
@@ -207,14 +207,14 @@ Expected: 服务正常启动，无编译错误
 
 ---
 
-### Task 4: 修改 openModal 函数初始化美的云表单
+### Task 4: 修改 openModal 函数初始化美的表单
 
 **Files:**
 - Modify: `frontend/src/pages/console/ManagePage.vue`
 
-- [ ] **Step 1: 在 openModal 函数中添加美的云初始化逻辑**
+- [ ] **Step 1: 在 openModal 函数中添加美的初始化逻辑**
 
-找到 `openModal` 函数（约第 142-153 行），在 Home Assistant 初始化逻辑之后添加美的云初始化：
+找到 `openModal` 函数（约第 142-153 行），在 Home Assistant 初始化逻辑之后添加美的初始化：
 
 ```typescript
 function openModal(platform: string) {
@@ -247,14 +247,14 @@ Expected: 无编译错误
 
 ---
 
-### Task 5: 修改 closeModal 函数清除美的云表单状态
+### Task 5: 修改 closeModal 函数清除美的表单状态
 
 **Files:**
 - Modify: `frontend/src/pages/console/ManagePage.vue`
 
-- [ ] **Step 1: 在 closeModal 函数中清除美的云密码**
+- [ ] **Step 1: 在 closeModal 函数中清除美的密码**
 
-找到 `closeModal` 函数（约第 155-159 行），添加美的云密码清除：
+找到 `closeModal` 函数（约第 155-159 行），添加美的密码清除：
 
 ```typescript
 function closeModal() {
@@ -275,18 +275,18 @@ Expected: 无编译错误
 
 ---
 
-### Task 6: 修改 handleClick 函数支持美的云
+### Task 6: 修改 handleClick 函数支持美的
 
 **Files:**
 - Modify: `frontend/src/pages/console/ManagePage.vue`
 
-- [ ] **Step 1: 在 handleClick 函数中添加美的云判断**
+- [ ] **Step 1: 在 handleClick 函数中添加美的判断**
 
-找到 `handleClick` 函数（约第 183-196 行），修改判断条件以包含美的云：
+找到 `handleClick` 函数（约第 183-196 行），修改判断条件以包含美的：
 
 ```typescript
 async function handleClick(provider: ProviderRecord) {
-  // Home Assistant 或美的云需要先输入配置信息，直接打开弹窗
+  // Home Assistant 或美的需要先输入配置信息，直接打开弹窗
   if (provider.platform === "home_assistant" || provider.platform === "midea_cloud") {
     openModal(provider.platform);
     return;
@@ -318,7 +318,7 @@ Expected: 无编译错误
 
 - [ ] **Step 1: 新增 handleMideaCloudAuthorize 函数**
 
-在 `handleHomeAssistantAuthorize` 函数之后（约第 223 行），添加美的云授权处理函数：
+在 `handleHomeAssistantAuthorize` 函数之后（约第 223 行），添加美的授权处理函数：
 
 ```typescript
 async function handleMideaCloudAuthorize() {
@@ -360,17 +360,17 @@ Expected: 无编译错误
 
 ---
 
-### Task 8: 新增美的云表单 UI 模板
+### Task 8: 新增美的表单 UI 模板
 
 **Files:**
 - Modify: `frontend/src/pages/console/ManagePage.vue`
 
-- [ ] **Step 1: 在弹窗模板中添加美的云表单区块**
+- [ ] **Step 1: 在弹窗模板中添加美的表单区块**
 
-在 `<Dialog>` 内容区域，找到 Home Assistant 表单区块结束位置（约第 351 行 `</div>` 之后），添加美的云表单：
+在 `<Dialog>` 内容区域，找到 Home Assistant 表单区块结束位置（约第 351 行 `</div>` 之后），添加美的表单：
 
 ```vue
-<!-- 美的云表单 -->
+<!-- 美的表单 -->
 <div v-if="isMideaCloudModal" class="space-y-3">
   <!-- 账号输入 -->
   <div class="space-y-1.5">
@@ -448,7 +448,7 @@ Expected: 无编译错误
 cd frontend && npm run dev
 ```
 
-浏览器访问 `http://localhost:5173`，登录后进入 Manage 页面，点击美的云的"连接"按钮。
+浏览器访问 `http://localhost:5173`，登录后进入 Manage 页面，点击美的的"连接"按钮。
 
 Expected:
 - 弹窗正常打开
@@ -471,7 +471,7 @@ Expected:
 2. 启动后端服务
 3. 登录前端控制台
 4. 进入 Manage 页面
-5. 点击美的云"连接"按钮
+5. 点击美的"连接"按钮
 6. 输入账号、密码
 7. 选择服务器类型
 8. 点击"保存并验证"
@@ -481,8 +481,8 @@ Expected: 授权流程正常完成，provider 状态更新为 connected
 
 - [ ] **Step 2: 测试已有授权场景**
 
-如果已有美的云授权：
-1. 点击美的云行
+如果已有美的授权：
+1. 点击美的行
 2. 验证弹窗显示已保存的账号
 3. 验证服务器选择显示正确保存值
 4. 验证提示区域显示当前实例名
@@ -500,7 +500,7 @@ Expected: 断开功能正常
 - [ ] **Step 4: 测试国际化切换**
 
 1. 切换语言到英文
-2. 验证所有美的云文案显示英文
+2. 验证所有美的文案显示英文
 3. 切换回中文
 4. 验证文案恢复中文
 
@@ -510,7 +510,7 @@ Expected: 国际化切换正常
 
 ```bash
 git add frontend/src/pages/console/ManagePage.vue
-git commit -m "feat(frontend): add Midea Cloud authorization form in ManagePage"
+git commit -m "feat(frontend): add Midea authorization form in ManagePage"
 
 # 如果之前 i18n 改动未提交，一并提交
 git status

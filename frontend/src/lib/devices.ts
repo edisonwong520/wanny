@@ -41,7 +41,12 @@ export interface DevicePagination {
 export interface DeviceControlRecord {
   id: string;
   parent_id: string | null;
-  source_type: "ha_entity" | "mijia_property" | "mijia_action";
+  source_type:
+    | "ha_entity"
+    | "mijia_property"
+    | "mijia_action"
+    | "midea_cloud_property"
+    | "midea_cloud_action";
   kind: "sensor" | "toggle" | "range" | "enum" | "action" | "text";
   key: string;
   label: string;

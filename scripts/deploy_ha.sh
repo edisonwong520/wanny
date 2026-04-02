@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Script to deploy Home Assistant with Midea Cloud component via Docker Compose
+# Description: Script to deploy Home Assistant with Midea component via Docker Compose
 # References: Based on user command history and configuration requirements
 
 set -e

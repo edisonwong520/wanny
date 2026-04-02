@@ -30,12 +30,12 @@ const modalPlatform = ref<string | null>(null);
 const modalLoading = ref(false);
 const homeAssistantBaseUrl = ref("http://127.0.0.1:8123");
 const homeAssistantAccessToken = ref("");
-// 美的云表单状态
+// 美的表单状态
 const mideaCloudAccount = ref("");
 const mideaCloudPassword = ref("");
 const mideaCloudServer = ref<"1" | "2">("2"); // 默认美的美居
 
-// 美的云服务器选项
+// 美的服务器选项
 const mideaServerOptions = computed(() => [
   { value: "2", label: t("manage.auth.servers.meiju") },
   { value: "1", label: t("manage.auth.servers.msmartHome") },
@@ -205,7 +205,7 @@ async function handleAuthorize(provider: ProviderRecord, force: boolean) {
 }
 
 async function handleClick(provider: ProviderRecord) {
-  // Home Assistant 或美的云需要先输入配置信息，直接打开弹窗
+  // Home Assistant 或美的需要先输入配置信息，直接打开弹窗
   if (provider.platform === "home_assistant" || provider.platform === "midea_cloud") {
     openModal(provider.platform);
     return;
@@ -402,7 +402,7 @@ onBeforeUnmount(() => stopAllPolling());
             </button>
           </div>
 
-          <!-- 美的云表单 -->
+          <!-- 美的表单 -->
           <div v-if="isMideaCloudModal" class="space-y-3">
             <!-- 账号输入 -->
             <div class="space-y-1.5">

@@ -1,12 +1,12 @@
-# 美的云授权前端功能设计
+# 美的授权前端功能设计
 
 ## 1. 概述
 
-为 Wanny 前端新增美的云（Midea Cloud）授权功能，允许用户通过表单输入账号、密码和服务器选择，完成美的智能家居平台的授权连接。
+为 Wanny 前端新增美的（Midea）授权功能，允许用户通过表单输入账号、密码和服务器选择，完成美的智能家居平台的授权连接。
 
 ## 2. 需求背景
 
-- 后端已支持美的云授权接口 (`POST /api/providers/auth/midea_cloud/authorize/`)
+- 后端已支持美的授权接口 (`POST /api/providers/auth/midea_cloud/authorize/`)
 - 前端已有 Home Assistant 表单授权的实现模式可复用
 - 用户需要选择服务器类型（MSmartHome 或 美的美居）
 
@@ -14,7 +14,7 @@
 
 ### 3.1 方案选择
 
-采用方案 A：复用现有 Home Assistant 弹窗模式，在 `ManagePage.vue` 中新增美的云表单处理逻辑。
+采用方案 A：复用现有 Home Assistant 弹窗模式，在 `ManagePage.vue` 中新增美的表单处理逻辑。
 
 **理由**：
 - 改动最小，风险最低
@@ -26,9 +26,9 @@
 
 | 文件 | 改动类型 | 说明 |
 |------|----------|------|
-| `frontend/src/pages/console/ManagePage.vue` | 修改 | 新增美的云表单 UI 和处理逻辑 |
-| `frontend/src/i18n/zh-CN/manage.ts` | 修改 | 新增美的云相关中文文案 |
-| `frontend/src/i18n/en/manage.ts` | 修改 | 新增美的云相关英文文案 |
+| `frontend/src/pages/console/ManagePage.vue` | 修改 | 新增美的表单 UI 和处理逻辑 |
+| `frontend/src/i18n/zh-CN/manage.ts` | 修改 | 新增美的相关中文文案 |
+| `frontend/src/i18n/en/manage.ts` | 修改 | 新增美的相关英文文案 |
 
 ## 4. 详细设计
 
@@ -37,15 +37,15 @@
 #### 4.1.1 新增状态变量
 
 ```typescript
-// 美的云表单状态
+// 美的表单状态
 const mideaCloudAccount = ref("");
 const mideaCloudPassword = ref("");
 const mideaCloudServer = ref<"1" | "2">("2"); // 默认美的美居
 
-// 计算属性：是否为美的云弹窗
+// 计算属性：是否为美的弹窗
 const isMideaCloudModal = computed(() => modalProvider.value?.platform === "midea_cloud");
 
-// 美的云服务器选项
+// 美的服务器选项
 const mideaServerOptions = [
   { value: "1", label: "MSmartHome" },
   { value: "2", label: "美的美居" },
@@ -86,11 +86,11 @@ async function handleMideaCloudAuthorize() {
 
 #### 4.1.3 修改 handleClick 函数
 
-在现有 `handleClick` 函数中增加美的云判断：
+在现有 `handleClick` 函数中增加美的判断：
 
 ```typescript
 async function handleClick(provider: ProviderRecord) {
-  // Home Assistant 或美的云需要先输入配置信息，直接打开弹窗
+  // Home Assistant 或美的需要先输入配置信息，直接打开弹窗
   if (provider.platform === "home_assistant" || provider.platform === "midea_cloud") {
     openModal(provider.platform);
     return;
@@ -101,7 +101,7 @@ async function handleClick(provider: ProviderRecord) {
 
 #### 4.1.4 修改 openModal 函数
 
-初始化美的云表单默认值：
+初始化美的表单默认值：
 
 ```typescript
 function openModal(platform: string) {
@@ -123,7 +123,7 @@ function openModal(platform: string) {
 
 #### 4.1.5 修改 closeModal 函数
 
-清除美的云表单状态：
+清除美的表单状态：
 
 ```typescript
 function closeModal() {
@@ -138,7 +138,7 @@ function closeModal() {
 
 #### 4.2.1 弹窗表单布局
 
-在 `<Dialog>` 内新增美的云表单区块，位于 Home Assistant 表单之后：
+在 `<Dialog>` 内新增美的表单区块，位于 Home Assistant 表单之后：
 
 ```vue
 <div v-if="isMideaCloudModal" class="space-y-3">
@@ -225,14 +225,14 @@ fields: {
 // 新增提示信息
 hint: {
   // ... 现有提示
-  midea_cloud: "美的云授权",
+  midea_cloud: "美的授权",
   midea_server_info: "请使用美的美居或 MSmartHome App 的账号密码。不同服务器对应不同 App 平台。",
 }
 
 // 新增错误信息
 errors: {
   // ... 现有错误
-  mideaAuthFailed: "美的云授权失败，请检查账号密码",
+  mideaAuthFailed: "美的授权失败，请检查账号密码",
 }
 ```
 
@@ -250,13 +250,13 @@ fields: {
 
 hint: {
   // ... existing hints
-  midea_cloud: "Midea Cloud Authorization",
+  midea_cloud: "Midea Authorization",
   midea_server_info: "Use your Midea Meiju or MSmartHome App account. Different servers correspond to different App platforms.",
 }
 
 errors: {
   // ... existing errors
-  mideaAuthFailed: "Midea Cloud authorization failed, please check your credentials",
+  mideaAuthFailed: "Midea authorization failed, please check your credentials",
 }
 ```
 
@@ -274,7 +274,7 @@ errors: {
 
 ```mermaid
 sequenceDiagram
-    User->>Frontend: 点击美的云"连接"按钮
+    User->>Frontend: 点击美的"连接"按钮
     Frontend->>Frontend: 打开弹窗，初始化表单
     User->>Frontend: 输入账号、密码，选择服务器
     User->>Frontend: 点击"保存"按钮

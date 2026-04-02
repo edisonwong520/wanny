@@ -26,9 +26,8 @@ const errorMessage = ref("");
 // Device list state
 const devices = ref<DeviceListItem[]>([]);
 const devicesLoading = ref(false);
-const pagination = ref({ page: 1, page_size: 5, total: 0, total_pages: 0 });
+const pagination = ref({ page: 1, page_size: 10, total: 0, total_pages: 0 });
 const searchQuery = ref("");
-const activeRoomId = ref("all");
 const activePlatforms = ref<string[]>([]);
 const platformSelectOpen = ref(false);
 let searchTimeout: number | null = null;
@@ -43,16 +42,6 @@ const collapsedGroups = ref<Record<string, boolean>>({});
 const actionFeedback = ref<{ type: "success" | "error" | "info"; message: string } | null>(null);
 
 let pollTimer: number | null = null;
-
-// Rooms computed from dashboard
-const rooms = computed(() => {
-  const r = dashboard.value?.rooms ?? [];
-  const total = pagination.value.total;
-  return [
-    { id: "all", name: t("devices.filters.all"), count: total },
-    ...r.map((room) => ({ id: room.id, name: room.name, count: room.device_count })),
-  ];
-});
 
 // Metrics computed from dashboard
 const metrics = computed(() => {
@@ -81,6 +70,14 @@ const platformOptions = computed(() => {
         id: "mijia",
         label: "米家",
         className: "bg-[#EAF3FF] text-[#2F6FDB] border-[#BDD4FF]",
+      },
+    ],
+    [
+      "midea_cloud",
+      {
+        id: "midea_cloud",
+        label: "美的",
+        className: "bg-[#EAFBF7] text-[#138A6B] border-[#B7E7DA]",
       },
     ],
   ]);
@@ -195,7 +192,6 @@ async function loadDevices(options: { silent?: boolean } = {}) {
       page: pagination.value.page,
       page_size: pagination.value.page_size,
       search: searchQuery.value || undefined,
-      room_id: activeRoomId.value !== "all" ? activeRoomId.value : undefined,
       platforms: activePlatforms.value.length ? activePlatforms.value : undefined,
     });
     devices.value = response.devices;
@@ -231,12 +227,6 @@ async function selectDevice(deviceId: string) {
   } finally {
     deviceLoading.value = false;
   }
-}
-
-function selectRoom(id: string) {
-  activeRoomId.value = id;
-  pagination.value.page = 1;
-  void loadDevices();
 }
 
 function handleSearchInput() {
@@ -302,6 +292,13 @@ function inferDevicePlatform(deviceId: string) {
       className: "bg-[#EAF3FF] text-[#2F6FDB] border-[#BDD4FF]",
     };
   }
+  if (normalized.startsWith("midea_cloud:")) {
+    return {
+      id: "midea_cloud",
+      label: "美的",
+      className: "bg-[#EAFBF7] text-[#138A6B] border-[#B7E7DA]",
+    };
+  }
   return {
     id: "unknown",
     label: "未知平台",
@@ -326,6 +323,10 @@ function isGroupCollapsed(label: string) {
   if (key in collapsedGroups.value) {
     return collapsedGroups.value[key];
   }
+  const group = groupedControls.value.find((item) => item.label === label);
+  if (isTelemetryGroup(label) && (group?.controls.length ?? 0) > 4) {
+    return true;
+  }
   return ["系统", "设置", "System", "Settings"].includes(label);
 }
 
@@ -337,6 +338,10 @@ function toggleGroup(label: string) {
     ...collapsedGroups.value,
     [key]: !isGroupCollapsed(label),
   };
+}
+
+function isTelemetryGroup(label: string) {
+  return ["当前状态", "运行状态", "状态", "Telemetry", "State"].includes(label);
 }
 
 function groupPriority(label: string) {
@@ -556,7 +561,13 @@ async function submitControl(control: DeviceControlRecord, payload: { action?: s
 
   try {
     const response = await executeDeviceControl(device.id, control.id, payload);
+    dashboard.value = response.snapshot;
     selectedDevice.value = response.snapshot.devices.find((d) => d.id === device.id) ?? device;
+    if (response.snapshot.pending_refresh) {
+      schedulePolling(1500);
+    } else {
+      stopPolling();
+    }
     showFeedback("success", t("devices.feedback.actionSuccess", { name: control.label }));
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : t("devices.errors.action");
@@ -657,20 +668,6 @@ onBeforeUnmount(() => {
               @click="clearSearch"
               class="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#333333] text-sm"
             >✕</button>
-          </div>
-          <!-- Room Filters -->
-          <div class="flex gap-1.5">
-            <button
-              v-for="room in rooms"
-              :key="room.id"
-              @click="selectRoom(room.id)"
-              class="inline-flex h-[34px] items-center rounded-full px-3 text-xs transition-all duration-200"
-              :class="activeRoomId === room.id
-                ? 'bg-[#07C160] text-white shadow-sm'
-                : 'bg-[#F7F7F7] text-[#888888] hover:bg-[#EDEDED]'"
-            >
-              {{ room.name }} ({{ room.count }})
-            </button>
           </div>
           <div class="flex items-center gap-2 text-sm text-[#667085] ml-4">
             <div class="relative" data-platform-select>
@@ -805,7 +802,7 @@ onBeforeUnmount(() => {
                   @click="toggleGroup(group.label)"
                   class="flex items-center justify-between w-full py-2 text-sm font-medium text-[#333333] hover:text-[#07C160] transition-colors"
                 >
-                  <span>{{ group.label }}</span>
+                  <span>{{ group.label }}（{{ group.controls.length }}）</span>
                   <span class="text-xs text-[#888888]">{{ isGroupCollapsed(group.label) ? $t("devices.actions.expand") : $t("devices.actions.collapse") }}</span>
                 </button>
 
@@ -817,8 +814,12 @@ onBeforeUnmount(() => {
                     :class="executingControlId === control.id ? 'opacity-60' : ''"
                   >
                     <div class="flex items-center justify-between mb-2">
-                      <span class="text-sm text-[#333333]">{{ control.label }}</span>
-                      <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="controlValueBadgeClass(control)">
+                      <span class="min-w-0 pr-3 text-sm text-[#333333]">{{ control.label }}</span>
+                      <span
+                        class="max-w-[9rem] shrink-0 truncate rounded-full px-2 py-0.5 text-xs font-medium md:max-w-[12rem]"
+                        :class="controlValueBadgeClass(control)"
+                        :title="formatValue(control.value, control.unit)"
+                      >
                         {{ formatValue(control.value, control.unit) }}
                       </span>
                     </div>

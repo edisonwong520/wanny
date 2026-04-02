@@ -43,15 +43,17 @@ uv sync
 
 ### 3. 本地运行
 
-在正确初始化依赖且建好表结构后，可以运用 `uv run` 挂载 Django 启动服务。
+在正确初始化依赖且建好表结构后，可以运用 `uv run python manage.py ...` 启动 Django 管理命令。
+
+说明：`uv run manage.py ...` 在当前仓库里通常也能运行，因为 `manage.py` 带有 shebang 且具备可执行权限；但为了避免不同环境下的执行权限或解释器差异，文档统一使用更明确、更稳妥的 `uv run python manage.py ...` 写法。
 
 ```bash
 # 执行数据库迁移
-uv run manage.py makemigrations
-uv run manage.py migrate
+uv run python manage.py makemigrations
+uv run python manage.py migrate
 
 # 启动 Django 测试服务器
-uv run manage.py runserver 
+uv run python manage.py runserver
 ```
 
 若想要测试或启动基于 Channels 提供 WebSocket 能力的异步监听，你可以利用 daphne：
@@ -62,7 +64,7 @@ uv run daphne wanny_server.asgi:application
 
 ### 4. 运行 Python 脚本 (执行数据库查询/调试)
 
-当需要运行涉及 Django ORM 的 Python 脚本时，**必须使用 `uv run python`**，而不是 `uv run manage.py shell`：
+当需要运行涉及 Django ORM 的 Python 脚本时，**必须使用 `uv run python`**，而不是依赖 `uv run manage.py shell`：
 
 ```bash
 # 正确方式：使用 uv run python 并手动调用 django.setup()
@@ -78,7 +80,7 @@ account = Account.objects.filter(id=1).first()
 print(account.email)
 "
 
-# 错误方式：uv run manage.py shell -c "..." 会有模块导入问题
+# 不推荐：uv run python manage.py shell -c "..." 仍然不如直接显式调用 django.setup() 稳定
 ```
 
 **注意：** 所有 Django 脚本必须包含以下初始化代码：
@@ -87,6 +89,14 @@ import os
 import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wanny_server.settings')
 django.setup()
+```
+
+### 5. 巡检美的映射翻译
+
+当美的映射层有较大改动时，可运行下面的巡检命令，快速发现未语义化的 label、原始选项值或噪音状态字段：
+
+```bash
+uv run python manage.py audit_midea_mapping --limit 80
 ```
 
 ## 📖 参考文档

@@ -16,6 +16,8 @@
 - 之后设置环境变量：`export PKG_CONFIG_PATH="/opt/homebrew/opt/mysql-client/lib/pkgconfig"`
 - 严禁使用 `print()` 输出运行日志，必须统一使用项目 `logger`
 - 日志必须能定位到具体文件名和代码行号，并同时支持控制台与文件输出
+- 后端代码注释统一使用英文；优先为协议兼容、数据映射、异步调度、跨平台适配等非显然逻辑补充简洁注释，不要写重复代码字面的注释
+- 设备控制接口默认应优先执行“单设备回读/单设备快照更新”，只在单设备回读失败或底层平台确实不支持时，才降级为全量设备快照刷新；不要把一次小控制直接设计成全平台全量同步
 
 ## 3. 智能体与编排
 
@@ -44,11 +46,12 @@
 - 严禁自行构造底层协议请求，优先通过 `mijiaDevice(api, dev_name="特定名称")` 进行设备抽象操作
 - 读写属性使用 `get()` / `set()`，动作调用使用 `run_action()`
 
-### 4.3 美的云参考实现
+### 4.3 美的参考实现
 
 - `third_party/midea_auto_cloud/` 是上游参考仓库 `sususweet/midea_auto_cloud` 的只读 submodule，用于协议分析、字段映射和移植对照。
-- 处理美的云接入时，应优先把可复用能力移植到 Wanny 自己的 provider/client 目录，例如 `backend/apps/providers/clients/midea_cloud/`，而不是直接把上游 Home Assistant 集成代码并入业务主路径。
+- 处理美的接入时，应优先把可复用能力移植到 Wanny 自己的 provider/client 目录，例如 `backend/apps/providers/clients/midea_cloud/`，而不是直接把上游 Home Assistant 集成代码并入业务主路径。
 - 除非用户明确要求，不要在主业务逻辑中直接依赖或修改 `third_party/midea_auto_cloud/` 里的实现；该目录默认视为参考资料区。
+- 每次大幅调整美的映射翻译后，优先运行 `uv run python manage.py audit_midea_mapping --limit 80`，检查是否仍有原始 key、原始选项文案或噪音状态字段泄漏到 Wanny 的设备模型中。
 
 ## 5. 测试规范 (Pytest + TDD)
 

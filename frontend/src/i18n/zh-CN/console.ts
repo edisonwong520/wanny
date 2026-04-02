@@ -287,7 +287,7 @@ export default {
         wechat: "扫码授权完成后请回到本页",
         home_assistant: "",
         ha_token_info: "获取令牌：打开 Home Assistant 控制台 -> 点击左下角用户头像 -> ‘安全’ -> ‘长期访问令牌’。",
-        midea_cloud: "美的云授权",
+        midea_cloud: "美的授权",
         midea_server_info: "请使用美的美居或 MSmartHome App 的账号密码。不同服务器对应不同 App 平台。",
       },
       servers: {

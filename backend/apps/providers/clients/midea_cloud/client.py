@@ -682,7 +682,7 @@ class MideaCloudClient:
     @classmethod
     def normalize_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
-            raise ValueError("Midea Cloud payload must be a JSON object")
+            raise ValueError("Midea payload must be a JSON object")
 
         normalized = dict(payload)
         for source_key, target_key in (
@@ -729,7 +729,7 @@ class MideaCloudClient:
         for server_id, meta in MIDEA_CLOUDS.items():
             if meta["name"].lower() == normalized:
                 return server_id
-        raise ValueError("Unsupported Midea Cloud server, expected 1/2 or known server name")
+        raise ValueError("Unsupported Midea server, expected 1/2 or known server name")
 
     @classmethod
     def validate_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
@@ -738,9 +738,9 @@ class MideaCloudClient:
         password = str(normalized.get("password") or "").strip()
         access_token = str(normalized.get("access_token") or "").strip()
         if not account:
-            raise ValueError("Midea Cloud account is required")
+            raise ValueError("Midea account is required")
         if not access_token and not password:
-            raise ValueError("Midea Cloud password is required when access_token is absent")
+            raise ValueError("Midea password is required when access_token is absent")
         return normalized
 
     def _build_cloud_api(self) -> BaseCloudApi:
@@ -755,7 +755,7 @@ class MideaCloudClient:
 
     def get_account_profile(self) -> dict[str, Any]:
         if not self.login():
-            raise ValueError("Unable to login to Midea Cloud")
+            raise ValueError("Unable to login to Midea")
         homes = self.cloud_api.list_homes()
         return {
             "account": self.payload["account"],
@@ -768,11 +768,51 @@ class MideaCloudClient:
             "auth_state": self.cloud_api.export_state(),
         }
 
+    def get_device(self, device_id: str) -> dict[str, Any] | None:
+        logger.info("[MideaCloud] get_device: fetching device_id=%s", device_id)
+        if not self.login():
+            logger.error("[MideaCloud] get_device: login failed")
+            raise ValueError("Unable to login to Midea")
+
+        lua_runtime_ready = False
+        if self.payload.get("enable_lua_cache", True):
+            try:
+                ensure_lua_support_files(self.lua_storage_path)
+                lua_runtime_ready = lua_runtime_available()
+            except Exception as error:
+                logger.warning("[MideaCloud] get_device: lua setup failed for %s: %s", device_id, error)
+
+        homes = self.cloud_api.list_homes()
+        selected_homes = self.payload.get("selected_homes") or []
+        home_ids = selected_homes or list(homes.keys()) or ["default"]
+
+        for home_id in home_ids:
+            appliances = self.cloud_api.list_appliances(str(home_id)) or {}
+            appliance_code, appliance_info = next(
+                (
+                    (code, info)
+                    for code, info in appliances.items()
+                    if str(code) == str(device_id) or str(info.get("id") or "") == str(device_id)
+                ),
+                (None, None),
+            )
+            if appliance_code is None or not isinstance(appliance_info, dict):
+                continue
+            home_name = homes.get(str(home_id)) or f"家庭 {home_id}"
+            return self._build_device_dict(
+                appliance_code=appliance_code,
+                appliance_info=appliance_info,
+                home_id=str(home_id),
+                home_name=home_name,
+                lua_runtime_ready=lua_runtime_ready,
+            )
+        return None
+
     def list_devices(self) -> list[dict[str, Any]]:
         logger.info("[MideaCloud] list_devices: starting device sync")
         if not self.login():
             logger.error("[MideaCloud] list_devices: login failed")
-            raise ValueError("Unable to login to Midea Cloud")
+            raise ValueError("Unable to login to Midea")
 
         logger.info("[MideaCloud] list_devices: login successful, server=%s, account=%s",
                     self.payload.get("server"), self.payload.get("account"))
@@ -809,93 +849,26 @@ class MideaCloudClient:
             for appliance_code, appliance_info in appliances.items():
                 logger.debug("[MideaCloud] list_devices: processing appliance_code=%s, type=%s, name=%s",
                             appliance_code, appliance_info.get("type"), appliance_info.get("name"))
-
-                mapping = get_device_mapping(
-                    int(appliance_info.get("type") or 0),
-                    sn8=str(appliance_info.get("sn8") or ""),
-                    subtype=appliance_info.get("model_number"),
-                    category=str(appliance_info.get("category") or ""),
-                )
-                logger.debug("[MideaCloud] list_devices: appliance_code=%s mapping=%s", appliance_code, mapping.get("name", "unknown"))
-
-                status_payload: dict[str, Any] = {}
-                for query in mapping.get("queries") or [{}]:
-                    if not isinstance(query, dict):
-                        continue
-                    try:
-                        chunk = self.cloud_api.get_device_status(
-                            appliance_code=appliance_code,
-                            appliance_info=appliance_info,
-                            query=query,
-                        ) or {}
-                        logger.debug("[MideaCloud] list_devices: status query for %s returned keys: %s",
-                                    appliance_code, list(chunk.keys()) if isinstance(chunk, dict) else "none")
-                    except Exception as e:
-                        logger.warning("[MideaCloud] list_devices: status query failed for %s: %s", appliance_code, e)
-                        chunk = {}
-                    if isinstance(chunk, dict):
-                        status_payload.update(chunk)
-
-                lua_file = None
-                lua_codec_ready = False
-                try:
-                    if self.payload.get("enable_lua_cache", True):
-                        lua_file = self.cloud_api.download_lua(path=self.lua_storage_path, appliance_info=appliance_info)
-                except Exception as e:
-                    logger.debug("[MideaCloud] list_devices: lua download failed for %s: %s", appliance_code, e)
-                    lua_file = None
-                if lua_file and lua_runtime_ready:
-                    try:
-                        MideaLuaCodec(
-                            lua_file,
-                            device_type=f"T0x{int(appliance_info.get('type') or 0):02X}",
-                            sn=str(appliance_info.get("sn") or ""),
-                            subtype=str(appliance_info.get("model_number") or ""),
-                        )
-                        lua_codec_ready = True
-                    except Exception as e:
-                        logger.debug("[MideaCloud] list_devices: lua codec init failed for %s: %s", appliance_code, e)
-                        lua_codec_ready = False
-
-                device = MideaCloudDevice(
+                device = self._build_device_dict(
                     appliance_code=appliance_code,
-                    home_id=str(appliance_info.get("home_id") or home_id),
-                    home_name=str(appliance_info.get("home_name") or home_name),
-                    room_name=str(appliance_info.get("room_name") or home_name),
-                    name=str(appliance_info.get("name") or f"美的设备 {appliance_code}"),
-                    device_type=int(appliance_info.get("type") or 0),
-                    category=str(appliance_info.get("category") or "美的设备"),
-                    model=str(appliance_info.get("model") or appliance_info.get("sn8") or ""),
-                    model_number=str(appliance_info.get("model_number") or "0"),
-                    manufacturer_code=str(appliance_info.get("manufacturer_code") or "0000"),
-                    smart_product_id=str(appliance_info.get("smart_product_id") or "0"),
-                    sn=str(appliance_info.get("sn") or ""),
-                    sn8=str(appliance_info.get("sn8") or ""),
-                    online=bool(appliance_info.get("online")),
-                    status_payload={
-                        **(status_payload if isinstance(status_payload, dict) else {}),
-                        "_meta": {
-                            "lua_file": str(lua_file) if lua_file else "",
-                            "lua_runtime_available": lua_runtime_ready,
-                            "lua_codec_ready": lua_codec_ready,
-                            "queries": mapping.get("queries") or [],
-                        },
-                    },
+                    appliance_info=appliance_info,
+                    home_id=str(home_id),
+                    home_name=home_name,
+                    lua_runtime_ready=lua_runtime_ready,
                 )
-                devices.append(device.to_dict())
-                logger.debug("[MideaCloud] list_devices: added device %s (online=%s)", device.name, device.online)
+                devices.append(device)
+                logger.debug("[MideaCloud] list_devices: added device %s (online=%s)", device.get("name"), device.get("online"))
 
         logger.info("[MideaCloud] list_devices: completed, total devices=%d", len(devices))
         return devices
 
     def execute_control(self, *, device_id: str, control: dict[str, Any], value: Any = None) -> None:
         if not self.login():
-            raise ValueError("Unable to login to Midea Cloud")
+            raise ValueError("Unable to login to Midea")
 
-        raw_devices = self.list_devices()
-        target = next((device for device in raw_devices if str(device.get("id")) == str(device_id)), None)
+        target = self.get_device(device_id)
         if target is None:
-            raise ValueError(f"Midea Cloud device not found: {device_id}")
+            raise ValueError(f"Midea device not found: {device_id}")
 
         action_params = control.get("action_params") or {}
         command_control = action_params.get("control")
@@ -914,7 +887,7 @@ class MideaCloudClient:
             command_control = self._build_generic_control_payload(control, value)
         if not isinstance(command_control, dict):
             raise NotImplementedError(
-                f"Midea Cloud control mapping is not available yet for {control.get('key')}"
+                f"Midea control mapping is not available yet for {control.get('key')}"
             )
 
         current_status = target.get("status_payload") if isinstance(target.get("status_payload"), dict) else {}
@@ -947,7 +920,87 @@ class MideaCloudClient:
             status=merged_status if merged_status else None,
         )
         if not ok:
-            raise ValueError(f"Midea Cloud control failed for device {device_id}")
+            raise ValueError(f"Midea control failed for device {device_id}")
+
+    def _build_device_dict(
+        self,
+        *,
+        appliance_code: int,
+        appliance_info: dict[str, Any],
+        home_id: str,
+        home_name: str,
+        lua_runtime_ready: bool,
+    ) -> dict[str, Any]:
+        mapping = get_device_mapping(
+            int(appliance_info.get("type") or 0),
+            sn8=str(appliance_info.get("sn8") or ""),
+            subtype=appliance_info.get("model_number"),
+            category=str(appliance_info.get("category") or ""),
+        )
+
+        status_payload: dict[str, Any] = {}
+        for query in mapping.get("queries") or [{}]:
+            if not isinstance(query, dict):
+                continue
+            try:
+                chunk = self.cloud_api.get_device_status(
+                    appliance_code=appliance_code,
+                    appliance_info=appliance_info,
+                    query=query,
+                ) or {}
+            except Exception as error:
+                logger.warning("[MideaCloud] device status query failed for %s: %s", appliance_code, error)
+                chunk = {}
+            if isinstance(chunk, dict):
+                status_payload.update(chunk)
+
+        lua_file = None
+        lua_codec_ready = False
+        try:
+            if self.payload.get("enable_lua_cache", True):
+                lua_file = self.cloud_api.download_lua(path=self.lua_storage_path, appliance_info=appliance_info)
+        except Exception as error:
+            logger.debug("[MideaCloud] lua download failed for %s: %s", appliance_code, error)
+            lua_file = None
+        if lua_file and lua_runtime_ready:
+            try:
+                MideaLuaCodec(
+                    lua_file,
+                    device_type=f"T0x{int(appliance_info.get('type') or 0):02X}",
+                    sn=str(appliance_info.get("sn") or ""),
+                    subtype=str(appliance_info.get("model_number") or ""),
+                )
+                lua_codec_ready = True
+            except Exception as error:
+                logger.debug("[MideaCloud] lua codec init failed for %s: %s", appliance_code, error)
+                lua_codec_ready = False
+
+        device = MideaCloudDevice(
+            appliance_code=appliance_code,
+            home_id=str(appliance_info.get("home_id") or home_id),
+            home_name=str(appliance_info.get("home_name") or home_name),
+            room_name=str(appliance_info.get("room_name") or home_name),
+            name=str(appliance_info.get("name") or f"美的设备 {appliance_code}"),
+            device_type=int(appliance_info.get("type") or 0),
+            category=str(appliance_info.get("category") or "美的设备"),
+            model=str(appliance_info.get("model") or appliance_info.get("sn8") or ""),
+            model_number=str(appliance_info.get("model_number") or "0"),
+            manufacturer_code=str(appliance_info.get("manufacturer_code") or "0000"),
+            smart_product_id=str(appliance_info.get("smart_product_id") or "0"),
+            sn=str(appliance_info.get("sn") or ""),
+            sn8=str(appliance_info.get("sn8") or ""),
+            online=bool(appliance_info.get("online")),
+            status_payload={
+                **(status_payload if isinstance(status_payload, dict) else {}),
+                "_meta": {
+                    "lua_file": str(lua_file) if lua_file else "",
+                    "lua_runtime_available": lua_runtime_ready,
+                    "lua_codec_ready": lua_codec_ready,
+                    "queries": mapping.get("queries") or [],
+                },
+            },
+        )
+        return device.to_dict()
 
     @staticmethod
     def _resolve_control_template(

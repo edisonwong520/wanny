@@ -4,6 +4,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from utils.logger import logger
+from utils.crypto import decrypt_value
 
 from .auth_sessions import (
     AuthorizationSessionStore,
@@ -133,6 +134,21 @@ def _mask_payload(payload):
     return payload
 
 
+def _prepare_payload_preview(platform_name: str, payload):
+    if not isinstance(payload, dict):
+        return {}
+
+    preview_payload = dict(payload)
+    if platform_name == MideaCloudAuthService.platform_name and isinstance(preview_payload.get("password"), str):
+        try:
+            preview_payload["password"] = decrypt_value(preview_payload["password"])
+        except Exception:
+            # Keep the stored value masked even if decryption fails.
+            pass
+
+    return _mask_payload(preview_payload)
+
+
 def _serialize_platform_auth(obj: PlatformAuth | None, platform_name: str | None = None) -> dict:
     normalized_name = _normalize_platform_name(platform_name or getattr(obj, "platform_name", ""))
     catalog_meta = PLATFORM_CATALOG.get(normalized_name, {})
@@ -161,7 +177,7 @@ def _serialize_platform_auth(obj: PlatformAuth | None, platform_name: str | None
         "is_active": is_active,
         "has_credentials": has_credentials,
         "payload_keys": payload_keys,
-        "payload_preview": _mask_payload(payload) if isinstance(payload, dict) else {},
+        "payload_preview": _prepare_payload_preview(normalized_name, payload),
         "created_at": obj.created_at.isoformat() if obj else None,
         "updated_at": obj.updated_at.isoformat() if obj else None,
     }
@@ -315,9 +331,9 @@ def handle_platform_auth_authorize(request, platform_name: str):
                 platform=normalized_name,
                 auth_kind="form",
                 status="completed",
-                title="美的云已连接",
-                instruction="已保存美的云配置，后续可继续补充协议与设备映射能力。",
-                detail=f"配置 {auth_obj.auth_payload.get('instance_name') or 'Midea Cloud'} 已加入设备同步流程。",
+                title="美的已连接",
+                instruction="已保存美的配置，后续可继续补充协议与设备映射能力。",
+                detail=f"配置 {auth_obj.auth_payload.get('instance_name') or 'Midea'} 已加入设备同步流程。",
             )
         else:
             return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)

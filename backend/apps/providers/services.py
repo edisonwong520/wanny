@@ -337,6 +337,40 @@ class HomeAssistantAuthService:
         return (config_response.json() or {}), states_payload
 
     @classmethod
+    def get_entity_states(cls, account: Account, entity_ids: list[str]) -> tuple[dict, list[dict]]:
+        auth_obj = cls.get_auth_record(account=account, active_only=True)
+        payload = cls._extract_payload(auth_obj)
+        if not payload:
+            raise ValueError("No active Home Assistant authorization found")
+
+        base_url = cls._normalize_base_url(payload.get("base_url", ""))
+        headers = cls._build_headers(payload.get("access_token", ""))
+
+        config_response = requests.get(
+            f"{base_url}/api/config",
+            headers=headers,
+            timeout=cls.default_timeout_seconds,
+        )
+        config_response.raise_for_status()
+
+        states: list[dict] = []
+        for entity_id in entity_ids:
+            normalized_entity_id = str(entity_id or "").strip()
+            if not normalized_entity_id:
+                continue
+            state_response = requests.get(
+                f"{base_url}/api/states/{normalized_entity_id}",
+                headers=headers,
+                timeout=cls.default_timeout_seconds,
+            )
+            state_response.raise_for_status()
+            state_payload = state_response.json() or {}
+            if isinstance(state_payload, dict) and state_payload.get("entity_id"):
+                states.append(state_payload)
+
+        return (config_response.json() or {}), states
+
+    @classmethod
     async def _fetch_registry_via_websocket(cls, *, base_url: str, access_token: str) -> dict:
         ws_url = cls._build_websocket_url(base_url)
         async with websockets.connect(ws_url) as websocket:
@@ -428,16 +462,16 @@ class MideaCloudAuthService:
 
     @classmethod
     def validate_and_store(cls, account: Account, payload: dict) -> PlatformAuth:
-        logger.info(f"[Midea Cloud Auth] validate_and_store called for account_id={account.id}, email={account.email}")
-        logger.debug(f"[Midea Cloud Auth] Incoming payload server={payload.get('server')}, account={payload.get('account')}")
+        logger.info(f"[Midea Auth] validate_and_store called for account_id={account.id}, email={account.email}")
+        logger.debug(f"[Midea Auth] Incoming payload server={payload.get('server')}, account={payload.get('account')}")
 
         validated_payload = cls.validate_payload(payload)
-        logger.info(f"[Midea Cloud Auth] Payload validated, server={validated_payload.get('server')}")
+        logger.info(f"[Midea Auth] Payload validated, server={validated_payload.get('server')}")
 
-        logger.info(f"[Midea Cloud Auth] Creating MideaCloudClient and fetching profile...")
+        logger.info(f"[Midea Auth] Creating MideaCloudClient and fetching profile...")
         client = MideaCloudClient(validated_payload)
         profile = client.get_account_profile()
-        logger.info(f"[Midea Cloud Auth] Profile fetched: account={profile.get('account')}, server_name={profile.get('server_name')}, homes={len(profile.get('homes', []))}")
+        logger.info(f"[Midea Auth] Profile fetched: account={profile.get('account')}, server_name={profile.get('server_name')}, homes={len(profile.get('homes', []))}")
 
         auth_state = profile.get("auth_state", {})
         validated_payload.update(auth_state)
@@ -446,11 +480,11 @@ class MideaCloudAuthService:
         validated_payload["server_name"] = profile.get("server_name", "")
         validated_payload["nickname"] = profile.get("nickname", "")
         validated_payload["homes"] = profile.get("homes", [])
-        validated_payload["instance_name"] = f"Midea Cloud ({profile.get('server_name', '')})".strip()
+        validated_payload["instance_name"] = f"Midea ({profile.get('server_name', '')})".strip()
 
         # 安全：加密存储密码，便于后续重新登录
         if validated_payload.get("password"):
-            logger.debug(f"[Midea Cloud Auth] Encrypting password before storage")
+            logger.debug(f"[Midea Auth] Encrypting password before storage")
             validated_payload["password"] = encrypt_value(validated_payload["password"])
 
         auth_obj, _ = PlatformAuth.objects.update_or_create(
@@ -461,35 +495,35 @@ class MideaCloudAuthService:
                 "is_active": True,
             },
         )
-        logger.info(f"[Midea Cloud Auth] 已保存账户 {account.email} 的美的云配置。")
+        logger.info(f"[Midea Auth] 已保存账户 {account.email} 的美的配置。")
         return auth_obj
 
     @classmethod
     def get_client(cls, account: Account) -> MideaCloudClient:
-        logger.debug(f"[Midea Cloud Auth] get_client called for account_id={account.id}, email={account.email}")
+        logger.debug(f"[Midea Auth] get_client called for account_id={account.id}, email={account.email}")
         auth_obj = cls.get_auth_record(account=account, active_only=True)
 
         if auth_obj is None:
-            logger.warning(f"[Midea Cloud Auth] No auth record found for account_id={account.id}")
-            raise ValueError("No active Midea Cloud authorization found")
+            logger.warning(f"[Midea Auth] No auth record found for account_id={account.id}")
+            raise ValueError("No active Midea authorization found")
 
         payload = cls._extract_payload(auth_obj)
         if not payload:
-            logger.warning(f"[Midea Cloud Auth] Empty payload for account_id={account.id}")
-            raise ValueError("No active Midea Cloud authorization found")
+            logger.warning(f"[Midea Auth] Empty payload for account_id={account.id}")
+            raise ValueError("No active Midea authorization found")
 
-        logger.info(f"[Midea Cloud Auth] Found auth record for account_id={account.id}, server={payload.get('server')}, account={payload.get('account')}")
+        logger.info(f"[Midea Auth] Found auth record for account_id={account.id}, server={payload.get('server')}, account={payload.get('account')}")
 
         # 解密密码（如果存在加密存储的密码）
         if payload.get("password"):
-            logger.debug(f"[Midea Cloud Auth] Decrypting password for account_id={account.id}")
+            logger.debug(f"[Midea Auth] Decrypting password for account_id={account.id}")
             try:
                 payload["password"] = decrypt_value(payload["password"])
-                logger.debug(f"[Midea Cloud Auth] Password decrypted successfully for account_id={account.id}")
+                logger.debug(f"[Midea Auth] Password decrypted successfully for account_id={account.id}")
             except Exception as e:
-                logger.warning(f"[Midea Cloud Auth] Password decryption failed for account_id={account.id}: {e}")
+                logger.warning(f"[Midea Auth] Password decryption failed for account_id={account.id}: {e}")
                 pass
 
         validated_payload = cls.validate_payload(payload)
-        logger.info(f"[Midea Cloud Auth] Creating MideaCloudClient for account_id={account.id}")
+        logger.info(f"[Midea Auth] Creating MideaCloudClient for account_id={account.id}")
         return MideaCloudClient(validated_payload)

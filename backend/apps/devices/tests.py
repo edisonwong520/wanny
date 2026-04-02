@@ -1,4 +1,5 @@
 import os
+import time
 from unittest.mock import patch
 
 from django.core.management import call_command
@@ -6,6 +7,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from accounts.models import Account
+from devices.management.commands.runworker import Command as RunWorkerCommand
 from providers.models import PlatformAuth
 
 from .models import DeviceControl, DeviceDashboardState, DeviceRoom, DeviceSnapshot
@@ -96,11 +98,16 @@ def build_sample_snapshot(source: str = "home_assistant") -> dict:
 
 class DeviceDashboardServiceTest(TestCase):
     def setUp(self):
+        self.env_patcher = patch.dict(os.environ, {"DEVICE_SYNC_QUEUE_BACKEND": "polling"}, clear=False)
+        self.env_patcher.start()
         self.account = Account.objects.create(
             email="device-test@example.com",
             name="Device Test",
             password="pwd",
         )
+
+    def tearDown(self):
+        self.env_patcher.stop()
 
     def test_get_dashboard_queues_bootstrap_when_empty(self):
         payload = DeviceDashboardService.get_dashboard(self.account)
@@ -156,6 +163,27 @@ class DeviceDashboardServiceTest(TestCase):
 
         self.assertFalse(payload["snapshot"]["has_snapshot"])
         self.assertTrue(payload["snapshot"]["pending_refresh"])
+
+    def test_request_refresh_enqueues_redis_task_when_enabled(self):
+        with patch.dict(os.environ, {"DEVICE_SYNC_QUEUE_BACKEND": "redis"}, clear=False), patch(
+            "devices.services.enqueue_account_refresh",
+            return_value=True,
+        ) as mocked_enqueue:
+            payload = DeviceDashboardService.request_refresh(self.account, trigger="api")
+
+        self.assertTrue(payload["snapshot"]["pending_refresh"])
+        mocked_enqueue.assert_called_once_with(self.account.id)
+
+    def test_request_refresh_falls_back_when_redis_enqueue_fails(self):
+        with patch.dict(os.environ, {"DEVICE_SYNC_QUEUE_BACKEND": "redis"}, clear=False), patch(
+            "devices.services.enqueue_account_refresh",
+            side_effect=RuntimeError("redis unavailable"),
+        ):
+            payload = DeviceDashboardService.request_refresh(self.account, trigger="api")
+
+        self.assertTrue(payload["snapshot"]["pending_refresh"])
+        state = DeviceDashboardState.objects.get(account=self.account, key=DeviceDashboardService.state_key)
+        self.assertEqual(state.requested_trigger, "api")
 
     def test_refresh_uses_home_assistant_snapshot_when_authorized(self):
         PlatformAuth.objects.create(
@@ -242,10 +270,12 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertEqual(snapshot["rooms"][0]["name"], "客厅")
         self.assertEqual(snapshot["devices"][0]["id"], "midea_cloud:998877")
         control_keys = {control["key"] for control in snapshot["devices"][0]["controls"]}
-        self.assertIn("power", control_keys)
-        self.assertIn("hvac_mode", control_keys)
-        self.assertIn("target_temperature", control_keys)
-        power_control = next(control for control in snapshot["devices"][0]["controls"] if control["key"] == "power")
+        self.assertIn("thermostat:power", control_keys)
+        self.assertIn("thermostat:hvac_mode", control_keys)
+        self.assertIn("thermostat:target_temperature", control_keys)
+        power_control = next(
+            control for control in snapshot["devices"][0]["controls"] if control["key"] == "thermostat:power"
+        )
         self.assertTrue(power_control["writable"])
         self.assertEqual(snapshot["devices"][0]["category"], "空调")
 
@@ -294,6 +324,144 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertEqual(control["label"], "客厅主灯")
         control_keys = {control["key"] for control in snapshot["devices"][0]["controls"]}
         self.assertNotIn("endpoint_1_name", control_keys)
+
+    def test_midea_cloud_snapshot_keeps_refrigerator_zone_temperature_controls(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="midea_cloud",
+            auth_payload={
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            },
+            is_active=True,
+        )
+
+        with patch("providers.services.MideaCloudAuthService.get_client") as mocked_get_client:
+            mocked_get_client.return_value.list_devices.return_value = [
+                {
+                    "id": "556677",
+                    "device_id": "556677",
+                    "appliance_code": 556677,
+                    "home_id": "1001",
+                    "home_name": "我的家",
+                    "room_name": "厨房",
+                    "name": "法式冰箱",
+                    "device_type": 0xCA,
+                    "category": "refrigerator",
+                    "model": "CA000001",
+                    "model_number": "BCD-123",
+                    "manufacturer_code": "0000",
+                    "smart_product_id": "sp-fridge",
+                    "sn": "123456789ABCDEFG",
+                    "sn8": "00000000",
+                    "online": True,
+                    "status": "online",
+                    "status_payload": {
+                        "storage_power": "on",
+                        "storage_temperature": 4,
+                        "refrigeration_real_temperature": 5,
+                        "freezing_power": "on",
+                        "freezing_temperature": -18,
+                        "freezing_real_temperature": -17,
+                    },
+                }
+            ]
+
+            snapshot = DeviceDashboardService._build_midea_cloud_snapshot(self.account)
+
+        controls = snapshot["devices"][0]["controls"]
+        control_keys = {control["key"] for control in controls}
+        self.assertIn("storage_zone:target_temperature", control_keys)
+        self.assertIn("freezing_zone:target_temperature", control_keys)
+
+        storage_target = next(control for control in controls if control["key"] == "storage_zone:target_temperature")
+        freezing_target = next(control for control in controls if control["key"] == "freezing_zone:target_temperature")
+        self.assertEqual(storage_target["group_label"], "冷藏区")
+        self.assertEqual(storage_target["value"], 4)
+        self.assertEqual(storage_target["action_params"]["control_key"], "storage_temperature")
+        self.assertEqual(freezing_target["group_label"], "冷冻区")
+        self.assertEqual(freezing_target["value"], -18)
+        self.assertEqual(freezing_target["action_params"]["control_key"], "freezing_temperature")
+
+    def test_midea_cloud_snapshot_translates_dishwasher_controls_and_hides_cmd_sensor(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="midea_cloud",
+            auth_payload={
+                "account": "demo@example.com",
+                "password": "secret",
+                "server": 2,
+            },
+            is_active=True,
+        )
+
+        with patch("providers.services.MideaCloudAuthService.get_client") as mocked_get_client:
+            mocked_get_client.return_value.list_devices.return_value = [
+                {
+                    "id": "210006736966621",
+                    "device_id": "210006736966621",
+                    "appliance_code": 210006736966621,
+                    "home_id": "1001",
+                    "home_name": "我的家",
+                    "room_name": "厨房",
+                    "name": "洗碗机",
+                    "device_type": 0xE1,
+                    "category": "dishwasher",
+                    "model": "GX1000S Max尊享版",
+                    "model_number": "3",
+                    "manufacturer_code": "0000",
+                    "smart_product_id": "10009112",
+                    "sn": "0000E1531760064ACA3101D000494394",
+                    "sn8": "760064AC",
+                    "online": True,
+                    "status": "online",
+                    "status_payload": {
+                        "cmd": "deadbeef",
+                        "waterswitch": 0,
+                        "uvswitch": 1,
+                        "airswitch": 1,
+                        "dryswitch": 0,
+                        "dry_step_switch": 1,
+                        "air_set_hour": 4,
+                        "work_status": "power_off",
+                        "mode": "neutral_gear",
+                        "temperature": 21,
+                        "softwater": 3,
+                        "left_time": 0,
+                        "air_left_hour": 0,
+                        "doorswitch": 1,
+                        "air_status": 0,
+                        "water_lack": 0,
+                        "softwater_lack": 0,
+                        "wash_stage": 0,
+                        "bright_lack": 1,
+                    },
+                }
+            ]
+
+            snapshot = DeviceDashboardService._build_midea_cloud_snapshot(self.account)
+
+        controls = snapshot["devices"][0]["controls"]
+        control_keys = {control["key"] for control in controls}
+        self.assertNotIn("cmd", control_keys)
+
+        waterswitch = next(control for control in controls if control["key"] == "waterswitch")
+        self.assertEqual(waterswitch["label"], "热水开关")
+        self.assertEqual(waterswitch["group_label"], "整机")
+
+        work_status = next(control for control in controls if control["key"] == "work_status")
+        self.assertEqual(work_status["label"], "工作状态")
+        option_labels = [option["label"] for option in work_status["options"]]
+        self.assertIn("关机", option_labels)
+        self.assertIn("开机", option_labels)
+
+        wash_mode = next(control for control in controls if control["key"] == "wash_mode")
+        self.assertEqual(wash_mode["label"], "洗涤模式")
+        self.assertEqual(wash_mode["group_label"], "模式")
+        wash_mode_labels = [option["label"] for option in wash_mode["options"]]
+        self.assertIn("智能洗", wash_mode_labels)
+        self.assertIn("强力洗", wash_mode_labels)
 
     def test_midea_cloud_snapshot_marks_button_panel_controls_as_actions(self):
         PlatformAuth.objects.create(
@@ -503,7 +671,7 @@ class DeviceDashboardServiceTest(TestCase):
 
         self.assertEqual(name, "监控")
 
-    def test_execute_control_refreshes_snapshot_after_action(self):
+    def test_execute_home_assistant_control_refreshes_only_target_device(self):
         PlatformAuth.objects.create(
             account=self.account,
             platform_name="home_assistant",
@@ -515,13 +683,27 @@ class DeviceDashboardServiceTest(TestCase):
         )
 
         initial_snapshot = build_sample_snapshot()
-        refreshed_snapshot = build_sample_snapshot()
-        refreshed_snapshot["devices"][0]["controls"][0]["value"] = "off"
+        initial_snapshot["devices"][0]["source_payload"] = {
+            "entity_ids": ["switch.fridge_power"],
+            "device_id": "device-fridge",
+            "device_name": "多开门冰箱",
+            "area_id": "kitchen",
+        }
+        refreshed_entities = [
+            {
+                "entity_id": "switch.fridge_power",
+                "state": "off",
+                "attributes": {"friendly_name": "冰箱 电源"},
+            }
+        ]
 
         with patch(
             "devices.services.DeviceDashboardService._build_home_assistant_snapshot",
-            side_effect=[initial_snapshot, refreshed_snapshot],
-        ), patch("devices.services.requests.post") as requests_post:
+            return_value=initial_snapshot,
+        ), patch("devices.services.requests.post") as requests_post, patch(
+            "providers.services.HomeAssistantAuthService.get_entity_states",
+            return_value=({"location_name": "My Home", "time_zone": "Asia/Shanghai"}, refreshed_entities),
+        ), patch("devices.services.DeviceDashboardService.request_refresh") as mocked_request_refresh:
             requests_post.return_value.raise_for_status.return_value = None
             DeviceDashboardService.refresh(self.account, trigger="seed")
             payload = DeviceDashboardService.execute_control(
@@ -532,7 +714,137 @@ class DeviceDashboardServiceTest(TestCase):
             )
 
         self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["value"], "off")
+        self.assertFalse(payload["snapshot"]["pending_refresh"])
+        mocked_request_refresh.assert_not_called()
         requests_post.assert_called_once()
+
+    def test_execute_mijia_control_refreshes_only_target_device(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mijia",
+            auth_payload={"serviceToken": "demo", "ssecurity": "demo", "userId": "demo"},
+            is_active=True,
+        )
+
+        snapshot = build_sample_snapshot(source="mijia")
+        snapshot["devices"][0]["id"] = "mijia:998877"
+        snapshot["devices"][0]["controls"][0]["id"] = "mijia:998877:property:power"
+        snapshot["devices"][0]["controls"][0]["parent_id"] = "mijia:998877"
+        snapshot["devices"][0]["controls"][0]["key"] = "power"
+        snapshot["devices"][0]["controls"][0]["action_params"] = {"did": "998877"}
+        snapshot["devices"][0]["controls"][0]["source_payload"] = {"siid": 2, "piid": 1}
+        snapshot["devices"][0]["source_payload"] = {"did": "998877", "model": "fridge.demo", "name": "多开门冰箱"}
+
+        refreshed_controls = [
+            {
+                "id": "mijia:998877:property:power",
+                "parent_id": "mijia:998877",
+                "source_type": DeviceControl.SourceTypeChoices.MIJIA_PROPERTY,
+                "kind": DeviceControl.KindChoices.TOGGLE,
+                "key": "power",
+                "label": "总电源",
+                "group_label": "整机",
+                "writable": True,
+                "value": "off",
+                "unit": "",
+                "options": [],
+                "range_spec": {},
+                "action_params": {"did": "998877"},
+                "source_payload": {"siid": 2, "piid": 1},
+                "sort_order": 10,
+            }
+        ]
+
+        with patch(
+            "devices.services.DeviceDashboardService._build_mijia_snapshot",
+            return_value=snapshot,
+        ), patch("mijiaAPI.mijiaDevice") as mocked_mijia_device, patch(
+            "mijiaAPI.get_device_info",
+            return_value={},
+        ), patch(
+            "devices.services.DeviceDashboardService._build_mijia_controls",
+            return_value=refreshed_controls,
+        ), patch(
+            "providers.services.MijiaAuthService.get_authenticated_api"
+        ) as mocked_get_api, patch("devices.services.DeviceDashboardService.request_refresh") as mocked_request_refresh:
+            mocked_client = mocked_mijia_device.return_value
+            mocked_client.set.return_value = None
+            mocked_get_api.return_value = object()
+
+            DeviceDashboardService.refresh(self.account, trigger="seed")
+            payload = DeviceDashboardService.execute_control(
+                self.account,
+                device_external_id="mijia:998877",
+                control_external_id="mijia:998877:property:power",
+                value="off",
+            )
+
+        self.assertFalse(payload["snapshot"]["pending_refresh"])
+        power_control = next(control for control in payload["snapshot"]["devices"][0]["controls"] if control["key"] == "power")
+        self.assertEqual(power_control["value"], "off")
+        mocked_request_refresh.assert_not_called()
+        mocked_client.set.assert_called_once_with("power", "off")
+
+    def test_execute_midea_cloud_control_refreshes_only_target_device(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="midea_cloud",
+            auth_payload={"account": "demo@example.com", "password": "secret", "server": 2},
+            is_active=True,
+        )
+
+        snapshot = build_sample_snapshot(source="midea_cloud")
+        snapshot["devices"][0]["id"] = "midea_cloud:998877"
+        snapshot["devices"][0]["controls"][0]["id"] = "midea_cloud:998877:power"
+        snapshot["devices"][0]["controls"][0]["parent_id"] = "midea_cloud:998877"
+        snapshot["devices"][0]["controls"][0]["key"] = "power"
+        snapshot["devices"][0]["controls"][0]["action_params"] = {
+            "device_id": "998877",
+            "actions": [
+                {"id": "turn_on", "label": "开启"},
+                {"id": "turn_off", "label": "关闭"},
+            ],
+        }
+        snapshot["devices"][0]["source_payload"] = {"id": "998877", "device_id": "998877"}
+
+        refreshed_raw_device = {
+            "id": "998877",
+            "device_id": "998877",
+            "name": "多开门冰箱",
+            "room_name": "厨房",
+            "home_name": "猛薯之家",
+            "device_type": 0xCA,
+            "category": "refrigerator",
+            "sn8": "12345678",
+            "status": "online",
+            "status_payload": {
+                "power": "off",
+                "storage_temperature": 2,
+                "_meta": {},
+            },
+        }
+
+        with patch(
+            "devices.services.DeviceDashboardService._build_midea_cloud_snapshot",
+            return_value=snapshot,
+        ), patch("providers.services.MideaCloudAuthService.get_client") as mocked_get_client, patch(
+            "devices.services.DeviceDashboardService.request_refresh"
+        ) as mocked_request_refresh:
+            mocked_get_client.return_value.execute_control.return_value = None
+            mocked_get_client.return_value.get_device.return_value = refreshed_raw_device
+
+            DeviceDashboardService.refresh(self.account, trigger="seed")
+            payload = DeviceDashboardService.execute_control(
+                self.account,
+                device_external_id="midea_cloud:998877",
+                control_external_id="midea_cloud:998877:power",
+                action="turn_off",
+            )
+
+        self.assertFalse(payload["snapshot"]["pending_refresh"])
+        power_control = next(control for control in payload["snapshot"]["devices"][0]["controls"] if control["key"] == "power")
+        self.assertEqual(power_control["value"], "off")
+        mocked_request_refresh.assert_not_called()
 
     def test_syncdevicesnapshot_command_refreshes_target_account(self):
         PlatformAuth.objects.create(
@@ -559,15 +871,13 @@ class DeviceDashboardServiceTest(TestCase):
             password="pwd",
         )
 
-        class LoopExit(Exception):
-            pass
-
         call_order = []
 
         def fake_run_pending_refresh(*, account, sync_interval_seconds):
             call_order.append((account.email, sync_interval_seconds))
             return False
 
+        command = RunWorkerCommand()
         with patch.dict(os.environ, {"DEVICE_SYNC_INTERVAL": "300"}, clear=False), patch(
             "devices.management.commands.runworker.Account.objects.all",
             return_value=[self.account, other_account],
@@ -577,12 +887,8 @@ class DeviceDashboardServiceTest(TestCase):
         ), patch(
             "devices.management.commands.runworker.DeviceDashboardService.run_pending_refresh",
             side_effect=fake_run_pending_refresh,
-        ) as run_pending_refresh, patch(
-            "devices.management.commands.runworker.time.sleep",
-            side_effect=LoopExit,
-        ):
-            with self.assertRaises(LoopExit):
-                call_command("runworker")
+        ) as run_pending_refresh:
+            command.run_iteration(sync_interval=300, block_timeout=1)
 
         self.assertEqual(run_pending_refresh.call_count, 2)
         self.assertEqual(
@@ -593,9 +899,91 @@ class DeviceDashboardServiceTest(TestCase):
             ],
         )
 
+    def test_runworker_consumes_redis_queue_before_scan(self):
+        other_account = Account.objects.create(
+            email="device-redis@example.com",
+            name="Redis Device Test",
+            password="pwd",
+        )
+
+        call_order = []
+
+        def fake_run_pending_refresh(*, account, sync_interval_seconds):
+            call_order.append((account.email, sync_interval_seconds))
+            return False
+
+        command = RunWorkerCommand()
+        with patch.dict(
+            os.environ,
+            {
+                "DEVICE_SYNC_QUEUE_BACKEND": "redis",
+                "DEVICE_SYNC_QUEUE_BLOCK_TIMEOUT": "1",
+                "DEVICE_SYNC_INTERVAL": "300",
+            },
+            clear=False,
+        ), patch(
+            "devices.management.commands.runworker.dequeue_account_refresh",
+            return_value=self.account.id,
+        ), patch(
+            "devices.management.commands.runworker.Account.objects.all",
+            return_value=[self.account, other_account],
+        ), patch(
+            "django.db.close_old_connections",
+            return_value=None,
+        ), patch(
+            "devices.management.commands.runworker.DeviceDashboardService.run_pending_refresh",
+            side_effect=fake_run_pending_refresh,
+        ) as run_pending_refresh:
+            command.run_iteration(sync_interval=300, block_timeout=1)
+
+        self.assertEqual(run_pending_refresh.call_count, 1)
+        self.assertEqual(
+            call_order,
+            [
+                (self.account.email, 300),
+            ],
+        )
+
+    def test_runworker_skips_full_scan_when_redis_queue_is_idle(self):
+        other_account = Account.objects.create(
+            email="device-redis-idle@example.com",
+            name="Redis Idle Device Test",
+            password="pwd",
+        )
+
+        command = RunWorkerCommand()
+        command._last_scan_at = time.monotonic()
+
+        with patch.dict(
+            os.environ,
+            {
+                "DEVICE_SYNC_QUEUE_BACKEND": "redis",
+                "DEVICE_SYNC_QUEUE_BLOCK_TIMEOUT": "1",
+                "DEVICE_SYNC_INTERVAL": "300",
+            },
+            clear=False,
+        ), patch(
+            "devices.management.commands.runworker.dequeue_account_refresh",
+            return_value=None,
+        ), patch(
+            "devices.management.commands.runworker.Account.objects.all",
+            return_value=[self.account, other_account],
+        ), patch(
+            "django.db.close_old_connections",
+            return_value=None,
+        ), patch(
+            "devices.management.commands.runworker.DeviceDashboardService.run_pending_refresh",
+        ) as run_pending_refresh:
+            refreshed = command.run_iteration(sync_interval=300, block_timeout=1)
+
+        self.assertEqual(refreshed, 0)
+        run_pending_refresh.assert_not_called()
+
 
 class DeviceDashboardApiTest(TestCase):
     def setUp(self):
+        self.env_patcher = patch.dict(os.environ, {"DEVICE_SYNC_QUEUE_BACKEND": "polling"}, clear=False)
+        self.env_patcher.start()
         self.account = Account.objects.create(
             email="device-api@example.com",
             name="Device Api Test",
@@ -604,6 +992,9 @@ class DeviceDashboardApiTest(TestCase):
         self.dashboard_url = reverse("devices:dashboard")
         self.refresh_url = reverse("devices:dashboard_refresh")
         self.list_url = reverse("devices:device_list")
+
+    def tearDown(self):
+        self.env_patcher.stop()
 
     def test_dashboard_endpoint_returns_pending_snapshot_when_worker_has_not_run(self):
         response = self.client.get(self.dashboard_url, HTTP_X_WANNY_EMAIL=self.account.email)

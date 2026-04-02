@@ -1,103 +1,112 @@
-# Wanny (Wechat + Nanny) - 你的 AI 超级管家
+# Wanny (Wechat + Nanny) - Your AI Super Butler
 
-Wanny 是一个连接微信与智能家居的“全能管家”系统。它不仅能通过微信控制米家设备，还集成 Gemini CLI 成为具备 Shell 操作能力的 AI Agent，并拥有长期记忆与主动关怀能力。
+English README | [中文说明](./README.zh-CN.md)
 
-项目整体介绍、系统组成与架构总览可优先阅读 [2026-03-29-wanny-design.md](/Users/edison/code/python/wanny/docs/superpowers/specs/2026-03-29-wanny-design.md)。
+Wanny is an all-in-one butler system that connects WeChat, smart devices, and service providers. It supports natural-language control, long-term memory, proactive care, and a unified console across home automation, messaging, and mobility scenarios.
 
-## 🤖 AI 阅读入口
+For the overall product introduction, system composition, and architecture overview, start with [2026-03-29-wanny-design.md](./docs/superpowers/specs/2026-03-29-wanny-design.md).
 
-- AI 首先阅读根目录 `README.md`，理解项目背景、目录结构与工作区边界。
-- 通用 AI 规则位于根目录 `GEMINI.md`，这里定义跨前后端都适用的开发约束与行为规则。
-- 后端专属规则位于 `backend/GEMINI.md`。
-- 前端专属规则位于 `frontend/GEMINI.md`。
-- 推荐阅读顺序：
-  1. `README.md`
-  2. `GEMINI.md`
-  3. `backend/GEMINI.md` 或 `frontend/GEMINI.md`
+## 🚀 Core Capabilities
 
-`GEMINI.md` 的作用是承载 AI rule，而不是项目介绍。项目说明、运行方式、背景信息和目录说明应继续保留在各自的 `README.md` 中。
+### 1. Smart Device Control (Jarvis Brain)
 
-## 🚀 核心能力
+- **Sense, decide, execute**: Monitor device states in real time, reason over scenes and modes, and drive actions through a unified control layer.
+- **Behavior learning**: Learn recurring habits, convert repeated confirmations into trusted automations, and keep the user in control.
+- **Permission matrix**: Configure whether each action should ask, always allow, or never allow under different scenarios.
 
-### 1. 智能家居控制 (Jarvis Brain)
-- **感知-决策-执行**: 通过米家 API 实时监控设备状态，结合场景模式（HomeMode）自动优化家居环境。
-- **观察学习**: 自动识别你的生活规律（如：离开家忘记关灯），并通过“确认制”交互进化为全自动助手。
-- **权限矩阵**: 灵活配置每个场景下动作的授权状态（询问、总是、从不）。
+### 2. AI Command Agent (Jarvis Shell)
 
-### 2. AI 命令行代理 (Jarvis Shell)
-- **自然语言交互**: 通过微信直接命令 Jarvis 执行任务（如：“查下明天上海天气”、“帮我下部科幻片”）。
-- **简单/复杂任务分类**: 
-  - 简单询问由后端直接构造 Prompt 获取回复。
-  - 复杂任务通过 AI 生成 Prompt 并调用 `gemini --yolo` 模式执行多步 Shell 指令。
-- **手动门禁 (Manual-Gate)**: 所有涉及系统操作的指令均需经过用户微信回复“批准”后方可执行。
-- **安全路线图**: 规划引入 Sandbox 和 Docker 容器化执行，实现物理级安全隔离。
+- **Natural-language interaction**: Talk to Wanny through WeChat for everyday questions, device operations, and task execution.
+- **Simple vs. complex task routing**:
+  - Lightweight requests can be answered directly by the backend prompt flow.
+  - Multi-step tasks can be expanded into shell-oriented execution flows through the AI agent.
+- **Manual gate**: Any system-level operation must still be explicitly approved by the user over WeChat before execution.
+- **Safety roadmap**: The project is designed to evolve toward stronger isolation with sandboxed and containerized execution.
 
-### 3. 长期记忆与主动关怀 (Memory & Proactive Care)
-- **双轨制记忆**: 
-  - **Memory A (语义向量)**: 记录所有对话片段，提供基于语义相似度的实时回想。
-  - **Memory B (结构化画像)**: 自动提取并持久化你的核心偏好（如：习惯室温、观影习惯）。
-- **每日复盘**: Jarvis 每天凌晨会自动复盘当天的交互，更新用户画像并进化建议算法。
-- **主动建议**: 监测环境变化（如：降雨、PM2.5 超标）或基于习惯主动推送温馨提醒，避免过度打扰。
+### 3. Long-Term Memory and Proactive Care
 
-## 🛠️ 技术栈
+- **Dual-track memory**:
+  - **Memory A (semantic vectors)** stores dialogue fragments for retrieval and context recall.
+  - **Memory B (structured profile)** extracts durable preferences such as temperature habits or entertainment preferences.
+- **Daily review**: Wanny can summarize and refine user understanding over time.
+- **Proactive suggestions**: Environmental events, routines, and contextual signals can trigger timely reminders without becoming spammy.
 
-- **后端**: Django 6.0 + Django Channels (WebSocket)
-- **数据库**: MySQL + 向量数据库 (ChromaDB/FAISS)
-- **AI 引擎**: Gemini CLI (`gemini`)
-- **通讯**: WeChat iLink 协议 (`wechatbot-sdk`)
-- **硬件对接**: Mijia API (`mijiaAPI`)
-- **前端**: Vue 3 + Vite + TypeScript + Tailwind CSS + shadcn-vue + vue-i18n
+## 🛠️ Tech Stack
 
-## 📁 目录结构
+- **Backend**: Django 6.0 + Django Channels (WebSocket)
+- **Database**: MySQL + vector storage (ChromaDB/FAISS)
+- **AI Engine**: Gemini CLI (`gemini`)
+- **Messaging**: WeChat iLink protocol (`wechatbot-sdk`)
+- **Device Integrations**: Mijia API (`mijiaAPI`), Midea cloud, Mercedes `mbapi2020`
+- **Frontend**: Vue 3 + Vite + TypeScript + Tailwind CSS + shadcn-vue + vue-i18n
+
+## 📁 Repository Structure
 
 ```text
 /wanny
-  /backend           # Django 项目根目录
+  /backend           # Django workspace
     /apps
-      /brain         # LLM Agent 逻辑、决策中枢
-      /comms         # 微信网关、消息路由
-      /database      # 核心 ORM 模型与存储
-      /memory        # 长期记忆、画像提取逻辑
-      /devices       # 设备管理驱动
-      /providers     # 第三方 API 接入
-  /frontend          # Vue 3 前端工作区（Landing Page + Jarvis Console）
-  /docs              # 详细设计规范与实施计划
-  /third_party       # 第三方源码参考区（仅用于对照、移植与致谢）
+      /brain         # LLM agent logic and decision hub
+      /comms         # WeChat gateway and routing
+      /database      # Core ORM models and storage
+      /memory        # Long-term memory and profile extraction
+      /devices       # Device aggregation and control
+      /providers     # Third-party provider integrations
+  /frontend          # Vue 3 frontend workspace (Landing Page + Jarvis Console)
+  /docs              # Design specs, implementation notes, and plans
+  /third_party       # Third-party source references, migration aids, acknowledgements
 ```
 
-## 📖 项目文档
+## 📖 Project Documents
 
-- 项目介绍与系统设计总览见 [2026-03-29-wanny-design.md](/Users/edison/code/python/wanny/docs/superpowers/specs/2026-03-29-wanny-design.md)。
-- 详细专项设计、实施记录与规格说明位于 [`docs/superpowers/specs`](/Users/edison/code/python/wanny/docs/superpowers/specs)。
+- The system overview lives in [2026-03-29-wanny-design.md](./docs/superpowers/specs/2026-03-29-wanny-design.md).
+- Detailed specifications and implementation notes live under [`docs/superpowers/specs`](./docs/superpowers/specs).
+- Chinese documentation is available in [README.zh-CN.md](./README.zh-CN.md).
 
-## 🙏 第三方参考与致谢
+## 🖥️ Frontend Workspace
 
-- `third_party/midea_auto_cloud` 以 Git submodule 形式引入，作为美的接入的参考实现源码。
-- 该仓库当前主要用于协议分析、字段映射与移植对照，不作为 Wanny 的运行时依赖。
-- 致谢上游项目 [`sususweet/midea_auto_cloud`](https://github.com/sususweet/midea_auto_cloud) 提供的 Home Assistant 集成与相关实现思路。
+- `frontend/` contains the public landing page and the console UI.
+- The current frontend stack is Vue 3 + Vite + TypeScript + Tailwind CSS + shadcn-vue + vue-i18n.
+- For frontend-specific run instructions, see `frontend/README.md`.
 
-### 美的映射巡检
+## 🔐 Safety and Rules
 
-- 后端提供 `uv run python manage.py audit_midea_mapping --limit 80`，用于扫描美的映射翻译后的高风险项。
-- 这个巡检主要帮助发现“标签仍然过于原始”“选项文案未语义化”“底层状态字段泄漏到主界面”等问题，避免只能靠手动点设备页发现回归。
+- **Privacy first**: Sensitive operations remain gated and local-first where possible.
+- **Execution filters**: Dangerous commands such as `sudo` or destructive file removal should be blocked by policy.
+- **AI rule chain**: Root-level `README.md` and `README.zh-CN.md` explain the project, while `GEMINI.md`, `backend/GEMINI.md`, and `frontend/GEMINI.md` define operational AI rules.
 
-## ⚠️ 免责声明
+## 🙏 Third-Party References and Acknowledgements
 
-- 本项目可能包含第三方依赖、第三方参考实现，或基于公开资料与社区项目整理出的协议兼容代码；相关知识产权、许可证与合规边界仍以各上游项目和服务提供方的条款为准。
-- 某些平台接入能力可能依赖非官方接口、未公开 API、抓包分析、协议逆向或兼容性适配实现，例如智能家居平台云端接口对接。这类能力不代表得到相关平台官方认可，也不保证长期稳定可用。
-- 若你使用与第三方平台账号、设备、App 或云服务相关的接入能力，请自行评估潜在风险，包括但不限于接口变更、账号风控、功能失效、服务条款限制或地区差异。
-- 本项目默认将这些能力视为研究、学习、个人集成与兼容性探索用途；如需在生产环境、商业环境或面向终端用户的大规模场景中使用，请先完成必要的法律、合规、安全与许可证审查。
-- 本项目属于试验性项目，且包含 AI 参与控制智能家电、自动化执行和外部平台联动等能力；请你在实际使用时保持谨慎，尤其留意通电设备、加热设备、门锁、传感器联动和无人值守场景中的潜在风险。
-- 使用者应自行判断每一次接入、授权、自动化规则和控制指令是否安全、是否适合当前环境，并自行承担因误操作、配置不当、接口异常、设备异常或第三方服务变化带来的后果；与此相关的现实设备损失、人身风险、财产风险或平台问题，不应归责于本项目本身。
+- `third_party/midea_auto_cloud` is included as a Git submodule and used as a reference implementation for Midea integration work.
+- `third_party/mbapi2020` is included as a Git submodule and used as a reference implementation for Mercedes integration work.
+- These repositories are used for protocol study, field mapping, and migration reference rather than as runtime dependencies of Wanny.
+- Thanks to [`sususweet/midea_auto_cloud`](https://github.com/sususweet/midea_auto_cloud) for the upstream Home Assistant integration and implementation ideas.
+- Thanks to [`ReneNulschDE/mbapi2020`](https://github.com/ReneNulschDE/mbapi2020) for the upstream Home Assistant integration and implementation ideas.
 
-## 🖥️ 前端工作区
+## ⚠️ Disclaimer
 
-- `frontend/` 将承载官网 Landing Page 与后续的 Jarvis Console
-- 当前前端技术路线为 Vue 3 + Vite + TypeScript + Tailwind CSS + shadcn-vue + vue-i18n
-- 详细运行方式与目录说明请查看 `frontend/README.md`
+- This project may contain third-party dependencies, third-party reference implementations, or compatibility code derived from public information and community projects. Intellectual property, licensing, and compliance boundaries remain subject to the original upstream terms.
+- Some integrations may rely on unofficial interfaces, undocumented APIs, reverse engineering, packet inspection, or compatibility adaptations. That does not imply official support from the related platforms and does not guarantee long-term stability.
+- If you connect third-party accounts, devices, apps, or cloud services, evaluate the risks yourself, including API changes, rate limiting, account controls, service policy restrictions, and regional differences.
+- The project should be treated as an experimental system for research, learning, personal integration, and compatibility exploration unless you have separately validated legal, operational, and security requirements for production use.
+- Because Wanny can control real devices and interact with external services, use extra caution around powered devices, heating equipment, locks, unattended automations, and safety-critical scenarios.
+- Users remain responsible for deciding whether each authorization, automation, or control instruction is safe for the current environment.
 
-## 🔐 安全与准则
+## 🤖 AI Reading Entry
 
-- **隐私第一**: 核心逻辑本地化运行，敏感操作强制二次确认。
-- **安全过滤**: 禁止执行 `sudo` 或危险的文件删除指令。
-- **AI 规则链路**: 根目录 `README.md` 提供入口，根目录 `GEMINI.md` 管理通用规则，`backend/GEMINI.md` 与 `frontend/GEMINI.md` 分别管理领域规则。
+- AI agents should first read root-level `README.md` or `README.zh-CN.md` to understand the project context, repository layout, and workspace boundaries.
+- Shared AI rules live in root-level `GEMINI.md`.
+- Backend-specific AI rules live in `backend/GEMINI.md`.
+- Frontend-specific AI rules live in `frontend/GEMINI.md`.
+- Recommended reading order:
+  1. `README.md`
+  2. `README.zh-CN.md`
+  3. `GEMINI.md`
+  4. `backend/GEMINI.md` or `frontend/GEMINI.md`
+
+`GEMINI.md` is for AI behavior rules rather than product introduction. Project background, structure, and run instructions should remain in the relevant `README` files.
+
+### Midea Mapping Audit
+
+- The backend exposes `uv run python manage.py audit_midea_mapping --limit 80` to scan for high-risk Midea mapping issues.
+- This helps catch raw labels, untranslated option text, and low-level state leakage before they regress into the device UI.

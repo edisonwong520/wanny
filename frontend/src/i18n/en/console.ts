@@ -91,6 +91,8 @@ export default {
     allRoomsSummary: "Review device snapshots, anomalies and automation rules across every room.",
     filters: {
       all: "All",
+      selected: "{count} selected",
+      clear: "Clear options",
     },
     metrics: {
       online: "Online devices",
@@ -130,6 +132,24 @@ export default {
     },
     groups: {
       general: "General",
+      wholeMachine: "Whole unit",
+      refrigerator: "Refrigerator",
+      freezer: "Freezer",
+      variableTemperature: "Variable temp",
+      mode: "Mode",
+      lighting: "Lighting",
+      doorBody: "Doors",
+      system: "System",
+      settings: "Settings",
+      telemetry: "Telemetry",
+      runtime: "Runtime",
+    },
+    platforms: {
+      home_assistant: "Home Assistant",
+      mijia: "Mijia",
+      midea_cloud: "Midea",
+      mbapi2020: "Mercedes-Benz",
+      unknown: "Unknown platform",
     },
     highlights: {
       mode: "Mode",
@@ -177,6 +197,7 @@ export default {
       run: "Run",
       expand: "Expand",
       collapse: "Collapse",
+      dragSort: "Drag to reorder",
     },
     controlKinds: {
       sensor: "Read",
@@ -215,15 +236,20 @@ export default {
     },
     hints: {
       readOnly: "This node is currently read only.",
+      readOnlyShort: "Read only",
     },
     feedback: {
       refreshQueued: "Refresh requested. The device information will update in the background.",
       actionSuccess: "{name} updated.",
       actionFailed: "{name} failed to update and was rolled back.",
+      orderSaved: "Device order saved.",
+      orderFailed: "Failed to save device order. Restored the previous order.",
     },
     errors: {
       load: "Unable to load device dashboard data. Please try again.",
       action: "Unable to execute the device control. Please try again.",
+      detail: "Unable to load the device detail. Please try again.",
+      reorder: "Unable to save the device order. Please try again.",
     },
   },
   manage: {

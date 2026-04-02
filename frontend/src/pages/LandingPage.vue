@@ -24,8 +24,12 @@ const platformFeature = computed(() => tm("landing.platformFeature") as {
   eyebrow: string;
   slogan: string;
   description: string;
-  platforms: Array<{ name: string; tag: string }>;
+  platforms: Array<{ name: string; tag: string; logo: string }>;
 });
+const marqueePlatforms = computed(() => [
+  ...platformFeature.value.platforms,
+  ...platformFeature.value.platforms,
+]);
 
 // 从 i18n 获取翻译后的列表
 const localizedPrompts = computed(() => tm("landing.prompts") as string[]);
@@ -111,17 +115,30 @@ onMounted(() => {
             {{ platformFeature.slogan }}
           </h2>
 
-          <div class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <p class="mx-auto mt-4 max-w-2xl text-center text-sm leading-7 text-[#6D7E73] md:text-base">
+            {{ platformFeature.description }}
+          </p>
+
+          <div class="platform-marquee mt-8 overflow-hidden">
             <div
-              v-for="platform in platformFeature.platforms"
-              :key="platform.name"
-              class="rounded-3xl border border-[#DDEEE2] bg-white px-4 py-4 text-center transition-all duration-200 hover:-translate-y-1 hover:border-[#07C160]/30 hover:shadow-[0_14px_30px_rgba(7,193,96,0.12)]"
+              class="platform-marquee-track flex w-max gap-4"
             >
-              <div class="flex aspect-[4/3] items-center justify-center rounded-2xl border border-dashed border-[#C9DDCF] bg-[#F8FCF9] text-xs font-medium uppercase tracking-[0.24em] text-[#A0B1A6]">
-                {{ platform.tag }}
-              </div>
-              <div class="mt-3 text-sm font-medium text-[#223126] md:text-base">
-                {{ platform.name }}
+              <div
+                v-for="(platform, index) in marqueePlatforms"
+                :key="`${platform.name}-${index}`"
+                class="w-[188px] shrink-0 rounded-3xl border border-[#DDEEE2] bg-white px-4 py-4 text-center transition-all duration-200 hover:-translate-y-1 hover:border-[#07C160]/30 hover:shadow-[0_14px_30px_rgba(7,193,96,0.12)]"
+              >
+                <div class="flex aspect-[4/3] items-center justify-center rounded-2xl border border-dashed border-[#C9DDCF] bg-[radial-gradient(circle_at_top,#FFFFFF_0%,#F4FBF6_100%)] px-6">
+                  <img
+                    :src="platform.logo"
+                    :alt="platform.name"
+                    class="max-h-16 w-auto object-contain"
+                    loading="lazy"
+                  >
+                </div> 
+                <div class="mt-1 text-sm font-medium text-[#223126] md:text-base">
+                  {{ platform.name }}
+                </div>
               </div>
             </div>
           </div>
@@ -141,6 +158,18 @@ onMounted(() => {
   filter: drop-shadow(0 0 4px rgba(7, 193, 96, 0.4));
 }
 
+.platform-marquee {
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+
+.platform-marquee-track {
+  animation: platform-marquee-scroll 22s linear infinite;
+}
+
+.platform-marquee:hover .platform-marquee-track {
+  animation-play-state: paused;
+}
+
 @keyframes breath {
   0%, 100% {
     transform: scale(1);
@@ -151,6 +180,15 @@ onMounted(() => {
     transform: scale(1.15);
     opacity: 0.7;
     filter: drop-shadow(0 0 8px rgba(7, 193, 96, 0.6));
+  }
+}
+
+@keyframes platform-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50% - 0.5rem));
   }
 }
 </style>

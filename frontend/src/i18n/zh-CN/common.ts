@@ -18,5 +18,6 @@ export default {
   nav: {
     console: "控制台",
     landing: "首页",
+    github: "GitHub",
   },
 };

@@ -8,6 +8,7 @@ import { clearAuth, currentUser, isAuthenticated } from "@/lib/auth";
 const route = useRoute();
 const router = useRouter();
 const { locale } = useI18n();
+const githubUrl = "https://github.com/edisonwong520/wanny?tab=readme-ov-file#readme";
 
 const isConsoleRoute = computed(() => route.path.startsWith("/console"));
 
@@ -26,11 +27,11 @@ function handleLogout() {
   <header class="sticky top-0 z-40 bg-white border-b border-[#EDEDED]">
     <div class="mx-auto max-w-6xl flex items-center justify-between px-4 py-3">
       <RouterLink class="flex items-center gap-2" to="/landing">
-        <div class="w-8 h-8 rounded-lg bg-[#07C160] flex items-center justify-center">
-          <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.1c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-          </svg>
-        </div>
+        <img
+          alt="Wanny logo"
+          class="h-8 w-8 rounded-lg object-cover shadow-sm"
+          src="/brand-icon.svg"
+        />
         <span class="font-semibold text-[#333333]">Wanny</span>
       </RouterLink>
 
@@ -82,6 +83,17 @@ function handleLogout() {
         >
           {{ $t("auth.loginRegister") }}
         </RouterLink>
+        <a
+          :href="githubUrl"
+          class="inline-flex items-center gap-2 rounded-full border border-[#EDEDED] bg-white px-4 py-1.5 text-sm text-[#888888] transition-all duration-200 hover:bg-[#F7F7F7] hover:text-[#333333]"
+          rel="noreferrer"
+          target="_blank"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 .5a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.42-4.04-1.42-.55-1.38-1.33-1.75-1.33-1.75-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.25 1.84 1.25 1.07 1.84 2.81 1.31 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.31-5.47-1.35-5.47-5.98 0-1.32.47-2.39 1.24-3.24-.12-.31-.54-1.57.12-3.27 0 0 1.01-.33 3.3 1.24a11.4 11.4 0 0 1 6 0c2.29-1.57 3.29-1.24 3.29-1.24.66 1.7.24 2.96.12 3.27.77.85 1.24 1.92 1.24 3.24 0 4.64-2.8 5.67-5.48 5.97.43.37.82 1.1.82 2.22v3.29c0 .32.22.69.83.58A12 12 0 0 0 12 .5Z"/>
+          </svg>
+          {{ $t("nav.github") }}
+        </a>
       </div>
     </div>
 
@@ -101,6 +113,17 @@ function handleLogout() {
         >
           {{ $t("nav.console") }}
         </RouterLink>
+        <a
+          :href="githubUrl"
+          class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm text-[#888888]"
+          rel="noreferrer"
+          target="_blank"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 .5a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.42-4.04-1.42-.55-1.38-1.33-1.75-1.33-1.75-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.25 1.84 1.25 1.07 1.84 2.81 1.31 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.31-5.47-1.35-5.47-5.98 0-1.32.47-2.39 1.24-3.24-.12-.31-.54-1.57.12-3.27 0 0 1.01-.33 3.3 1.24a11.4 11.4 0 0 1 6 0c2.29-1.57 3.29-1.24 3.29-1.24.66 1.7.24 2.96.12 3.27.77.85 1.24 1.92 1.24 3.24 0 4.64-2.8 5.67-5.48 5.97.43.37.82 1.1.82 2.22v3.29c0 .32.22.69.83.58A12 12 0 0 0 12 .5Z"/>
+          </svg>
+          {{ $t("nav.github") }}
+        </a>
       </nav>
     </div>
   </header>

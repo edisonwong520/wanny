@@ -160,6 +160,16 @@ export async function fetchDeviceList(params: {
   }>(path);
 }
 
+export async function reorderDeviceList(deviceIds: string[]) {
+  return requestJson<DeviceDashboardResponse>("/api/devices/list/reorder/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ device_ids: deviceIds }),
+  });
+}
+
 export async function fetchDeviceDetail(deviceId: string) {
   return requestJson<{
     status: string;

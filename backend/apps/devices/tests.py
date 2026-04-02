@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from unittest.mock import patch
@@ -345,6 +346,98 @@ class DeviceDashboardServiceTest(TestCase):
 
         self.assertEqual(payload["snapshot"]["source"], "mbapi2020")
         self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["source_type"], "mbapi2020_property")
+
+    def test_refresh_preserves_existing_device_sort_order(self):
+        room = DeviceRoom.objects.create(
+            account=self.account,
+            slug="manual-room",
+            name="手动房间",
+            climate="",
+            summary="",
+            sort_order=50,
+        )
+        DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:manual-2",
+            room=room,
+            name="第二台",
+            category="灯光",
+            status="online",
+            telemetry="在线",
+            sort_order=10,
+        )
+        DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:manual-1",
+            room=room,
+            name="第一台",
+            category="灯光",
+            status="online",
+            telemetry="在线",
+            sort_order=20,
+        )
+
+        with patch(
+            "devices.services.DeviceDashboardService._build_mijia_snapshot",
+            return_value={
+                "source": "mijia",
+                "rooms": [
+                    {
+                        "id": "manual-room",
+                        "name": "手动房间",
+                        "climate": "",
+                        "summary": "",
+                        "sort_order": 10,
+                    }
+                ],
+                "devices": [
+                    {
+                        "id": "mijia:manual-1",
+                        "room_id": "manual-room",
+                        "name": "第一台",
+                        "category": "灯光",
+                        "status": "online",
+                        "telemetry": "在线",
+                        "note": "",
+                        "capabilities": [],
+                        "controls": [],
+                        "last_seen": None,
+                        "sort_order": 10,
+                    },
+                    {
+                        "id": "mijia:manual-2",
+                        "room_id": "manual-room",
+                        "name": "第二台",
+                        "category": "灯光",
+                        "status": "online",
+                        "telemetry": "在线",
+                        "note": "",
+                        "capabilities": [],
+                        "controls": [],
+                        "last_seen": None,
+                        "sort_order": 20,
+                    },
+                ],
+                "anomalies": [],
+                "rules": [],
+            },
+        ), patch(
+            "providers.services.MijiaAuthService.get_auth_record",
+            return_value=object(),
+        ), patch(
+            "providers.services.HomeAssistantAuthService.get_auth_record",
+            return_value=None,
+        ), patch(
+            "providers.services.MideaCloudAuthService.get_auth_record",
+            return_value=None,
+        ), patch(
+            "providers.services.MbApi2020AuthService.get_auth_record",
+            return_value=None,
+        ):
+            payload = DeviceDashboardService.refresh(self.account, trigger="test")
+
+        ordered_ids = [device["id"] for device in payload["snapshot"]["devices"]]
+        self.assertEqual(ordered_ids[:2], ["mijia:manual-2", "mijia:manual-1"])
 
     def test_mbapi2020_snapshot_builds_action_controls_from_command_capabilities(self):
         PlatformAuth.objects.create(
@@ -1341,9 +1434,9 @@ class DeviceDashboardApiTest(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["pagination"]["total"], 2)
-        self.assertEqual([device["id"] for device in payload["devices"]], ["home_assistant:ac-1", "mijia:light-1"])
+        self.assertEqual([device["id"] for device in payload["devices"]], ["mijia:light-1", "home_assistant:ac-1"])
 
-    def test_device_list_endpoint_sorts_by_status_then_enabled_then_platform(self):
+    def test_device_list_endpoint_sorts_by_manual_order_first(self):
         room = DeviceRoom.objects.create(
             account=self.account,
             slug="bedroom",
@@ -1423,12 +1516,67 @@ class DeviceDashboardApiTest(TestCase):
         self.assertEqual(
             [device["id"] for device in payload["devices"]],
             [
-                "mijia:light-enabled",
                 "home_assistant:light-disabled",
                 "home_assistant:fan-attention",
+                "mijia:light-enabled",
                 "mijia:plug-offline",
             ],
         )
+
+    def test_device_list_reorder_endpoint_updates_sort_order(self):
+        room = DeviceRoom.objects.create(
+            account=self.account,
+            slug="reorder-room",
+            name="排序房间",
+            climate="",
+            summary="",
+            sort_order=10,
+        )
+        first = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:first",
+            room=room,
+            name="第一台",
+            category="灯光",
+            status="online",
+            telemetry="在线",
+            sort_order=10,
+        )
+        second = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:second",
+            room=room,
+            name="第二台",
+            category="灯光",
+            status="online",
+            telemetry="在线",
+            sort_order=20,
+        )
+        third = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:third",
+            room=room,
+            name="第三台",
+            category="灯光",
+            status="online",
+            telemetry="在线",
+            sort_order=30,
+        )
+
+        response = self.client.post(
+            reverse("devices:device_list_reorder"),
+            data=json.dumps({"device_ids": [third.external_id, first.external_id]}),
+            content_type="application/json",
+            HTTP_X_WANNY_EMAIL=self.account.email,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        ordered_ids = list(
+            DeviceSnapshot.objects.filter(account=self.account)
+            .order_by("sort_order", "id")
+            .values_list("external_id", flat=True)
+        )
+        self.assertEqual(ordered_ids, [third.external_id, second.external_id, first.external_id])
 
     def test_control_endpoint_executes_action(self):
         PlatformAuth.objects.create(

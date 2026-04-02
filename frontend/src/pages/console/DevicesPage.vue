@@ -12,6 +12,7 @@ import {
   fetchDeviceDetail,
   fetchDeviceList,
   refreshDeviceDashboard,
+  reorderDeviceList,
 } from "@/lib/devices";
 import { formatDateTime } from "@/lib/utils";
 
@@ -26,10 +27,13 @@ const errorMessage = ref("");
 // Device list state
 const devices = ref<DeviceListItem[]>([]);
 const devicesLoading = ref(false);
+const savingOrder = ref(false);
 const pagination = ref({ page: 1, page_size: 10, total: 0, total_pages: 0 });
 const searchQuery = ref("");
 const activePlatforms = ref<string[]>([]);
 const platformSelectOpen = ref(false);
+const draggedDeviceId = ref("");
+const dragOverDeviceId = ref("");
 let searchTimeout: number | null = null;
 
 // Selected device detail
@@ -54,40 +58,28 @@ const metrics = computed(() => {
   };
 });
 
+function getPlatformMeta(platformId: string) {
+  const classes: Record<string, string> = {
+    home_assistant: "bg-[#FFF2E8] text-[#C96B2C] border-[#F3C9A8]",
+    mijia: "bg-[#EAF3FF] text-[#2F6FDB] border-[#BDD4FF]",
+    midea_cloud: "bg-[#EAFBF7] text-[#138A6B] border-[#B7E7DA]",
+    mbapi2020: "bg-[#F5F0FF] text-[#6941C6] border-[#D9CCFF]",
+    unknown: "bg-[#F2F4F7] text-[#667085] border-[#D0D5DD]",
+  };
+
+  return {
+    id: platformId,
+    label: t(`devices.platforms.${platformId}`),
+    className: classes[platformId] ?? classes.unknown,
+  };
+}
+
 const platformOptions = computed(() => {
   const knownPlatforms = new Map([
-    [
-      "home_assistant",
-      {
-        id: "home_assistant",
-        label: "Home Assistant",
-        className: "bg-[#FFF2E8] text-[#C96B2C] border-[#F3C9A8]",
-      },
-    ],
-    [
-      "mijia",
-      {
-        id: "mijia",
-        label: "米家",
-        className: "bg-[#EAF3FF] text-[#2F6FDB] border-[#BDD4FF]",
-      },
-    ],
-    [
-      "midea_cloud",
-      {
-        id: "midea_cloud",
-        label: "美的",
-        className: "bg-[#EAFBF7] text-[#138A6B] border-[#B7E7DA]",
-      },
-    ],
-    [
-      "mbapi2020",
-      {
-        id: "mbapi2020",
-        label: "奔驰",
-        className: "bg-[#F5F0FF] text-[#6941C6] border-[#D9CCFF]",
-      },
-    ],
+    ["home_assistant", getPlatformMeta("home_assistant")],
+    ["mijia", getPlatformMeta("mijia")],
+    ["midea_cloud", getPlatformMeta("midea_cloud")],
+    ["mbapi2020", getPlatformMeta("mbapi2020")],
   ]);
 
   (dashboard.value?.devices ?? []).forEach((device) => {
@@ -101,11 +93,11 @@ const platformOptions = computed(() => {
 });
 
 const platformSelectLabel = computed(() => {
-  if (activePlatforms.value.length === 0) return "全部";
+  if (activePlatforms.value.length === 0) return t("devices.filters.all");
   if (activePlatforms.value.length === 1) {
-    return platformOptions.value.find((item) => item.id === activePlatforms.value[0])?.label ?? "全部";
+    return platformOptions.value.find((item) => item.id === activePlatforms.value[0])?.label ?? t("devices.filters.all");
   }
-  return `已选 ${activePlatforms.value.length} 项`;
+  return t("devices.filters.selected", { count: activePlatforms.value.length });
 });
 
 const groupedControls = computed(() => {
@@ -231,7 +223,7 @@ async function selectDevice(deviceId: string) {
     const response = await fetchDeviceDetail(deviceId);
     selectedDevice.value = response.device;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "Failed to load device";
+    errorMessage.value = error instanceof Error ? error.message : t("devices.errors.detail");
   } finally {
     deviceLoading.value = false;
   }
@@ -284,41 +276,73 @@ function goToPage(page: number) {
   void loadDevices();
 }
 
+function moveDeviceInList(fromId: string, toId: string) {
+  const fromIndex = devices.value.findIndex((device) => device.id === fromId);
+  const toIndex = devices.value.findIndex((device) => device.id === toId);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return devices.value;
+  const nextDevices = [...devices.value];
+  const [moved] = nextDevices.splice(fromIndex, 1);
+  nextDevices.splice(toIndex, 0, moved);
+  return nextDevices;
+}
+
+function handleDeviceDragStart(deviceId: string) {
+  draggedDeviceId.value = deviceId;
+  dragOverDeviceId.value = deviceId;
+}
+
+function handleDeviceDragOver(deviceId: string) {
+  if (!draggedDeviceId.value || draggedDeviceId.value === deviceId) return;
+  dragOverDeviceId.value = deviceId;
+}
+
+function handleDeviceDragEnd() {
+  draggedDeviceId.value = "";
+  dragOverDeviceId.value = "";
+}
+
+async function handleDeviceDrop(targetDeviceId: string) {
+  const sourceDeviceId = draggedDeviceId.value;
+  handleDeviceDragEnd();
+  if (!sourceDeviceId || sourceDeviceId === targetDeviceId || savingOrder.value) return;
+
+  const nextDevices = moveDeviceInList(sourceDeviceId, targetDeviceId);
+  if (nextDevices === devices.value) return;
+
+  const previousDevices = [...devices.value];
+  devices.value = nextDevices;
+  savingOrder.value = true;
+  clearFeedback();
+  errorMessage.value = "";
+
+  try {
+    const response = await reorderDeviceList(nextDevices.map((device) => device.id));
+    dashboard.value = response.snapshot;
+    showFeedback("success", t("devices.feedback.orderSaved"));
+  } catch (error) {
+    devices.value = previousDevices;
+    errorMessage.value = error instanceof Error ? error.message : t("devices.errors.reorder");
+    showFeedback("error", t("devices.feedback.orderFailed"));
+  } finally {
+    savingOrder.value = false;
+  }
+}
+
 function inferDevicePlatform(deviceId: string) {
   const normalized = String(deviceId || "").toLowerCase();
   if (normalized.startsWith("home_assistant:")) {
-    return {
-      id: "home_assistant",
-      label: "Home Assistant",
-      className: "bg-[#FFF2E8] text-[#C96B2C] border-[#F3C9A8]",
-    };
+    return getPlatformMeta("home_assistant");
   }
   if (normalized.startsWith("mijia:")) {
-    return {
-      id: "mijia",
-      label: "米家",
-      className: "bg-[#EAF3FF] text-[#2F6FDB] border-[#BDD4FF]",
-    };
+    return getPlatformMeta("mijia");
   }
   if (normalized.startsWith("midea_cloud:")) {
-    return {
-      id: "midea_cloud",
-      label: "美的",
-      className: "bg-[#EAFBF7] text-[#138A6B] border-[#B7E7DA]",
-    };
+    return getPlatformMeta("midea_cloud");
   }
   if (normalized.startsWith("mbapi2020:")) {
-    return {
-      id: "mbapi2020",
-      label: "奔驰",
-      className: "bg-[#F5F0FF] text-[#6941C6] border-[#D9CCFF]",
-    };
+    return getPlatformMeta("mbapi2020");
   }
-  return {
-    id: "unknown",
-    label: "未知平台",
-    className: "bg-[#F2F4F7] text-[#667085] border-[#D0D5DD]",
-  };
+  return getPlatformMeta("unknown");
 }
 
 function statusLightClass(status: string) {
@@ -342,7 +366,7 @@ function isGroupCollapsed(label: string) {
   if (isTelemetryGroup(label) && (group?.controls.length ?? 0) > 4) {
     return true;
   }
-  return ["系统", "设置", "System", "Settings"].includes(label);
+  return [t("devices.groups.system"), t("devices.groups.settings")].includes(label);
 }
 
 function toggleGroup(label: string) {
@@ -356,24 +380,21 @@ function toggleGroup(label: string) {
 }
 
 function isTelemetryGroup(label: string) {
-  return ["当前状态", "运行状态", "状态", "Telemetry", "State"].includes(label);
+  return [t("devices.groups.telemetry"), t("devices.groups.runtime"), t("devices.highlights.state")].includes(label);
 }
 
 function groupPriority(label: string) {
   const priorities: Record<string, number> = {
-    整机: 0,
-    通用: 1,
-    冷藏区: 2,
-    冷冻区: 3,
-    变温区: 4,
-    模式: 5,
-    照明: 6,
-    门体: 7,
-    General: 1,
-    System: 90,
-    Settings: 91,
-    系统: 90,
-    设置: 91,
+    [t("devices.groups.wholeMachine")]: 0,
+    [t("devices.groups.general")]: 1,
+    [t("devices.groups.refrigerator")]: 2,
+    [t("devices.groups.freezer")]: 3,
+    [t("devices.groups.variableTemperature")]: 4,
+    [t("devices.groups.mode")]: 5,
+    [t("devices.groups.lighting")]: 6,
+    [t("devices.groups.doorBody")]: 7,
+    [t("devices.groups.system")]: 90,
+    [t("devices.groups.settings")]: 91,
   };
   return priorities[label] ?? 20;
 }
@@ -702,7 +723,7 @@ onBeforeUnmount(() => {
                   @click.stop="clearPlatforms"
                   class="mb-1 w-full rounded-xl px-3 py-2 text-left text-sm text-[#98A2B3] transition-colors hover:bg-[#F8FAFC] hover:text-[#344054]"
                 >
-                  清空选项
+                  {{ $t("devices.filters.clear") }}
                 </button>
                 <label
                   v-for="platform in platformOptions"
@@ -724,7 +745,7 @@ onBeforeUnmount(() => {
         <!-- Refresh Button -->
         <button
           @click="handleRefresh"
-          :disabled="syncing"
+          :disabled="syncing || savingOrder"
           class="inline-flex h-[34px] items-center rounded-full bg-[#07C160] px-4 text-sm font-medium text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {{ syncing ? $t("common.loading") : $t("devices.actions.refresh") }}
@@ -748,13 +769,21 @@ onBeforeUnmount(() => {
               v-for="device in devices"
               :key="device.id"
               @click="selectDevice(device.id)"
+              @dragstart="handleDeviceDragStart(device.id)"
+              @dragover.prevent="handleDeviceDragOver(device.id)"
+              @drop.prevent="handleDeviceDrop(device.id)"
+              @dragend="handleDeviceDragEnd"
+              draggable="true"
               class="w-full p-4 rounded-2xl border transition-all duration-200"
               :class="selectedDeviceId === device.id
                 ? 'bg-[#E8F8EC] border-[#07C160]/30 shadow-sm'
-                : 'bg-white border-[#EDEDED] hover:border-[#07C160]/20 hover:bg-[#F7F7F7]'"
+                : dragOverDeviceId === device.id
+                  ? 'bg-[#F0FFF4] border-[#07C160]/30 shadow-sm'
+                  : 'bg-white border-[#EDEDED] hover:border-[#07C160]/20 hover:bg-[#F7F7F7]'"
             >
               <div class="flex items-center justify-between">
                 <div class="flex min-w-0 items-center gap-2">
+                  <span class="shrink-0 cursor-grab text-[#98A2B3]" :title="$t('devices.actions.dragSort')">⋮⋮</span>
                   <span class="truncate font-medium text-[#333333]">{{ device.name }}</span>
                   <span
                     class="inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold tracking-[0.02em]"
@@ -841,7 +870,7 @@ onBeforeUnmount(() => {
 
                     <!-- Sensor -->
                     <p v-if="control.kind === 'sensor'" class="text-xs text-[#888888]">
-                      只读
+                      {{ $t("devices.hints.readOnlyShort") }}
                     </p>
 
                     <!-- Toggle -->

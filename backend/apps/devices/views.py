@@ -103,8 +103,8 @@ def handle_device_list(request):
             ),
         )
 
-        # 排序：状态优先，其次启用中设备，再按平台，其余回退到既有权重
-        queryset = queryset.order_by("status_order", "enabled_order", "platform_order", "sort_order", "id")
+        # 排序：人工拖拽顺序优先，其次回退到状态/启用态/平台维度
+        queryset = queryset.order_by("sort_order", "status_order", "enabled_order", "platform_order", "id")
 
         # 分页
         paginator = Paginator(queryset, page_size)
@@ -136,6 +136,34 @@ def handle_device_list(request):
     except Exception as error:
         logger.error(f"Failed to load device list: {error}")
         return JsonResponse({"error": "Unable to load device list."}, status=500)
+
+
+@csrf_exempt
+def handle_device_list_reorder(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method must be POST"}, status=405)
+
+    account = getattr(request, "account", None)
+    if not account:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON payload"}, status=400)
+
+    device_ids = payload.get("device_ids")
+    if not isinstance(device_ids, list):
+        return JsonResponse({"error": "device_ids must be a list."}, status=400)
+
+    try:
+        result = DeviceDashboardService.reorder_devices(account, ordered_device_ids=device_ids)
+        return JsonResponse(result, status=200)
+    except ValueError as error:
+        return JsonResponse({"error": str(error)}, status=400)
+    except Exception as error:
+        logger.error(f"Failed to reorder device list: {error}")
+        return JsonResponse({"error": "Unable to reorder devices."}, status=500)
 
 
 @csrf_exempt

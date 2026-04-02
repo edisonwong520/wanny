@@ -94,6 +94,8 @@ export default {
     allRoomsSummary: "查看所有房间的设备快照、异常事件和自动化规则。",
     filters: {
       all: "全部",
+      selected: "已选 {count} 项",
+      clear: "清空选项",
     },
     metrics: {
       online: "在线设备",
@@ -133,6 +135,24 @@ export default {
     },
     groups: {
       general: "通用",
+      wholeMachine: "整机",
+      refrigerator: "冷藏区",
+      freezer: "冷冻区",
+      variableTemperature: "变温区",
+      mode: "模式",
+      lighting: "照明",
+      doorBody: "门体",
+      system: "系统",
+      settings: "设置",
+      telemetry: "当前状态",
+      runtime: "运行状态",
+    },
+    platforms: {
+      home_assistant: "Home Assistant",
+      mijia: "米家",
+      midea_cloud: "美的",
+      mbapi2020: "奔驰",
+      unknown: "未知平台",
     },
     highlights: {
       mode: "模式",
@@ -180,6 +200,7 @@ export default {
       run: "执行",
       expand: "展开",
       collapse: "收起",
+      dragSort: "拖动排序",
     },
     controlKinds: {
       sensor: "读取",
@@ -218,15 +239,20 @@ export default {
     },
     hints: {
       readOnly: "这个节点当前是只读状态。",
+      readOnlyShort: "只读",
     },
     feedback: {
       refreshQueued: "刷新请求已提交，设备信息会在后台更新。",
       actionSuccess: "{name} 已更新。",
       actionFailed: "{name} 执行失败，已回滚到之前状态。",
+      orderSaved: "设备顺序已保存。",
+      orderFailed: "保存设备顺序失败，已恢复原顺序。",
     },
     errors: {
       load: "读取设备页数据失败，请稍后重试。",
       action: "设备控制执行失败，请稍后重试。",
+      detail: "读取设备详情失败，请稍后重试。",
+      reorder: "保存设备排序失败，请稍后重试。",
     },
   },
   manage: {

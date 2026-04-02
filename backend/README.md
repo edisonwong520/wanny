@@ -101,11 +101,11 @@ uv run python manage.py audit_midea_mapping --limit 80
 
 ## 🙏 致谢 (Acknowledgements)
 
-- 奔驰 `mbapi2020` 接入当前以 git submodule 形式放在 [`third_party/mbapi2020`](/Users/edison/code/python/wanny/third_party/mbapi2020)，上游项目来源与致谢：
+- 奔驰 `mbapi2020` 接入当前以 git submodule 形式放在 [`third_party/mbapi2020`](../third_party/mbapi2020)，上游项目来源与致谢：
   [ReneNulschDE/mbapi2020](https://github.com/ReneNulschDE/mbapi2020)
 - 当前 Wanny 业务层没有直接复用其 Home Assistant 登录流程，而是在 `apps/providers/clients/mbapi2020/` 中按本项目约束做了 token 直连封装。
 
 ## 📖 参考文档
 
 关于 Wanny 进一步的需求意图与技术规范细节，请参阅根目录的 `docs/` 文档库，尤其是架构规划设计：
-- [2026-03-29-wanny-design.md](/Users/edison/code/python/wanny/docs/superpowers/specs/2026-03-29-wanny-design.md)
+- [2026-03-29-wanny-design.md](../docs/superpowers/specs/2026-03-29-wanny-design.md)

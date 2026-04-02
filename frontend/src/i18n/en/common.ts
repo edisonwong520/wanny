@@ -18,5 +18,6 @@ export default {
   nav: {
     console: "Console",
     landing: "Home",
+    github: "GitHub",
   },
 };

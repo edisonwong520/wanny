@@ -365,6 +365,14 @@ class DeviceDashboardService:
         persistence_started_at = time.perf_counter()
         with transaction.atomic():
             state = cls._get_state(account)
+            existing_room_sort_orders = {
+                room.slug: room.sort_order
+                for room in DeviceRoom.objects.filter(account=account).only("slug", "sort_order")
+            }
+            existing_device_sort_orders = {
+                device.external_id: device.sort_order
+                for device in DeviceSnapshot.objects.filter(account=account).only("external_id", "sort_order")
+            }
 
             DeviceAnomaly.objects.filter(account=account).delete()
             DeviceAutomationRule.objects.filter(account=account).delete()
@@ -380,7 +388,7 @@ class DeviceDashboardService:
                     name=room_data["name"],
                     climate=room_data["climate"],
                     summary=room_data["summary"],
-                    sort_order=room_data["sort_order"],
+                    sort_order=existing_room_sort_orders.get(room_data["id"], room_data["sort_order"]),
                 )
                 room_map[room.slug] = room
 
@@ -397,7 +405,7 @@ class DeviceDashboardService:
                     note=device_data["note"],
                     capabilities=device_data["capabilities"],
                     last_seen=device_data["last_seen"],
-                    sort_order=device_data["sort_order"],
+                    sort_order=existing_device_sort_orders.get(device_data["id"], device_data["sort_order"]),
                     source_payload=device_data.get("source_payload", {}),
                 )
                 device_map[device.external_id] = device
@@ -463,6 +471,53 @@ class DeviceDashboardService:
             f"[Device Sync] Refresh persisted for account_id={account.id}: "
             f"elapsed={time.perf_counter() - persistence_started_at:.2f}s total={time.perf_counter() - refresh_started_at:.2f}s"
         )
+        return cls.get_dashboard(account)
+
+    @classmethod
+    def reorder_devices(cls, account: Account, *, ordered_device_ids: list[str]) -> dict:
+        normalized_ids = []
+        seen_ids = set()
+        for device_id in ordered_device_ids:
+            normalized_id = str(device_id or "").strip()
+            if not normalized_id or normalized_id in seen_ids:
+                continue
+            normalized_ids.append(normalized_id)
+            seen_ids.add(normalized_id)
+
+        if len(normalized_ids) < 2:
+            raise ValueError("At least two devices are required to reorder.")
+
+        devices = list(
+            DeviceSnapshot.objects.filter(account=account)
+            .select_related("room")
+            .prefetch_related("controls")
+            .order_by("sort_order", "id")
+        )
+        device_map = {device.external_id: device for device in devices}
+
+        missing_ids = [device_id for device_id in normalized_ids if device_id not in device_map]
+        if missing_ids:
+            raise ValueError("Some devices were not found.")
+
+        current_subset = [device.external_id for device in devices if device.external_id in seen_ids]
+        if len(current_subset) != len(normalized_ids):
+            raise ValueError("Some devices were not found.")
+
+        replacement_iter = iter(normalized_ids)
+        reordered_ids = [
+            next(replacement_iter) if device.external_id in seen_ids else device.external_id
+            for device in devices
+        ]
+
+        with transaction.atomic():
+            for index, device_id in enumerate(reordered_ids, start=1):
+                device = device_map[device_id]
+                next_sort_order = index * 10
+                if device.sort_order == next_sort_order:
+                    continue
+                DeviceSnapshot.objects.filter(pk=device.pk).update(sort_order=next_sort_order)
+                device.sort_order = next_sort_order
+
         return cls.get_dashboard(account)
 
     @classmethod

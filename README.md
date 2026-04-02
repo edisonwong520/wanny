@@ -88,6 +88,7 @@ This repository is licensed under [Apache License 2.0](./LICENSE). Third-party s
 ## 📖 Project Documents
 
 - The system overview lives in [2026-03-29-wanny-design.md](./docs/superpowers/specs/2026-03-29-wanny-design.md).
+- The roadmap lives in [docs/ROADMAP.md](./docs/ROADMAP.md).
 - Detailed specifications and implementation notes live under [`docs/superpowers/specs`](./docs/superpowers/specs).
 - Chinese documentation is available in [README.zh-CN.md](./README.zh-CN.md).
 

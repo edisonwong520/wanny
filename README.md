@@ -1,10 +1,28 @@
-# Wanny (Wechat + Nanny) - Your AI Super Butler
+# Wanny - Your AI Super Butler
 
 English README | [中文说明](./README.zh-CN.md)
 
 Wanny is an all-in-one butler system that connects WeChat, smart devices, and service providers. It supports natural-language control, long-term memory, proactive care, and a unified console across home automation, messaging, and mobility scenarios.
 
 For the overall product introduction, system composition, and architecture overview, start with [2026-03-29-wanny-design.md](./docs/superpowers/specs/2026-03-29-wanny-design.md).
+
+This repository is licensed under [Apache License 2.0](./LICENSE). Third-party submodules under `third_party/` retain their own upstream licenses.
+
+> Important Notice
+>
+> - This project is intended for personal learning, experimentation, and non-commercial use only.
+> - It is under active and rapid iteration, with the goal of exploring broader possibilities for AI in device control, automation, memory, and agent-driven execution.
+> - You are welcome to star the repository, open issues, contribute code, and help connect more physical devices and real-world integrations.
+> - Please use it with care: AI-driven operations may trigger real commands, affect connected devices or external services, and introduce practical safety risks.
+> - You are responsible for evaluating whether a given setup, authorization, or action is safe for your environment.
+> - By using this project, you accept the associated risks; the repository maintainer does not assume liability for loss, damage, service disruption, or unsafe outcomes caused by usage, misconfiguration, automation side effects, or third-party platform changes.
+
+## 🌐 Supported Platforms
+
+- **Messaging entry**: WeChat
+- **Smart home platforms**: Mijia, Midea
+- **Mobility platforms**: Mercedes-Benz
+- **Automation hubs**: Home Assistant
 
 ## 🚀 Core Capabilities
 
@@ -77,8 +95,8 @@ For the overall product introduction, system composition, and architecture overv
 
 ## 🙏 Third-Party References and Acknowledgements
 
-- `third_party/midea_auto_cloud` is included as a Git submodule and used as a reference implementation for Midea integration work.
-- `third_party/mbapi2020` is included as a Git submodule and used as a reference implementation for Mercedes integration work.
+- `third_party/midea_auto_cloud` is included as a Git submodule and used as a reference implementation for Midea integration work. Upstream license: Apache License 2.0.
+- `third_party/mbapi2020` is included as a Git submodule and used as a reference implementation for Mercedes integration work. Upstream license: MIT License.
 - These repositories are used for protocol study, field mapping, and migration reference rather than as runtime dependencies of Wanny.
 - Thanks to [`sususweet/midea_auto_cloud`](https://github.com/sususweet/midea_auto_cloud) for the upstream Home Assistant integration and implementation ideas.
 - Thanks to [`ReneNulschDE/mbapi2020`](https://github.com/ReneNulschDE/mbapi2020) for the upstream Home Assistant integration and implementation ideas.

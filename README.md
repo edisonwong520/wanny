@@ -11,7 +11,9 @@ This repository is licensed under [Apache License 2.0](./LICENSE). Third-party s
 > Important Notice
 >
 > - This project is intended for personal learning, experimentation, and non-commercial use only.
+> - This project does not provide a hosted SaaS service for now; please deploy it yourself if you want to use it.
 > - It is under active and rapid iteration, with the goal of exploring broader possibilities for AI in device control, automation, memory, and agent-driven execution.
+> - Because the project is evolving quickly, there may still be many bugs and rough edges during this stage.
 > - You are welcome to star the repository, open issues, contribute code, and help connect more physical devices and real-world integrations.
 > - Please use it with care: AI-driven operations may trigger real commands, affect connected devices or external services, and introduce practical safety risks.
 > - You are responsible for evaluating whether a given setup, authorization, or action is safe for your environment.

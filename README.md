@@ -24,6 +24,16 @@ This repository is licensed under [Apache License 2.0](./LICENSE). Third-party s
 - **Mobility platforms**: Mercedes-Benz
 - **Automation hubs**: Home Assistant
 
+## 🖼️ Product Preview
+
+### WeChat Control Demo
+
+![WeChat Demo](./assets/readme/wechat-demo.jpg)
+
+### Console Panel
+
+![Console Panel](./assets/readme/console-panel.jpg)
+
 ## 🚀 Core Capabilities
 
 ### 1. Smart Device Control (Jarvis Brain)

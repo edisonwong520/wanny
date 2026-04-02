@@ -11,7 +11,7 @@ import OverviewPage from "@/pages/console/OverviewPage.vue";
 import { isAuthenticated } from "@/lib/auth";
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: "/",

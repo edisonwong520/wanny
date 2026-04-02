@@ -9,6 +9,7 @@ const route = useRoute();
 const router = useRouter();
 const { locale } = useI18n();
 const githubUrl = "https://github.com/edisonwong520/wanny?tab=readme-ov-file#readme";
+const brandIconUrl = `${import.meta.env.BASE_URL}brand-icon.svg`;
 
 const isConsoleRoute = computed(() => route.path.startsWith("/console"));
 
@@ -30,7 +31,7 @@ function handleLogout() {
         <img
           alt="Wanny logo"
           class="h-8 w-8 rounded-lg object-cover shadow-sm"
-          src="/brand-icon.svg"
+          :src="brandIconUrl"
         />
         <span class="font-semibold text-[#333333]">Wanny</span>
       </RouterLink>

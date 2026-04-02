@@ -80,6 +80,14 @@ const platformOptions = computed(() => {
         className: "bg-[#EAFBF7] text-[#138A6B] border-[#B7E7DA]",
       },
     ],
+    [
+      "mbapi2020",
+      {
+        id: "mbapi2020",
+        label: "奔驰",
+        className: "bg-[#F5F0FF] text-[#6941C6] border-[#D9CCFF]",
+      },
+    ],
   ]);
 
   (dashboard.value?.devices ?? []).forEach((device) => {
@@ -297,6 +305,13 @@ function inferDevicePlatform(deviceId: string) {
       id: "midea_cloud",
       label: "美的",
       className: "bg-[#EAFBF7] text-[#138A6B] border-[#B7E7DA]",
+    };
+  }
+  if (normalized.startsWith("mbapi2020:")) {
+    return {
+      id: "mbapi2020",
+      label: "奔驰",
+      className: "bg-[#F5F0FF] text-[#6941C6] border-[#D9CCFF]",
     };
   }
   return {

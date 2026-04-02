@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 from asgiref.sync import sync_to_async
 
@@ -9,6 +10,8 @@ from comms.device_context_manager import DeviceContextManager
 from devices.executor import DeviceExecutor
 from devices.models import DeviceControl
 from devices.services import DeviceDashboardService
+from utils.logger import logger
+from utils.telemetry import get_tracer
 
 
 def _normalize_text(value: str | None) -> str:
@@ -35,7 +38,11 @@ class DeviceCommandService:
         "fan_mode": {"fanmode", "风速", "风速模式", "预设模式"},
         "volume": {"volume", "volumelevel", "音量"},
         "color_temp": {"colortemp", "色温"},
+        "tanklevelpercent": {"tanklevelpercent", "油量", "剩余油量", "汽油", "油箱", "油位"},
+        "rangeelectric": {"rangeelectric", "续航", "续航里程"},
+        "doorlockstatusvehicle": {"doorlockstatusvehicle", "车锁", "车门锁", "锁车状态"},
     }
+    tracer = get_tracer(__name__)
 
     @classmethod
     async def resolve_device_target(cls, account, intent: dict) -> dict:
@@ -58,6 +65,14 @@ class DeviceCommandService:
             score = 0.0
             room_name = _normalize_text(device.room.name if device.room else "")
             device_name = _normalize_text(device.name)
+            category_text = _normalize_text(device.category)
+            external_id_text = _normalize_text(device.external_id)
+            note_text = _normalize_text(device.note)
+            telemetry_text = _normalize_text(device.telemetry)
+            source_payload = device.source_payload if isinstance(device.source_payload, dict) else {}
+            license_plate_text = _normalize_text(
+                source_payload.get("license_plate") or source_payload.get("licensePlate") or source_payload.get("raw", {}).get("licensePlate")
+            )
             label_text = _normalize_text(control.label)
             key_text = _normalize_text(control.key)
             alias_matches = cls._control_alias_match_score(control_text, key_text=key_text, label_text=label_text)
@@ -70,9 +85,18 @@ class DeviceCommandService:
                 else:
                     continue
             if device_text:
+                vehicle_alias_match = (
+                    category_text == "vehicle" and device_text in {"奔驰", "车辆", "汽车", "车"}
+                )
                 if device_text == device_name:
                     score += 2.0
                 elif device_text in device_name or device_name in device_text:
+                    score += 1.0
+                elif vehicle_alias_match:
+                    score += 1.5
+                elif device_text in category_text or device_text in external_id_text:
+                    score += 1.0
+                elif device_text in license_plate_text or device_text in note_text or device_text in telemetry_text:
                     score += 1.0
                 else:
                     continue
@@ -324,24 +348,35 @@ class DeviceCommandService:
         return current + delta
 
     @classmethod
-    async def execute_device_query(cls, resolved: dict) -> dict:
-        control = resolved.get("matched_control")
-        device = resolved.get("matched_device")
-        if control is None or device is None:
-            return {"success": False, "message": "没有找到对应设备。"}
-        refreshed_control = await sync_to_async(cls._refresh_query_target)(
-            device_external_id=device.external_id,
-            control_external_id=control.external_id,
-            account=device.account,
-        )
-        if refreshed_control is not None:
-            control = refreshed_control
-            device = refreshed_control.device
-        suffix = f" {control.unit}".rstrip() if control.unit else ""
-        return {
-            "success": True,
-            "message": cls._build_query_reply(device_name=device.name, control=control, suffix=suffix),
-        }
+    async def execute_device_query(cls, resolved: dict, *, account) -> dict:
+        with cls.tracer.start_as_current_span("device.execute_query") as span:
+            started_at = time.perf_counter()
+            control = resolved.get("matched_control")
+            device = resolved.get("matched_device")
+            if control is None or device is None:
+                span.set_attribute("device.query.success", False)
+                return {"success": False, "message": "没有找到对应设备。"}
+            span.set_attribute("device.name", device.name)
+            span.set_attribute("device.control", control.label)
+            refreshed_control = await sync_to_async(cls._refresh_query_target)(
+                device_external_id=device.external_id,
+                control_external_id=control.external_id,
+                account=account,
+            )
+            if refreshed_control is not None:
+                control = refreshed_control
+                device = refreshed_control.device
+            suffix = f" {control.unit}".rstrip() if control.unit else ""
+            elapsed = time.perf_counter() - started_at
+            span.set_attribute("device.query.success", True)
+            span.set_attribute("device.query.elapsed_seconds", elapsed)
+            logger.info(
+                f"[Device Query] 查询完成: device={device.name}, control={control.label}, elapsed={elapsed:.2f}s"
+            )
+            return {
+                "success": True,
+                "message": cls._build_query_reply(device_name=device.name, control=control, suffix=suffix),
+            }
 
     @classmethod
     def _refresh_query_target(cls, *, device_external_id: str, control_external_id: str, account):

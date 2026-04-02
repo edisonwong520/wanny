@@ -2,6 +2,8 @@ import logging
 import sys
 from pathlib import Path
 
+from utils.telemetry import TraceContextFilter
+
 # 定义日志文件存放目录（默认在 backend/logs 下）
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOGS_DIR = BASE_DIR / "logs"
@@ -21,17 +23,19 @@ def setup_logger(name="wanny", level=logging.DEBUG):
 
     # 核心要求：必须在日志中包含打印出处、文件名与所在行数 [%(filename)s:%(lineno)d]
     formatter = logging.Formatter(
-        fmt="[%(asctime)s] [%(levelname)s] [%(filename)s:%(lineno)d] - %(message)s",
+        fmt="[%(asctime)s] [%(levelname)s] [%(filename)s:%(lineno)d] [trace=%(trace_id)s span=%(span_id)s] - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
 
     # 控制台输出 Handler
     console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.addFilter(TraceContextFilter())
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
     # 文件输出 Handler（附加 utf-8 编码避免中文乱码）
     file_handler = logging.FileHandler(LOGS_DIR / f"{name}.log", encoding='utf-8')
+    file_handler.addFilter(TraceContextFilter())
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     

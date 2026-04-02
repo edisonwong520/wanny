@@ -25,6 +25,10 @@
 - `DeviceContextManager` 已支持最近操作记录、人类可读时间、连续调节型上下文继承
 - `DeviceExecutor` 已支持统一执行入口、显式平台分发、错误归一化、离线替代建议、单设备刷新
 - Web 控制台已支持展示 `device_control` / `device_clarification` 任务，并能审批设备控制任务
+- 微信消息处理已支持 `send_typing` / `stop_typing`，用户发消息后可见“输入中”，异常时也会兜底取消
+- 微信设备查询 / 设备控制 / Shell 计划识别前已支持先回复一条“稍等”类进度消息
+- 用户消息记忆写入、助手回复记忆写入、设备操作上下文记录已改为后台异步持久化，不再阻塞主响应
+- OpenTelemetry tracing 已接入关键链路，日志已自动带 `trace` / `span`
 
 ### 主要代码位置
 
@@ -35,6 +39,8 @@
 - `backend/apps/devices/executor.py`
 - `backend/apps/comms/serializers.py`
 - `backend/apps/comms/views.py`
+- `backend/utils/telemetry.py`
+- `backend/utils/logger.py`
 
 ### 已补齐的测试与脚本
 
@@ -43,6 +49,7 @@
   - `backend/tests/unit/test_device_command_resolver.py`
   - `backend/tests/unit/test_device_executor.py`
   - `backend/tests/unit/test_device_context_manager.py`
+  - `backend/tests/unit/test_ai_agent.py`
 - Integration:
   - `backend/tests/integration/test_device_control_flow.py`
   - `backend/tests/integration/test_wechat_device_command.py`
@@ -56,6 +63,7 @@
 - 继续把 `backend/apps/comms/tests.py` 里稳定的设备链路用例迁移到 `backend/tests/unit` / `backend/tests/integration`
 - 继续细化 `DeviceExecutor` 的平台级错误映射测试，分别补厚米家 / 美的 / HA 的异常边界
 - 本地执行 smoke script 前先跑一次 `./.venv/bin/python manage.py migrate`
+- 如果需要接远端可观测平台，可继续配置 `OTEL_TRACES_EXPORTER=otlp` 并接入 collector / Tempo / Jaeger
 
 ## 核心特性
 
@@ -660,6 +668,65 @@ async def process_incoming_message(message, bot):
 - `DEVICE_QUERY` 不进入 Mission 审批流，应直接读取快照或触发单设备刷新后返回
 - `DEVICE_CONTROL` 才进入授权与 Mission 逻辑
 - 命令模式下如果语音转写存在明显歧义，可先回显识别文本让用户确认
+- 对于 `DEVICE_QUERY` 与无需确认的 `DEVICE_CONTROL`，系统会先给微信回一条“稍等”类进度消息，再返回最终结果
+- 进度消息不写入记忆库，避免污染向量记忆与聊天归档语义
+
+#### typing 状态管理
+
+- 收到有效微信消息后，系统会尝试调用 `bot.send_typing(user_id)` 显示“输入中”
+- 正常完成、提前返回、异常中断三种路径都会在 `finally` 中调用 `bot.stop_typing(user_id)`
+- 如果 SDK 当前不可用或 typing 接口失败，只记 warning，不影响主链路
+
+#### 异步持久化策略
+
+- 以下写入已改为后台异步执行：
+  - 用户消息记忆写入
+  - 助手回复记忆写入
+  - `DeviceContextManager.record_operation`
+- 以下写入仍保持前台同步，以保证强一致性：
+  - `Mission` 创建 / 更新
+  - 审批状态流转
+  - 真实设备执行
+  - 当前回复依赖的查询与解析结果
+
+#### 可观测性与 tracing
+
+- 已接入 `opentelemetry-python`，不再手工生成 trace id
+- `CommsConfig.ready()` 会初始化全局 tracer provider
+- 日志格式已自动带上：
+  - `trace`
+  - `span`
+- 当前已落地的关键 span：
+  - `wechat.process_message`
+  - `wechat.handle_device_intent`
+  - `ai.generate_json`
+  - `device.analyze_intent`
+  - `device.execute_query`
+- 当前关键 span 属性包括但不限于：
+  - `wechat.user_id`
+  - `wechat.has_voice`
+  - `wechat.content_preview`
+  - `wechat.mode`
+  - `account.email`
+  - `intent.type`
+  - `device.intent_type`
+  - `device.external_id`
+  - `device.control_key`
+  - `mission.id`
+  - `mission.source_type`
+  - `ai.provider`
+  - `ai.model`
+  - `ai.elapsed_seconds`
+  - `device.query.elapsed_seconds`
+
+#### 性能计时日志
+
+- `AIAgent.generate_json()` 已记录成功 / 失败耗时
+- 设备意图识别与通用意图识别已记录耗时
+- `DEVICE_QUERY` 已记录：
+  - 查询执行耗时
+  - 微信入口到结果返回的全链路耗时
+- 直接设备控制链路已记录从识别到执行完成的链路耗时
 
 #### create_device_mission
 
@@ -844,6 +911,8 @@ if intent_type == "CONFIRM":
 | `backend/apps/comms/device_intent.py` | 设备意图解析函数 |
 | `backend/apps/comms/device_command_service.py` | 设备指令处理服务 |
 | `backend/apps/comms/device_context_manager.py` | 操作上下文管理 |
+| `backend/utils/telemetry.py` | OpenTelemetry 初始化与日志 trace/span 注入 |
+| `backend/tests/unit/test_ai_agent.py` | AI JSON 失败回退与原始文本保留测试 |
 | `backend/tests/unit/test_device_intent_parser.py` | 意图解析单元测试 |
 | `backend/tests/unit/test_device_command_resolver.py` | 目标匹配单元测试 |
 | `backend/tests/unit/test_device_executor.py` | 执行器单元测试 |
@@ -859,38 +928,61 @@ if intent_type == "CONFIRM":
 |----------|----------|
 | `backend/apps/comms/services.py` | 接入设备控制流程，新增辅助方法 |
 | `backend/apps/comms/models.py` | Mission 模型新增字段 |
-| `backend/apps/comms/migrations/XXXX_add_device_control_fields.py` | Mission 模型迁移文件 |
-| `backend/apps/comms/migrations/XXXX_add_device_context_model.py` | DeviceOperationContext 模型迁移文件 |
-| `backend/apps/devices/services.py` | 复用现有设备控制与单设备刷新能力，补充命令链路接入 |
+| `backend/apps/comms/migrations/0007_mission_control_id_mission_control_key_and_more.py` | Mission 设备控制字段与 `DeviceOperationContext` 模型迁移 |
+| `backend/apps/comms/serializers.py` | 任务列表展示设备控制 / 澄清任务信息 |
+| `backend/apps/comms/views.py` | Web 审批设备控制 Mission，审批后补写设备上下文 |
+| `backend/apps/comms/apps.py` | Django 启动时初始化 OpenTelemetry |
+| `backend/apps/comms/ai.py` | AI JSON 调用耗时、fallback 结构、tracing span |
+| `backend/apps/devices/executor.py` | 统一执行入口、错误归一化、单设备刷新、替代建议 |
+| `backend/apps/devices/services.py` | 复用现有设备控制与单设备刷新能力，作为执行底座 |
+| `backend/utils/logger.py` | 日志自动注入 OTel `trace` / `span` |
+| `backend/pyproject.toml` | 新增 OpenTelemetry 相关依赖 |
 
 **实现备注**:
 
 - 设备执行优先复用现有 `devices/services.py` 中的控制与单设备刷新能力
 - 若后续确实抽象单独执行器，也应以复用现有实现为前提，避免并行维护两套设备控制栈
+- tracing 目前已支持 `console` / `otlp` exporter，通过环境变量切换，无需改业务代码
 
 ---
 
-## 9. 实施优先级
+## 9. 阶段完成情况
 
-建议分阶段实施：
+### Phase 1 - 基础能力
 
-**Phase 1 - 基础能力**:
-- analyze_device_intent 函数
-- DeviceCommandService（resolve_device_target, check_authorization）
-- Mission 模型扩展
-- WeChatService 基础改造
+- 已完成
+- `analyze_device_intent`、`DeviceCommandService`、Mission 冻结执行计划、WeChat 消息分流均已落地
 
-**Phase 2 - 执行能力**:
-- DeviceExecutor（米家支持）
-- 单设备回读更新
-- 错误处理和替代方案
+### Phase 2 - 执行能力
 
-**Phase 3 - 增强体验**:
-- DeviceContextManager 上下文继承
-- DeviceExecutor（美的、HA 支持）
-- 语音消息完整支持
+- 已完成
+- `DeviceExecutor` 已支持米家 / 美的云 / Home Assistant 显式分发、单设备刷新、错误归一化、替代建议
 
-**Phase 4 - 测试与优化**:
-- 单元测试覆盖
-- 集成测试
-- Prompt 优化迭代
+### Phase 3 - 增强体验
+
+- 已完成
+- `DeviceContextManager` 的最近操作记录与连续调节继承已落地
+- 微信语音转写、澄清任务、确认/取消/过期/幂等等交互链路已落地
+
+### Phase 4 - 测试与优化
+
+- 主干已完成，当前进入维护态
+- 已具备：
+  - `backend/tests/unit/test_ai_agent.py`
+  - `backend/tests/unit/test_device_intent_parser.py`
+  - `backend/tests/unit/test_device_command_resolver.py`
+  - `backend/tests/unit/test_device_executor.py`
+  - `backend/tests/unit/test_device_context_manager.py`
+  - `backend/tests/integration/test_device_control_flow.py`
+  - `backend/tests/integration/test_wechat_device_command.py`
+- 本次已补厚：
+  - `DeviceExecutor` 的 `TIMEOUT` / `UNSUPPORTED_OPERATION` / `OPERATION_FAILED` 错误映射测试
+  - `refresh_single_device` 的超时归一化测试
+  - `DEVICE_QUERY` 单设备刷新与开关值中文文案测试
+  - 微信 typing 开始 / 停止与异常兜底测试
+  - 普通聊天 JSON 失败时直接复用原始自然语言回复测试
+  - OpenTelemetry tracing 接入后的核心链路回归测试
+- 剩余工作不再属于“阶段未完成”，而是日常维护项：
+  - 继续把 `backend/apps/comms/tests.py` 中的历史用例迁到新目录
+  - 随平台侧变更继续补异常映射样例
+  - 若要做生产级 tracing，继续补自动 instrumentation 与远端 exporter 监控配置

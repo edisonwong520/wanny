@@ -14,9 +14,16 @@ from providers.models import PlatformAuth
 class FakeBot:
     def __init__(self):
         self.replies = []
+        self.typing_events = []
 
     async def reply(self, _message, text):
         self.replies.append(text)
+
+    async def send_typing(self, user_id):
+        self.typing_events.append(("start", user_id))
+
+    async def stop_typing(self, user_id):
+        self.typing_events.append(("stop", user_id))
 
 
 class FakeMessage(SimpleNamespace):
@@ -115,6 +122,9 @@ class WeChatDeviceCommandIntegrationTest(TransactionTestCase):
         ):
             asyncio.run(WeChatService.process_incoming_message(message, self.bot))
 
+        assert self.bot.typing_events[0] == ("start", "wx-user-1")
+        assert self.bot.typing_events[-1] == ("stop", "wx-user-1")
+        assert self.bot.replies[0] == "收到，稍等，我正在处理设备操作。"
         assert self.bot.replies[-1] == "好的，正在关闭客厅主灯"
         assert Mission.objects.count() == 0
 
@@ -155,3 +165,74 @@ class WeChatDeviceCommandIntegrationTest(TransactionTestCase):
 
         assert "我听到的是：\"jarvis，把客厅主灯关了\"" in self.bot.replies[-1]
         assert "请确认是否执行" in self.bot.replies[-1]
+
+    def test_plain_chat_uses_raw_model_text_when_json_is_invalid(self):
+        message = FakeMessage(text="今天天气怎么样", user_id="wx-user-1")
+        with patch("comms.services.WeChatService.get_account_by_wechat_id", new=AsyncMock(return_value=self.account)), patch(
+            "comms.services.MemoryService.record_conversation", new=AsyncMock()
+        ), patch(
+            "comms.services.MemoryService.get_context_for_chat", new=AsyncMock(return_value="")
+        ), patch(
+            "comms.services.analyze_intent",
+            new=AsyncMock(
+                return_value={
+                    "type": "simple",
+                    "response": "[系统报错] 模型没有正确返回 JSON 格式，意图解析失败。",
+                    "raw_response": "你好！有什么我可以帮你的吗？ 😊",
+                }
+            ),
+        ), patch(
+            "comms.services.analyze_device_intent",
+            new=AsyncMock(),
+        ) as mocked_device_intent:
+            asyncio.run(WeChatService.process_incoming_message(message, self.bot))
+
+        mocked_device_intent.assert_not_awaited()
+        assert self.bot.replies[-1] == "你好！有什么我可以帮你的吗？ 😊"
+
+    def test_device_query_does_not_trigger_async_orm_error(self):
+        message = FakeMessage(text="帮我看看主灯状态", user_id="wx-user-1")
+        with patch("comms.services.WeChatService.get_account_by_wechat_id", new=AsyncMock(return_value=self.account)), patch(
+            "comms.services.MemoryService.record_conversation", new=AsyncMock()
+        ), patch(
+            "comms.services.MemoryService.get_context_for_chat", new=AsyncMock(return_value="")
+        ), patch(
+            "comms.services.analyze_device_intent",
+            new=AsyncMock(
+                return_value={
+                    "type": "DEVICE_QUERY",
+                    "room": "客厅",
+                    "device": "主灯",
+                    "control_key": "power",
+                }
+            ),
+        ), patch(
+            "devices.services.DeviceDashboardService.refresh_device",
+            return_value={"snapshot": {"devices": []}},
+        ), patch(
+            "comms.services.analyze_intent",
+            new=AsyncMock(return_value={"type": "CHAT", "response": "不该走到这里"}),
+        ) as mocked_chat_intent:
+            asyncio.run(WeChatService.process_incoming_message(message, self.bot))
+
+        mocked_chat_intent.assert_not_awaited()
+        assert self.bot.typing_events[0] == ("start", "wx-user-1")
+        assert self.bot.typing_events[-1] == ("stop", "wx-user-1")
+        assert self.bot.replies[0] == "收到，稍等，我帮您查一下设备状态。"
+        assert self.bot.replies[-1] == "主灯 的 电源 当前为 开启"
+
+    def test_typing_is_stopped_when_processing_raises(self):
+        message = FakeMessage(text="今天天气怎么样", user_id="wx-user-1")
+        with patch("comms.services.WeChatService.get_account_by_wechat_id", new=AsyncMock(return_value=self.account)), patch(
+            "comms.services.MemoryService.record_conversation", new=AsyncMock()
+        ), patch(
+            "comms.services.MemoryService.get_context_for_chat", new=AsyncMock(return_value="")
+        ), patch(
+            "comms.services.analyze_intent",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ):
+            asyncio.run(WeChatService.process_incoming_message(message, self.bot))
+
+        assert self.bot.typing_events[0] == ("start", "wx-user-1")
+        assert self.bot.typing_events[-1] == ("stop", "wx-user-1")
+        assert "内部调度异常" in self.bot.replies[-1]

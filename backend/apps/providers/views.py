@@ -12,7 +12,13 @@ from .auth_sessions import (
     MijiaAuthorizationService,
 )
 from .models import PlatformAuth
-from .services import HomeAssistantAuthService, MideaCloudAuthService, MijiaAuthService, WeChatAuthService
+from .services import (
+    HomeAssistantAuthService,
+    MbApi2020AuthService,
+    MideaCloudAuthService,
+    MijiaAuthService,
+    WeChatAuthService,
+)
 
 
 PLATFORM_CATALOG = {
@@ -40,6 +46,12 @@ PLATFORM_CATALOG = {
         "category": "iot",
         "auth_mode": "form",
     },
+    "mbapi2020": {
+        "display_name": "Mercedes-Benz",
+        "display_name_zh": "奔驰",
+        "category": "vehicle",
+        "auth_mode": "form",
+    },
 }
 
 PLATFORM_ALIASES = {
@@ -48,6 +60,9 @@ PLATFORM_ALIASES = {
     "homeassistant": HomeAssistantAuthService.platform_name,
     "midea": MideaCloudAuthService.platform_name,
     "midea-cloud": MideaCloudAuthService.platform_name,
+    "mercedes": MbApi2020AuthService.platform_name,
+    "mercedes-benz": MbApi2020AuthService.platform_name,
+    "mercedes_benz": MbApi2020AuthService.platform_name,
 }
 
 SENSITIVE_KEYWORDS = (
@@ -73,6 +88,8 @@ def _get_platform_lookup_names(platform_name: str) -> tuple[str, ...]:
         return MijiaAuthService.platform_aliases
     if platform_name == MideaCloudAuthService.platform_name:
         return MideaCloudAuthService.platform_aliases
+    if platform_name == MbApi2020AuthService.platform_name:
+        return MbApi2020AuthService.platform_aliases
     return (platform_name,)
 
 
@@ -85,6 +102,8 @@ def _get_platform_auth(request, platform_name: str) -> PlatformAuth | None:
         return MijiaAuthService.get_auth_record(account=account)
     if normalized_name == MideaCloudAuthService.platform_name:
         return MideaCloudAuthService.get_auth_record(account=account)
+    if normalized_name == MbApi2020AuthService.platform_name:
+        return MbApi2020AuthService.get_auth_record(account=account)
 
     return PlatformAuth.objects.filter(account=account, platform_name=normalized_name).first()
 
@@ -335,6 +354,19 @@ def handle_platform_auth_authorize(request, platform_name: str):
                 instruction="已保存美的配置，后续可继续补充协议与设备映射能力。",
                 detail=f"配置 {auth_obj.auth_payload.get('instance_name') or 'Midea'} 已加入设备同步流程。",
             )
+        elif normalized_name == MbApi2020AuthService.platform_name:
+            auth_payload = data.get("payload", {})
+            auth_obj = MbApi2020AuthService.validate_and_store(account=account, payload=auth_payload)
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.sync_after_provider_change(account, trigger="connect_mbapi2020")
+            session = AuthorizationSessionStore.create(
+                platform=normalized_name,
+                auth_kind="form",
+                status="completed",
+                title="奔驰已连接",
+                instruction="已保存奔驰 token 配置，可直接复用 mbapi2020 风格接口访问车辆信息。",
+                detail=f"配置 {auth_obj.auth_payload.get('instance_name') or 'Mercedes-Benz'} 已完成校验。",
+            )
         else:
             return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
 
@@ -431,6 +463,9 @@ def handle_platform_auth_detail(request, platform_name: str):
         elif normalized_name == MideaCloudAuthService.platform_name:
             from devices.services import DeviceDashboardService
             DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_midea_cloud")
+        elif normalized_name == MbApi2020AuthService.platform_name:
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_mbapi2020")
         elif normalized_name == HomeAssistantAuthService.platform_name:
             from devices.services import DeviceDashboardService
             DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_home_assistant")

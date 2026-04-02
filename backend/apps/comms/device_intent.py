@@ -7,6 +7,10 @@ from asgiref.sync import sync_to_async
 
 from comms.ai import AIAgent
 from devices.models import DeviceSnapshot
+from utils.telemetry import get_tracer
+
+
+tracer = get_tracer(__name__)
 
 
 WAKEUP_PATTERNS = [
@@ -30,10 +34,16 @@ DEVICE_HINT_PATTERNS = [
     r"模式",
     r"状态",
     r"多少度",
+    r"奔驰",
+    r"车辆",
+    r"汽车",
+    r"油量",
+    r"续航",
+    r"车锁",
 ]
 
 ROOM_HINTS = ["客厅", "卧室", "厨房", "书房", "卫生间", "浴室", "阳台", "玄关", "餐厅"]
-DEVICE_HINTS = ["空调", "主灯", "灯", "风扇", "窗帘", "扫地机", "扫地机器人", "加湿器", "电视", "冰箱", "洗衣机"]
+DEVICE_HINTS = ["奔驰", "车辆", "汽车", "车", "空调", "主灯", "灯", "风扇", "窗帘", "扫地机", "扫地机器人", "加湿器", "电视", "冰箱", "洗衣机"]
 
 CONTROL_HINT_ALIASES = {
     "亮度": "brightness",
@@ -41,6 +51,11 @@ CONTROL_HINT_ALIASES = {
     "暗一点": "brightness",
     "温度": "temperature",
     "多少度": "temperature",
+    "油量": "tanklevelpercent",
+    "剩余油量": "tanklevelpercent",
+    "汽油": "tanklevelpercent",
+    "续航": "rangeelectric",
+    "车锁": "doorlockstatusvehicle",
     "风速": "fan_mode",
     "模式": "mode",
     "电源": "power",
@@ -104,27 +119,30 @@ async def analyze_device_intent(
     memory_context: str = "",
     command_mode: bool = False,
 ) -> dict:
-    normalized_msg = (user_msg or "").strip()
-    if not normalized_msg:
-        return {
-            "type": "UNSUPPORTED_COMMAND" if command_mode else "CHAT",
-            "response": "我没有收到有效的设备指令。",
-            "reason": "empty_message",
-        }
+    with tracer.start_as_current_span("device.analyze_intent") as span:
+        span.set_attribute("device.command_mode", command_mode)
+        normalized_msg = (user_msg or "").strip()
+        if not normalized_msg:
+            return {
+                "type": "UNSUPPORTED_COMMAND" if command_mode else "CHAT",
+                "response": "我没有收到有效的设备指令。",
+                "reason": "empty_message",
+            }
 
-    if account is None:
-        return {
-            "type": "UNSUPPORTED_COMMAND" if command_mode else "CHAT",
-            "response": "当前账号还没有可用的设备上下文，暂时无法处理设备命令。",
-            "reason": "missing_account",
-        }
+        if account is None:
+            return {
+                "type": "UNSUPPORTED_COMMAND" if command_mode else "CHAT",
+                "response": "当前账号还没有可用的设备上下文，暂时无法处理设备命令。",
+                "reason": "missing_account",
+            }
 
-    heuristic_result = _heuristic_parse_device_intent(normalized_msg, command_mode=command_mode)
-    if heuristic_result:
-        return heuristic_result
+        heuristic_result = _heuristic_parse_device_intent(normalized_msg, command_mode=command_mode)
+        if heuristic_result:
+            span.set_attribute("device.intent_type", str(heuristic_result.get("type") or ""))
+            return heuristic_result
 
-    device_list, control_capabilities = await _build_device_prompt_context(account)
-    system_prompt = """
+        device_list, control_capabilities = await _build_device_prompt_context(account)
+        system_prompt = """
 你是 Wanny 的设备控制解析引擎。请把用户消息解析为严格 JSON。
 
 允许的 type:
@@ -147,29 +165,45 @@ async def analyze_device_intent(
 5. 只返回 JSON，不要 Markdown。
 """.strip()
 
-    user_prompt = (
-        f"command_mode={str(command_mode).lower()}\n"
-        f"device_list:\n{device_list}\n\n"
-        f"control_capabilities:\n{control_capabilities}\n\n"
-        f"memory_context:\n{memory_context or '无'}\n\n"
-        f"user_msg:\n{normalized_msg}"
-    )
-    agent = AIAgent()
-    result = await agent.generate_json(system_prompt, user_prompt)
-    intent_type = result.get("type")
-    if command_mode and intent_type == "CHAT":
-        return {
-            "type": "UNSUPPORTED_COMMAND",
-            "response": "这是命令模式，但我还没理解您希望我执行什么操作。",
-            "reason": "chat_not_allowed_in_command_mode",
-        }
-    if not intent_type:
-        return {
-            "type": "UNSUPPORTED_COMMAND" if command_mode else "CHAT",
-            "response": "我暂时没能理解这条消息。",
-            "reason": "missing_type",
-        }
-    return result
+        user_prompt = (
+            f"command_mode={str(command_mode).lower()}\n"
+            f"device_list:\n{device_list}\n\n"
+            f"control_capabilities:\n{control_capabilities}\n\n"
+            f"memory_context:\n{memory_context or '无'}\n\n"
+            f"user_msg:\n{normalized_msg}"
+        )
+        agent = AIAgent()
+        result = await agent.generate_json(system_prompt, user_prompt)
+        intent_type = result.get("type")
+        if intent_type == "simple":
+            if command_mode:
+                span.set_attribute("device.intent_type", "UNSUPPORTED_COMMAND")
+                return {
+                    "type": "UNSUPPORTED_COMMAND",
+                    "response": "这是命令模式，但我还没理解您希望我执行什么操作。",
+                    "reason": "device_intent_invalid_json",
+                }
+            span.set_attribute("device.intent_type", "CHAT")
+            return {
+                "type": "CHAT",
+                "response": "我刚才没有理解清楚，您可以换种说法再发一次。",
+            }
+        if command_mode and intent_type == "CHAT":
+            span.set_attribute("device.intent_type", "UNSUPPORTED_COMMAND")
+            return {
+                "type": "UNSUPPORTED_COMMAND",
+                "response": "这是命令模式，但我还没理解您希望我执行什么操作。",
+                "reason": "chat_not_allowed_in_command_mode",
+            }
+        if not intent_type:
+            span.set_attribute("device.intent_type", "UNKNOWN")
+            return {
+                "type": "UNSUPPORTED_COMMAND" if command_mode else "CHAT",
+                "response": "我暂时没能理解这条消息。",
+                "reason": "missing_type",
+            }
+        span.set_attribute("device.intent_type", str(intent_type))
+        return result
 
 
 def _heuristic_parse_device_intent(user_msg: str, *, command_mode: bool) -> dict[str, Any] | None:
@@ -186,7 +220,8 @@ def _heuristic_parse_device_intent(user_msg: str, *, command_mode: bool) -> dict
             break
 
     is_query = any(token in normalized for token in ("查询", "看看", "看下", "多少", "状态", "几度"))
-    if device or room:
+    automotive_query_control_keys = {"tanklevelpercent", "rangeelectric", "doorlockstatusvehicle"}
+    if device or room or (is_query and control_key in automotive_query_control_keys):
         if is_query:
             return {
                 "type": "DEVICE_QUERY",

@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -13,7 +14,8 @@ from .clients.midea_cloud.client import MideaCloudClient
 from .clients.midea_cloud.lua_codec import MideaLuaCodec, ensure_lua_support_files, lua_runtime_available
 from .clients.midea_cloud.mappings import UPSTREAM_MAPPING_ROOT, audit_device_mapping, get_device_mapping
 from .models import PlatformAuth
-from .services import HomeAssistantAuthService, MideaCloudAuthService, MijiaAuthService
+from .services import HomeAssistantAuthService, MbApi2020AuthService, MideaCloudAuthService, MijiaAuthService
+from .clients.mbapi2020.client import MbApi2020Client
 
 
 class PlatformAuthAPITest(TestCase):
@@ -89,6 +91,7 @@ class PlatformAuthAPITest(TestCase):
         self.assertIn("mijia", providers)
         self.assertIn("home_assistant", providers)
         self.assertIn("midea_cloud", providers)
+        self.assertIn("mbapi2020", providers)
         self.assertEqual(providers["wechat"]["status"], "connected")
         self.assertTrue(providers["wechat"]["configured"])
         self.assertNotEqual(
@@ -432,6 +435,43 @@ class PlatformAuthAPITest(TestCase):
         self.assertNotEqual(provider["payload_preview"]["password"], "secret")
         self.assertEqual(provider["payload_preview"]["password"], "se***et")
 
+    def test_authorize_mbapi2020_endpoint_validates_and_stores_payload(self):
+        auth_obj = PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={
+                "account": "driver@example.com",
+                "access_token": "mb-token",
+                "instance_name": "Mercedes-Benz (Europe)",
+            },
+            is_active=True,
+        )
+
+        with patch("providers.views.MbApi2020AuthService.validate_and_store", return_value=auth_obj), patch(
+            "devices.services.DeviceDashboardService.sync_after_provider_change"
+        ) as mocked_sync:
+            response = self.client.post(
+                self.authorize_url("mercedes"),
+                data=json.dumps(
+                    {
+                        "payload": {
+                            "account": "driver@example.com",
+                            "access_token": "mb-token",
+                            "region": "Europe",
+                        }
+                    }
+                ),
+                content_type="application/json",
+                **self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"]["platform"], "mbapi2020")
+        self.assertEqual(payload["session"]["auth_kind"], "form")
+        self.assertEqual(payload["session"]["status"], "completed")
+        mocked_sync.assert_called_once_with(self.account, trigger="connect_mbapi2020")
+
     def test_authorize_get_returns_latest_session_for_platform(self):
         AuthorizationSessionStore.create(
             platform="wechat",
@@ -636,6 +676,237 @@ class MideaCloudAuthServiceTest(TestCase):
         client = MideaCloudAuthService.get_client(self.account)
 
         self.assertEqual(client.payload["password"], "secret")
+
+
+class MbApi2020AuthServiceTest(TestCase):
+    def setUp(self):
+        self.account = Account.objects.create(
+            email="mbapi-test@example.com",
+            name="MB Test",
+            password="pwd",
+        )
+
+    def test_validate_and_store_persists_profile_and_tokens(self):
+        with patch.object(MbApi2020Client, "get_account_profile", return_value={
+                "account": "driver@example.com",
+                "api_base": "https://bff.emea-prod.mobilesdk.mercedes-benz.com",
+                "region": "Europe",
+                "locale": "en-GB",
+                "nickname": "Driver",
+                "vehicles": [{"vin": "W1N123", "name": "E 300"}],
+                "auth_state": {
+                    "access_token": "mb-token",
+                    "refresh_token": "mb-refresh",
+                    "region": "Europe",
+                    "api_base": "https://bff.emea-prod.mobilesdk.mercedes-benz.com",
+                    "locale": "en-GB",
+                },
+            }):
+            auth_obj = MbApi2020AuthService.validate_and_store(
+                self.account,
+                {
+                    "account": "driver@example.com",
+                    "access_token": "mb-token",
+                    "refresh_token": "mb-refresh",
+                    "region": "eu",
+                },
+            )
+
+        self.assertEqual(auth_obj.platform_name, "mbapi2020")
+        self.assertEqual(auth_obj.auth_payload["account"], "driver@example.com")
+        self.assertEqual(auth_obj.auth_payload["access_token"], "mb-token")
+        self.assertEqual(auth_obj.auth_payload["refresh_token"], "mb-refresh")
+        self.assertEqual(auth_obj.auth_payload["region"], "Europe")
+        self.assertEqual(auth_obj.auth_payload["vehicles"][0]["vin"], "W1N123")
+
+    def test_get_client_reads_active_payload(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={
+                "account": "driver@example.com",
+                "access_token": "mb-token",
+                "region": "Europe",
+            },
+            is_active=True,
+        )
+
+        client = MbApi2020AuthService.get_client(self.account)
+        self.assertEqual(client.payload["access_token"], "mb-token")
+        self.assertEqual(client.payload["region"], "Europe")
+
+    def test_get_client_persists_refreshed_token_state(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={
+                "account": "driver@example.com",
+                "access_token": "expired-token",
+                "refresh_token": "refresh-token",
+                "region": "Europe",
+                "expires_at": 1,
+                "device_guid": "device-guid-1",
+            },
+            is_active=True,
+        )
+
+        client = MbApi2020AuthService.get_client(self.account)
+
+        with patch.object(client.session, "get") as mocked_get, patch.object(client.session, "post") as mocked_post:
+            mocked_get.return_value.raise_for_status.return_value = None
+            mocked_post.return_value.raise_for_status.return_value = None
+            mocked_post.return_value.json.return_value = {
+                "access_token": "new-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 3600,
+            }
+
+            token = client._ensure_access_token()
+
+        self.assertEqual(token, "new-token")
+        auth_obj = PlatformAuth.objects.get(account=self.account, platform_name="mbapi2020")
+        self.assertEqual(auth_obj.auth_payload["access_token"], "new-token")
+        self.assertEqual(auth_obj.auth_payload["refresh_token"], "new-refresh-token")
+        self.assertEqual(auth_obj.auth_payload["device_guid"], "device-guid-1")
+
+
+class MbApi2020ClientTest(TestCase):
+    def test_validate_payload_requires_access_token(self):
+        with self.assertRaises(ValueError):
+            MbApi2020Client.validate_payload({"region": "Europe"})
+
+    def test_validate_payload_normalizes_region_alias_and_expires_in(self):
+        payload = MbApi2020Client.validate_payload(
+            {
+                "access_token": "mb-token",
+                "region": "eu",
+                "expires_in": 3600,
+            }
+        )
+
+        self.assertEqual(payload["region"], "Europe")
+        self.assertGreater(payload["expires_at"], int(time.time()))
+
+    def test_get_account_profile_uses_user_and_vehicle_endpoints(self):
+        client = MbApi2020Client(
+            {
+                "account": "driver@example.com",
+                "access_token": "mb-token",
+                "region": "Europe",
+            }
+        )
+
+        with patch.object(
+            client,
+            "_request_json",
+            side_effect=[
+                {"email": "driver@example.com", "firstName": "Edison"},
+                {"items": [{"vin": "W1N123", "modelName": "EQE", "licensePlate": "沪A12345"}]},
+            ],
+        ):
+            profile = client.get_account_profile()
+
+        self.assertEqual(profile["account"], "driver@example.com")
+        self.assertEqual(profile["nickname"], "Edison")
+        self.assertEqual(profile["vehicles"][0]["vin"], "W1N123")
+        self.assertEqual(profile["vehicles"][0]["model"], "EQE")
+
+    def test_extract_vehicle_list_supports_assigned_vehicles_shape(self):
+        items = MbApi2020Client._extract_vehicle_list(
+            {
+                "assignedVehicles": [
+                    {"vin": "W1N123", "licensePlate": "沪A12345"},
+                ]
+            }
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["vin"], "W1N123")
+
+    def test_list_devices_enriches_vehicle_with_status_and_command_capabilities(self):
+        client = MbApi2020Client(
+            {
+                "account": "driver@example.com",
+                "access_token": "mb-token",
+                "region": "China",
+                "pin": "1234",
+            }
+        )
+
+        with patch.object(client, "list_vehicles", return_value=[{"vin": "W1N123", "name": "EQE"}]), patch.object(
+            client,
+            "get_vehicle_capabilities",
+            return_value={"vehicle": {"modelName": "EQE"}, "features": {"DOORS_LOCK": True}},
+        ), patch.object(
+            client,
+            "get_vehicle_command_capabilities",
+            return_value={"commands": [{"commandName": "DOORS_LOCK", "isAvailable": True}]},
+        ), patch.object(
+            client,
+            "get_vehicle_status",
+            return_value={"status_payload": {"doorlockstatusvehicle": "locked"}},
+        ):
+            devices = client.list_devices()
+
+        self.assertEqual(devices[0]["vin"], "W1N123")
+        self.assertEqual(devices[0]["region"], "China")
+        self.assertTrue(devices[0]["pin_available"])
+        self.assertEqual(devices[0]["status_payload"]["doorlockstatusvehicle"], "locked")
+
+    def test_execute_control_builds_and_sends_supported_command(self):
+        client = MbApi2020Client(
+            {
+                "account": "driver@example.com",
+                "access_token": "mb-token",
+                "region": "China",
+            }
+        )
+
+        with patch.object(client, "_build_command_message", return_value=b"payload") as mocked_build, patch.object(
+            client,
+            "_send_command_over_websocket",
+            new_callable=AsyncMock,
+        ) as mocked_send:
+            client.execute_control(
+                vehicle_id="W1N123",
+                control={
+                    "key": "door_lock",
+                    "action_params": {"command_name": "DOORS_LOCK"},
+                },
+            )
+
+        mocked_build.assert_called_once_with("W1N123", "DOORS_LOCK", pin="")
+        mocked_send.assert_awaited_once_with(b"payload")
+
+    def test_refresh_access_token_runs_preflight_and_updates_headers(self):
+        client = MbApi2020Client(
+            {
+                "account": "driver@example.com",
+                "access_token": "expired-token",
+                "refresh_token": "refresh-token",
+                "region": "Europe",
+                "expires_at": 1,
+                "device_guid": "device-guid-1",
+            }
+        )
+
+        with patch.object(client.session, "get") as mocked_get, patch.object(client.session, "post") as mocked_post:
+            mocked_get.return_value.raise_for_status.return_value = None
+            mocked_post.return_value.raise_for_status.return_value = None
+            mocked_post.return_value.json.return_value = {
+                "access_token": "new-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 1800,
+            }
+
+            token = client._ensure_access_token()
+
+        self.assertEqual(token, "new-token")
+        mocked_get.assert_called_once()
+        self.assertIn("/v1/config", mocked_get.call_args.args[0])
+        self.assertEqual(mocked_post.call_args.kwargs["headers"]["X-Device-Id"], "device-guid-1")
+        self.assertEqual(client.payload["refresh_token"], "new-refresh-token")
+        self.assertGreater(client.payload["expires_at"], int(time.time()))
 
 
 class MideaCloudClientTest(TestCase):
@@ -1074,3 +1345,23 @@ class MideaCloudClientTest(TestCase):
 
         payload = mocked_send.call_args.kwargs
         self.assertEqual(payload["control"], {"temperature": 24, "small_temperature": 5})
+
+
+class MbApi2020ClientNormalizationTest(TestCase):
+    def test_normalize_vehicle_prefers_baumuster_description_for_model(self):
+        vehicle = {
+            "vin": "LE4LG4GB2SL195893",
+            "name": "214",
+            "model": "214",
+            "licensePlate": "川GPT032",
+            "salesRelatedInformation": {
+                "baumuster": {
+                    "baumusterDescription": "E 300 L 豪华型轿车",
+                }
+            },
+        }
+
+        normalized = MbApi2020Client._normalize_vehicle(vehicle).to_dict()
+
+        self.assertEqual(normalized["model"], "E 300 L 豪华型轿车")
+        self.assertEqual(normalized["name"], "214")

@@ -18,6 +18,7 @@ def build_sample_snapshot(source: str = "home_assistant") -> dict:
     source_type_map = {
         "home_assistant": "ha_entity",
         "midea_cloud": "midea_cloud_property",
+        "mbapi2020": "mbapi2020_property",
     }
     default_source_type = source_type_map.get(source, "mijia_property")
     key_prefix = "switch.fridge_power" if source == "home_assistant" else "power"
@@ -123,23 +124,20 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertIsNotNone(state.refresh_requested_at)
         self.assertIsNone(state.refreshed_at)
 
-    def test_run_pending_refresh_persists_snapshot_and_clears_pending(self):
+    def test_request_refresh_persists_snapshot_and_clears_pending(self):
         PlatformAuth.objects.create(
             account=self.account,
             platform_name="home_assistant",
             auth_payload={"base_url": "http://ha.local:8123", "access_token": "ha-token"},
             is_active=True,
         )
-        DeviceDashboardService.request_refresh(self.account, trigger="manual")
 
         with patch(
             "devices.services.DeviceDashboardService._build_home_assistant_snapshot",
             return_value=build_sample_snapshot(),
         ):
-            refreshed = DeviceDashboardService.run_pending_refresh(self.account, sync_interval_seconds=300)
+            payload = DeviceDashboardService.request_refresh(self.account, trigger="manual")
 
-        self.assertTrue(refreshed)
-        payload = DeviceDashboardService.get_dashboard(self.account)
         self.assertTrue(payload["snapshot"]["has_snapshot"])
         self.assertFalse(payload["snapshot"]["pending_refresh"])
         self.assertEqual(payload["snapshot"]["devices"][0]["name"], "多开门冰箱")
@@ -164,6 +162,38 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertFalse(payload["snapshot"]["has_snapshot"])
         self.assertTrue(payload["snapshot"]["pending_refresh"])
 
+    def test_get_dashboard_with_device_provider_auth_refreshes_inline_on_polling_backend(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={"access_token": "token", "region": "China"},
+            is_active=True,
+        )
+
+        with patch(
+            "devices.services.DeviceDashboardService.refresh",
+            return_value={
+                "status": "success",
+                "snapshot": {
+                    "has_snapshot": True,
+                    "pending_refresh": False,
+                    "source": "mbapi2020",
+                    "last_trigger": "bootstrap",
+                    "last_error": "",
+                    "refreshed_at": "2026-04-02T22:00:00",
+                    "rooms": [],
+                    "devices": [],
+                    "anomalies": [],
+                    "rules": [],
+                },
+            },
+        ) as mocked_refresh:
+            payload = DeviceDashboardService.get_dashboard(self.account)
+
+        mocked_refresh.assert_called_once_with(self.account, trigger="bootstrap")
+        self.assertTrue(payload["snapshot"]["has_snapshot"])
+        self.assertFalse(payload["snapshot"]["pending_refresh"])
+
     def test_request_refresh_enqueues_redis_task_when_enabled(self):
         with patch.dict(os.environ, {"DEVICE_SYNC_QUEUE_BACKEND": "redis"}, clear=False), patch(
             "devices.services.enqueue_account_refresh",
@@ -184,6 +214,73 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertTrue(payload["snapshot"]["pending_refresh"])
         state = DeviceDashboardState.objects.get(account=self.account, key=DeviceDashboardService.state_key)
         self.assertEqual(state.requested_trigger, "api")
+
+    def test_request_refresh_runs_inline_on_polling_backend_with_device_provider_auth(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={"access_token": "token", "region": "China"},
+            is_active=True,
+        )
+
+        with patch(
+            "devices.services.DeviceDashboardService.refresh",
+            return_value={
+                "status": "success",
+                "snapshot": {
+                    "has_snapshot": True,
+                    "pending_refresh": False,
+                    "source": "mbapi2020",
+                    "last_trigger": "api",
+                    "last_error": "",
+                    "refreshed_at": "2026-04-02T22:00:00",
+                    "rooms": [],
+                    "devices": [],
+                    "anomalies": [],
+                    "rules": [],
+                },
+            },
+        ) as mocked_refresh:
+            payload = DeviceDashboardService.request_refresh(self.account, trigger="api")
+
+        mocked_refresh.assert_called_once_with(self.account, trigger="api")
+        self.assertTrue(payload["snapshot"]["has_snapshot"])
+        self.assertFalse(payload["snapshot"]["pending_refresh"])
+
+    def test_request_refresh_runs_inline_on_redis_backend_for_interactive_trigger(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={"access_token": "token", "region": "China"},
+            is_active=True,
+        )
+
+        with patch.dict(os.environ, {"DEVICE_SYNC_QUEUE_BACKEND": "redis"}, clear=False), patch(
+            "devices.services.DeviceDashboardService.refresh",
+            return_value={
+                "status": "success",
+                "snapshot": {
+                    "has_snapshot": True,
+                    "pending_refresh": False,
+                    "source": "mbapi2020",
+                    "last_trigger": "api",
+                    "last_error": "",
+                    "refreshed_at": "2026-04-02T22:00:00",
+                    "rooms": [],
+                    "devices": [],
+                    "anomalies": [],
+                    "rules": [],
+                },
+            },
+        ) as mocked_refresh, patch(
+            "devices.services.enqueue_account_refresh"
+        ) as mocked_enqueue:
+            payload = DeviceDashboardService.request_refresh(self.account, trigger="api")
+
+        mocked_refresh.assert_called_once_with(self.account, trigger="api")
+        mocked_enqueue.assert_not_called()
+        self.assertTrue(payload["snapshot"]["has_snapshot"])
+        self.assertFalse(payload["snapshot"]["pending_refresh"])
 
     def test_refresh_uses_home_assistant_snapshot_when_authorized(self):
         PlatformAuth.objects.create(
@@ -227,6 +324,105 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertEqual(payload["snapshot"]["source"], "midea_cloud")
         self.assertEqual(payload["snapshot"]["devices"][0]["name"], "多开门冰箱")
         self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["source_type"], "midea_cloud_property")
+
+    def test_refresh_uses_mbapi2020_snapshot_when_authorized(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={
+                "account": "driver@example.com",
+                "access_token": "mb-token",
+                "region": "China",
+            },
+            is_active=True,
+        )
+
+        with patch(
+            "devices.services.DeviceDashboardService._build_mbapi2020_snapshot",
+            return_value=build_sample_snapshot("mbapi2020"),
+        ):
+            payload = DeviceDashboardService.refresh(self.account, trigger="test")
+
+        self.assertEqual(payload["snapshot"]["source"], "mbapi2020")
+        self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["source_type"], "mbapi2020_property")
+
+    def test_mbapi2020_snapshot_builds_action_controls_from_command_capabilities(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={
+                "account": "driver@example.com",
+                "access_token": "mb-token",
+                "region": "China",
+                "pin": "1234",
+            },
+            is_active=True,
+        )
+
+        with patch("providers.services.MbApi2020AuthService.get_client") as mocked_get_client:
+            mocked_get_client.return_value.list_devices.return_value = [
+                {
+                    "vin": "VIN123456",
+                    "name": "EQE SUV",
+                    "license_plate": "沪A12345",
+                    "region": "China",
+                    "pin_available": True,
+                    "status_payload": {
+                        "doorlockstatusvehicle": "locked",
+                        "rangeelectric": 420,
+                    },
+                    "command_capabilities": [
+                        {"commandName": "DOORS_LOCK", "isAvailable": True},
+                        {"commandName": "DOORS_UNLOCK", "isAvailable": True},
+                        {"commandName": "SIGPOS_START", "isAvailable": True},
+                    ],
+                }
+            ]
+
+            snapshot = DeviceDashboardService._build_mbapi2020_snapshot(self.account)
+
+        self.assertEqual(snapshot["source"], "mbapi2020")
+        self.assertEqual(snapshot["devices"][0]["id"], "mbapi2020:VIN123456")
+        action_keys = {control["key"] for control in snapshot["devices"][0]["controls"] if control["kind"] == "action"}
+        self.assertIn("door_lock", action_keys)
+        self.assertIn("sigpos", action_keys)
+
+    def test_mbapi2020_snapshot_prefers_vehicle_model_name_over_numeric_code(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={
+                "account": "driver@example.com",
+                "access_token": "mb-token",
+                "region": "China",
+            },
+            is_active=True,
+        )
+
+        with patch("providers.services.MbApi2020AuthService.get_client") as mocked_get_client:
+            mocked_get_client.return_value.list_devices.return_value = [
+                {
+                    "vin": "VIN123456",
+                    "name": "214",
+                    "model": "E 300 L 豪华型轿车",
+                    "license_plate": "沪A12345",
+                    "region": "China",
+                    "status_payload": {},
+                    "command_capabilities": [],
+                    "raw": {
+                        "licensePlate": "沪A12345",
+                        "salesRelatedInformation": {
+                            "baumuster": {
+                                "baumusterDescription": "E 300 L 豪华型轿车",
+                            }
+                        },
+                    },
+                }
+            ]
+
+            snapshot = DeviceDashboardService._build_mbapi2020_snapshot(self.account)
+
+        self.assertEqual(snapshot["devices"][0]["name"], "E 300 L 豪华型轿车")
 
     def test_midea_cloud_snapshot_builds_sensor_controls_from_status_payload(self):
         PlatformAuth.objects.create(
@@ -844,6 +1040,64 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertFalse(payload["snapshot"]["pending_refresh"])
         power_control = next(control for control in payload["snapshot"]["devices"][0]["controls"] if control["key"] == "power")
         self.assertEqual(power_control["value"], "off")
+        mocked_request_refresh.assert_not_called()
+
+    def test_execute_mbapi2020_control_refreshes_only_target_device(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={"account": "driver@example.com", "access_token": "mb-token", "region": "China"},
+            is_active=True,
+        )
+
+        snapshot = build_sample_snapshot(source="mbapi2020")
+        snapshot["devices"][0]["id"] = "mbapi2020:VIN123456"
+        snapshot["devices"][0]["controls"][0]["id"] = "mbapi2020:VIN123456:door_lock"
+        snapshot["devices"][0]["controls"][0]["parent_id"] = "mbapi2020:VIN123456"
+        snapshot["devices"][0]["controls"][0]["key"] = "door_lock"
+        snapshot["devices"][0]["controls"][0]["kind"] = DeviceControl.KindChoices.ACTION
+        snapshot["devices"][0]["controls"][0]["source_type"] = DeviceControl.SourceTypeChoices.MBAPI2020_ACTION
+        snapshot["devices"][0]["controls"][0]["action_params"] = {
+            "vehicle_id": "VIN123456",
+            "actions": [{"id": "DOORS_LOCK", "label": "锁车"}],
+        }
+        snapshot["devices"][0]["source_payload"] = {"vin": "VIN123456", "region": "China"}
+
+        refreshed_raw_vehicle = {
+            "vin": "VIN123456",
+            "name": "EQE SUV",
+            "license_plate": "沪A12345",
+            "region": "China",
+            "pin_available": False,
+            "status_payload": {
+                "doorlockstatusvehicle": "locked",
+                "rangeelectric": 418,
+            },
+            "command_capabilities": [
+                {"commandName": "DOORS_LOCK", "isAvailable": True},
+            ],
+        }
+
+        with patch(
+            "devices.services.DeviceDashboardService._build_mbapi2020_snapshot",
+            return_value=snapshot,
+        ), patch("providers.services.MbApi2020AuthService.get_client") as mocked_get_client, patch(
+            "devices.services.DeviceDashboardService.request_refresh"
+        ) as mocked_request_refresh:
+            mocked_get_client.return_value.execute_control.return_value = None
+            mocked_get_client.return_value.get_device.return_value = refreshed_raw_vehicle
+
+            DeviceDashboardService.refresh(self.account, trigger="seed")
+            payload = DeviceDashboardService.execute_control(
+                self.account,
+                device_external_id="mbapi2020:VIN123456",
+                control_external_id="mbapi2020:VIN123456:door_lock",
+                action="DOORS_LOCK",
+            )
+
+        self.assertFalse(payload["snapshot"]["pending_refresh"])
+        action_control = next(control for control in payload["snapshot"]["devices"][0]["controls"] if control["key"] == "door_lock")
+        self.assertEqual(action_control["source_type"], DeviceControl.SourceTypeChoices.MBAPI2020_ACTION)
         mocked_request_refresh.assert_not_called()
 
     def test_syncdevicesnapshot_command_refreshes_target_account(self):

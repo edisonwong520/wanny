@@ -65,6 +65,11 @@ class DeviceExecutor:
             DeviceControl.SourceTypeChoices.MIDEA_CLOUD_ACTION,
         }:
             return cls._execute_midea_cloud(account, device=device, control=control, action=action, value=value)
+        if control.source_type in {
+            DeviceControl.SourceTypeChoices.MBAPI2020_PROPERTY,
+            DeviceControl.SourceTypeChoices.MBAPI2020_ACTION,
+        }:
+            return cls._execute_mbapi2020(account, device=device, control=control, action=action, value=value)
         raise ValueError(f"Unsupported control source: {control.source_type}")
 
     @classmethod
@@ -89,6 +94,16 @@ class DeviceExecutor:
 
     @classmethod
     def _execute_midea_cloud(cls, account, *, device: DeviceSnapshot, control: DeviceControl, action: str, value: Any) -> dict:
+        return DeviceDashboardService.execute_control(
+            account,
+            device_external_id=device.external_id,
+            control_external_id=control.external_id,
+            action=action,
+            value=value,
+        )
+
+    @classmethod
+    def _execute_mbapi2020(cls, account, *, device: DeviceSnapshot, control: DeviceControl, action: str, value: Any) -> dict:
         return DeviceDashboardService.execute_control(
             account,
             device_external_id=device.external_id,

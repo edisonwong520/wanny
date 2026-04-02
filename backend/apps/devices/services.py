@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 class DeviceDashboardService:
     state_key = "default"
     default_sync_interval_seconds = 300
-    device_provider_names = ("mijia", "home_assistant", "midea_cloud")
+    device_provider_names = ("mijia", "home_assistant", "midea_cloud", "mbapi2020")
     supported_ha_domains = {
         "light",
         "switch",
@@ -71,6 +71,43 @@ class DeviceDashboardService:
         "app_flag",
         "operator",
     }
+    mbapi2020_command_groups = (
+        {
+            "key": "door_lock",
+            "label": "车门锁",
+            "group_label": "车身",
+            "commands": (
+                {"name": "DOORS_LOCK", "label": "锁车"},
+                {"name": "DOORS_UNLOCK", "label": "解锁", "requires_pin": True},
+            ),
+        },
+        {
+            "key": "preconditioning",
+            "label": "空调预热",
+            "group_label": "空调",
+            "commands": (
+                {"name": "ZEV_PRECONDITIONING_START", "label": "开启"},
+                {"name": "ZEV_PRECONDITIONING_STOP", "label": "关闭"},
+            ),
+        },
+        {
+            "key": "battery_conditioning",
+            "label": "电池预处理",
+            "group_label": "电池",
+            "commands": (
+                {"name": "HVBATTERY_START_CONDITIONING", "label": "开启"},
+                {"name": "HVBATTERY_STOP_CONDITIONING", "label": "关闭"},
+            ),
+        },
+        {
+            "key": "sigpos",
+            "label": "寻车闪灯",
+            "group_label": "车身",
+            "commands": (
+                {"name": "SIGPOS_START", "label": "执行"},
+            ),
+        },
+    )
 
     @classmethod
     def _get_state(cls, account: Account) -> DeviceDashboardState:
@@ -196,6 +233,12 @@ class DeviceDashboardService:
         has_snapshot = cls._has_snapshot(account)
 
         if not has_snapshot and not state.refresh_requested_at:
+            if cls.has_active_device_provider_auth(account):
+                logger.info(
+                    f"[Device Sync] No snapshot for account_id={account.id}; "
+                    "running inline bootstrap refresh."
+                )
+                return cls.refresh(account, trigger="bootstrap")
             cls._queue_refresh(state, trigger="bootstrap")
             state.refresh_from_db()
             return {
@@ -249,7 +292,7 @@ class DeviceDashboardService:
         logger.info(f"[Device Sync] refresh() called for account_id={account.id} email={account.email} trigger={trigger}")
         refresh_started_at = time.perf_counter()
         provider_payloads: list[dict] = []
-        from providers.services import HomeAssistantAuthService, MideaCloudAuthService, MijiaAuthService
+        from providers.services import HomeAssistantAuthService, MbApi2020AuthService, MideaCloudAuthService, MijiaAuthService
 
         try:
             mijia_auth = MijiaAuthService.get_auth_record(account=account, active_only=True)
@@ -298,6 +341,22 @@ class DeviceDashboardService:
                 provider_payloads.append(midea_cloud_payload)
         except Exception as error:
             logger.error(f"[Device Sync] Failed to check Midea auth state for user {account.email}: {error}")
+
+        try:
+            mbapi_auth = MbApi2020AuthService.get_auth_record(account=account, active_only=True)
+            logger.debug(f"[Device Sync] MbApi2020 auth check for account_id={account.id}: found={mbapi_auth is not None}")
+            if mbapi_auth:
+                logger.info(f"[Device Sync] Building MbApi2020 snapshot for account_id={account.id}")
+                provider_started_at = time.perf_counter()
+                mbapi_payload = cls._build_mbapi2020_snapshot(account)
+                logger.info(
+                    f"[Device Sync] MbApi2020 snapshot built for account_id={account.id}: "
+                    f"devices={len(mbapi_payload.get('devices', []))} "
+                    f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
+                )
+                provider_payloads.append(mbapi_payload)
+        except Exception as error:
+            logger.error(f"[Device Sync] Failed to check MbApi2020 auth state for user {account.email}: {error}")
 
         logger.info(f"[Device Sync] Merging {len(provider_payloads)} provider payloads for account_id={account.id}")
         payload = cls._merge_snapshots(provider_payloads) if provider_payloads else cls._build_empty_snapshot()
@@ -409,6 +468,14 @@ class DeviceDashboardService:
     @classmethod
     def request_refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
         logger.info(f"[Device Sync] request_refresh called: account_id={account.id} email={account.email} trigger={trigger}")
+        interactive_trigger = trigger == "api" or trigger == "bootstrap" or trigger.startswith("connect_")
+        if cls.has_active_device_provider_auth(account) and (interactive_trigger or not redis_queue_enabled()):
+            logger.info(
+                f"[Device Sync] Inline refresh selected for account_id={account.id}; "
+                f"trigger={trigger} backend={get_queue_backend()}"
+            )
+            return cls.refresh(account, trigger=trigger)
+
         state = cls._get_state(account)
         cls._queue_refresh(state, trigger=trigger)
         if redis_queue_enabled():
@@ -423,6 +490,7 @@ class DeviceDashboardService:
                     f"[Device Sync] Failed to enqueue account_id={account.id} to Redis queue: {error}. "
                     "Falling back to DB pending state."
                 )
+            return cls.get_dashboard(account)
         return cls.get_dashboard(account)
 
     @classmethod
@@ -457,6 +525,11 @@ class DeviceDashboardService:
             DeviceControl.SourceTypeChoices.MIDEA_CLOUD_ACTION,
         }:
             cls._execute_midea_cloud_control(account, device=device, control=control, action=action, value=value)
+        elif control.source_type in {
+            DeviceControl.SourceTypeChoices.MBAPI2020_PROPERTY,
+            DeviceControl.SourceTypeChoices.MBAPI2020_ACTION,
+        }:
+            cls._execute_mbapi2020_control(account, device=device, control=control, action=action, value=value)
         else:
             raise ValueError(f"Unsupported control source: {control.source_type}")
 
@@ -804,6 +877,114 @@ class DeviceDashboardService:
         return cls.get_dashboard(account)
 
     @classmethod
+    def _build_mbapi2020_snapshot(cls, account: Account) -> dict:
+        from providers.services import MbApi2020AuthService
+
+        logger.debug(f"[Device Sync] _build_mbapi2020_snapshot start for account_id={account.id}")
+        try:
+            client = MbApi2020AuthService.get_client(account=account)
+            vehicles = client.list_devices()
+            logger.info(f"[Device Sync] MbApi2020 vehicles fetched for account_id={account.id}: count={len(vehicles)}")
+        except Exception as error:
+            logger.error(f"[Device Sync] Failed to fetch MbApi2020 data, falling back to empty: {error}")
+            return cls._build_empty_snapshot()
+
+        room_index: dict[str, dict] = {}
+        devices_data: list[dict] = []
+        for index, raw_vehicle in enumerate(vehicles, start=1):
+            if not isinstance(raw_vehicle, dict):
+                continue
+            room_data, device_data = cls._build_mbapi2020_vehicle_snapshot(raw_vehicle, sort_order=index * 10)
+            room_index.setdefault(room_data["id"], room_data)
+            devices_data.append(device_data)
+
+        return {
+            "source": "mbapi2020",
+            "rooms": list(room_index.values()),
+            "devices": devices_data,
+            "anomalies": [],
+            "rules": [],
+        }
+
+    @classmethod
+    def _build_mbapi2020_vehicle_snapshot(cls, raw_vehicle: dict, *, sort_order: int) -> tuple[dict, dict]:
+        vin = str(raw_vehicle.get("vin") or raw_vehicle.get("id") or "").strip()
+        region = str(raw_vehicle.get("region") or raw_vehicle.get("raw", {}).get("region") or "China").strip()
+        room_id = cls._make_room_id("mbapi2020", region or "default")
+        room_data = {
+            "id": room_id,
+            "name": region or "奔驰",
+            "climate": str(raw_vehicle.get("license_plate") or "").strip(),
+            "summary": "来自奔驰 mbapi2020 直连接入",
+            "sort_order": 10,
+        }
+        controls = cls._build_mbapi2020_controls(raw_vehicle)
+        capabilities = [control["key"] for control in controls if control["kind"] != DeviceControl.KindChoices.SENSOR][:8]
+        display_name = cls._resolve_mbapi2020_vehicle_name(raw_vehicle)
+        device_data = {
+            "id": f"mbapi2020:{vin}",
+            "room_id": room_id,
+            "name": display_name,
+            "category": "vehicle",
+            "status": cls._map_mbapi2020_status(raw_vehicle),
+            "telemetry": cls._summarize_mbapi2020_vehicle(raw_vehicle, controls),
+            "note": f"VIN: {vin}" if vin else "Mercedes-Benz Vehicle",
+            "capabilities": capabilities,
+            "controls": controls,
+            "last_seen": timezone.now(),
+            "sort_order": sort_order,
+            "source_payload": raw_vehicle,
+        }
+        return room_data, device_data
+
+    @classmethod
+    def _resolve_mbapi2020_vehicle_name(cls, raw_vehicle: dict) -> str:
+        vin = str(raw_vehicle.get("vin") or raw_vehicle.get("id") or "").strip()
+        sales_related_information = raw_vehicle.get("raw", {}).get("salesRelatedInformation") or raw_vehicle.get("salesRelatedInformation") or {}
+        baumuster = sales_related_information.get("baumuster") if isinstance(sales_related_information, dict) else {}
+        baumuster_description = ""
+        if isinstance(baumuster, dict):
+            baumuster_description = str(baumuster.get("baumusterDescription") or "").strip()
+
+        candidates = [
+            baumuster_description,
+            str(raw_vehicle.get("model") or "").strip(),
+            str(raw_vehicle.get("name") or "").strip(),
+            str(raw_vehicle.get("license_plate") or raw_vehicle.get("raw", {}).get("licensePlate") or "").strip(),
+        ]
+        for candidate in candidates:
+            if cls._is_meaningful_mbapi2020_name(candidate):
+                return candidate
+        return f"奔驰 {vin[-6:]}" if vin else "奔驰车辆"
+
+    @staticmethod
+    def _is_meaningful_mbapi2020_name(value: str) -> bool:
+        normalized = str(value or "").strip()
+        if not normalized:
+            return False
+        if re.fullmatch(r"[0-9]+", normalized):
+            return False
+        if len(normalized) <= 3 and re.fullmatch(r"[A-Za-z0-9_-]+", normalized):
+            return False
+        return True
+
+    @classmethod
+    def _refresh_mbapi2020_vehicle(cls, account: Account, *, device_external_id: str, trigger: str) -> dict:
+        from providers.services import MbApi2020AuthService
+
+        device = DeviceSnapshot.objects.filter(account=account, external_id=device_external_id).first()
+        if device is None:
+            raise ValueError("Device not found")
+
+        client = MbApi2020AuthService.get_client(account=account)
+        raw_vehicle = client.get_device(device.external_id.removeprefix("mbapi2020:"))
+        if not isinstance(raw_vehicle, dict):
+            raise ValueError("Mercedes vehicle refresh returned empty payload")
+
+        room_data, device_data = cls._build_mbapi2020_vehicle_snapshot(raw_vehicle, sort_order=device.sort_order or 10)
+        return cls._persist_single_device_refresh(account, device=device, room_data=room_data, device_data=device_data, trigger=trigger)
+
+    @classmethod
     def _refresh_device_after_control(
         cls,
         account: Account,
@@ -824,6 +1005,11 @@ class DeviceDashboardService:
             DeviceControl.SourceTypeChoices.MIDEA_CLOUD_ACTION,
         }:
             return cls._refresh_midea_cloud_device(account, device_external_id=device.external_id, trigger=trigger)
+        if control.source_type in {
+            DeviceControl.SourceTypeChoices.MBAPI2020_PROPERTY,
+            DeviceControl.SourceTypeChoices.MBAPI2020_ACTION,
+        }:
+            return cls._refresh_mbapi2020_vehicle(account, device_external_id=device.external_id, trigger=trigger)
         return cls.request_refresh(account, trigger=trigger)
 
     @classmethod
@@ -2112,6 +2298,41 @@ class DeviceDashboardService:
         client.execute_control(device_id=device_id, control=payload, value=value)
 
     @classmethod
+    def _execute_mbapi2020_control(
+        cls,
+        account: Account,
+        *,
+        device: DeviceSnapshot,
+        control: DeviceControl,
+        action: str,
+        value: Any,
+    ) -> None:
+        from providers.services import MbApi2020AuthService
+
+        client = MbApi2020AuthService.get_client(account=account)
+        params = control.action_params or {}
+        vehicle_id = params.get("vehicle_id") or (device.source_payload or {}).get("vin")
+        if not vehicle_id:
+            vehicle_id = device.external_id.removeprefix("mbapi2020:")
+        if not vehicle_id:
+            raise ValueError("Mercedes vehicle identifier is missing")
+
+        command_name = action or params.get("command_name") or value
+        if not command_name:
+            raise ValueError("Mercedes command metadata is incomplete")
+
+        payload = {
+            "key": control.key,
+            "kind": control.kind,
+            "source_type": control.source_type,
+            "action_params": {
+                **params,
+                "command_name": command_name,
+            },
+        }
+        client.execute_control(vehicle_id=str(vehicle_id), control=payload, value=value)
+
+    @classmethod
     def _apply_optimistic_control_result(cls, control: DeviceControl, *, action: str, value: Any) -> None:
         next_value = value
         if control.kind == DeviceControl.KindChoices.TOGGLE:
@@ -2448,6 +2669,149 @@ class DeviceDashboardService:
         if kind in {"text", "string"}:
             return DeviceControl.KindChoices.TEXT
         return DeviceControl.KindChoices.SENSOR
+
+    @classmethod
+    def _build_mbapi2020_controls(cls, raw_vehicle: dict) -> list[dict]:
+        controls: list[dict] = []
+        vin = str(raw_vehicle.get("vin") or raw_vehicle.get("id") or "").strip()
+        status_payload = raw_vehicle.get("status_payload") or {}
+        command_capabilities = raw_vehicle.get("command_capabilities") or []
+        pin_available = bool(raw_vehicle.get("pin_available"))
+        available_commands = {
+            str(item.get("commandName") or "").strip().upper(): item
+            for item in command_capabilities
+            if isinstance(item, dict) and item.get("isAvailable")
+        }
+        sort_order = 10
+
+        for group in cls.mbapi2020_command_groups:
+            actions = []
+            for command in group["commands"]:
+                command_name = str(command["name"]).upper()
+                if command_name not in available_commands:
+                    continue
+                if command.get("requires_pin") and not pin_available:
+                    continue
+                actions.append({"id": command_name, "label": command["label"]})
+
+            if not actions:
+                continue
+
+            controls.append(
+                {
+                    "id": f"mbapi2020:{vin}:{group['key']}",
+                    "parent_id": f"mbapi2020:{vin}",
+                    "source_type": DeviceControl.SourceTypeChoices.MBAPI2020_ACTION,
+                    "kind": DeviceControl.KindChoices.ACTION,
+                    "key": group["key"],
+                    "label": group["label"],
+                    "group_label": group["group_label"],
+                    "writable": True,
+                    "value": status_payload.get("doorlockstatusvehicle") if group["key"] == "door_lock" else "",
+                    "unit": "",
+                    "options": [],
+                    "range_spec": {},
+                    "action_params": {
+                        "vehicle_id": vin,
+                        "actions": actions,
+                    },
+                    "source_payload": available_commands,
+                    "sort_order": sort_order,
+                }
+            )
+            sort_order += 10
+
+        preferred_sensors = [
+            ("doorlockstatusvehicle", "车门锁状态", ""),
+            ("decklidstatus", "后备箱状态", ""),
+            ("chargingstatusdisplay", "充电状态", ""),
+            ("electricrange", "续航里程", ""),
+            ("rangeelectric", "续航里程", ""),
+            ("odometer", "总里程", ""),
+            ("tanklevelpercent", "油量", "%"),
+        ]
+        used_keys: set[str] = set()
+        for key, label, unit in preferred_sensors:
+            value = status_payload.get(key)
+            if value in (None, "", {}, []):
+                continue
+            controls.append(
+                {
+                    "id": f"mbapi2020:{vin}:status:{key}",
+                    "parent_id": f"mbapi2020:{vin}",
+                    "source_type": DeviceControl.SourceTypeChoices.MBAPI2020_PROPERTY,
+                    "kind": DeviceControl.KindChoices.SENSOR,
+                    "key": key,
+                    "label": label,
+                    "group_label": "状态",
+                    "writable": False,
+                    "value": value,
+                    "unit": unit,
+                    "options": [],
+                    "range_spec": {},
+                    "action_params": {},
+                    "source_payload": {"key": key, "value": value},
+                    "sort_order": sort_order,
+                }
+            )
+            sort_order += 10
+            used_keys.add(key)
+
+        for key, value in status_payload.items():
+            if key in used_keys or value in (None, "", {}, []) or isinstance(value, (list, dict)):
+                continue
+            controls.append(
+                {
+                    "id": f"mbapi2020:{vin}:status:{key}",
+                    "parent_id": f"mbapi2020:{vin}",
+                    "source_type": DeviceControl.SourceTypeChoices.MBAPI2020_PROPERTY,
+                    "kind": DeviceControl.KindChoices.SENSOR,
+                    "key": key,
+                    "label": key,
+                    "group_label": "状态",
+                    "writable": False,
+                    "value": value,
+                    "unit": "",
+                    "options": [],
+                    "range_spec": {},
+                    "action_params": {},
+                    "source_payload": {"key": key, "value": value},
+                    "sort_order": sort_order,
+                }
+            )
+            sort_order += 10
+            if sort_order > 120:
+                break
+
+        return controls
+
+    @staticmethod
+    def _map_mbapi2020_status(raw_vehicle: dict) -> str:
+        status_payload = raw_vehicle.get("status_payload") or {}
+        lock_status = str(status_payload.get("doorlockstatusvehicle") or "").lower()
+        if "invalid" in lock_status or "error" in lock_status:
+            return DeviceSnapshot.StatusChoices.ATTENTION
+        if raw_vehicle.get("vin"):
+            return DeviceSnapshot.StatusChoices.ONLINE
+        return DeviceSnapshot.StatusChoices.OFFLINE
+
+    @classmethod
+    def _summarize_mbapi2020_vehicle(cls, raw_vehicle: dict, controls: list[dict]) -> str:
+        status_payload = raw_vehicle.get("status_payload") or {}
+        parts: list[str] = []
+        if raw_vehicle.get("license_plate"):
+            parts.append(f"车牌 {raw_vehicle['license_plate']}")
+        if status_payload.get("doorlockstatusvehicle"):
+            parts.append(f"车锁 {status_payload['doorlockstatusvehicle']}")
+        range_value = status_payload.get("electricrange") or status_payload.get("rangeelectric")
+        if range_value not in (None, "", {}, []):
+            parts.append(f"续航 {range_value}")
+        if status_payload.get("odometer") not in (None, "", {}, []):
+            parts.append(f"里程 {status_payload['odometer']}")
+        if len(parts) < 2:
+            action_count = len([item for item in controls if item["kind"] == DeviceControl.KindChoices.ACTION])
+            parts.append(f"{action_count} 个可用动作")
+        return " | ".join(parts[:3])
 
     @staticmethod
     def _map_midea_cloud_status(raw_device: dict) -> str:

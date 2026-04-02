@@ -46,7 +46,9 @@ export interface DeviceControlRecord {
     | "mijia_property"
     | "mijia_action"
     | "midea_cloud_property"
-    | "midea_cloud_action";
+    | "midea_cloud_action"
+    | "mbapi2020_property"
+    | "mbapi2020_action";
   kind: "sensor" | "toggle" | "range" | "enum" | "action" | "text";
   key: string;
   label: string;

@@ -90,6 +90,64 @@ class DeviceIntentParserTest(TestCase):
         self.assertEqual(result["type"], "UNSUPPORTED_COMMAND")
         self.assertEqual(result["reason"], "chat_not_allowed_in_command_mode")
 
+    def test_invalid_json_from_device_intent_falls_back_to_chat(self):
+        import asyncio
+
+        with patch(
+            "comms.device_intent._heuristic_parse_device_intent",
+            return_value=None,
+        ), patch(
+            "comms.device_intent._build_device_prompt_context",
+            new=AsyncMock(return_value=("无设备", "无控制能力")),
+        ), patch(
+            "comms.device_intent.AIAgent.generate_json",
+            new=AsyncMock(
+                return_value={
+                    "type": "simple",
+                    "response": "[系统报错] 模型没有正确返回 JSON 格式，意图解析失败。",
+                }
+            ),
+        ):
+            result = asyncio.run(
+                analyze_device_intent(
+                    "今天天气怎么样",
+                    self.account,
+                    command_mode=False,
+                )
+            )
+
+        self.assertEqual(result["type"], "CHAT")
+        self.assertEqual(result["response"], "我刚才没有理解清楚，您可以换种说法再发一次。")
+
+    def test_invalid_json_from_device_intent_in_command_mode_returns_unsupported(self):
+        import asyncio
+
+        with patch(
+            "comms.device_intent._heuristic_parse_device_intent",
+            return_value=None,
+        ), patch(
+            "comms.device_intent._build_device_prompt_context",
+            new=AsyncMock(return_value=("无设备", "无控制能力")),
+        ), patch(
+            "comms.device_intent.AIAgent.generate_json",
+            new=AsyncMock(
+                return_value={
+                    "type": "simple",
+                    "response": "[系统报错] 模型没有正确返回 JSON 格式，意图解析失败。",
+                }
+            ),
+        ):
+            result = asyncio.run(
+                analyze_device_intent(
+                    "帮我查天气",
+                    self.account,
+                    command_mode=True,
+                )
+            )
+
+        self.assertEqual(result["type"], "UNSUPPORTED_COMMAND")
+        self.assertEqual(result["reason"], "device_intent_invalid_json")
+
     def test_command_mode_returns_unsupported_command_when_unmatched(self):
         import asyncio
 

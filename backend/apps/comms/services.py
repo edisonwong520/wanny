@@ -1,5 +1,6 @@
 import asyncio
 import re
+import time
 from datetime import timedelta
 
 from django.db.models import Q
@@ -21,6 +22,7 @@ from comms.executor import ShellExecutor
 from memory.services import MemoryService
 from accounts.models import Account
 from providers.models import PlatformAuth
+from utils.telemetry import get_tracer
 
 
 class WeChatService:
@@ -30,6 +32,8 @@ class WeChatService:
     """
     clarification_expiry = timedelta(minutes=10)
     pending_mission_recency_gap = timedelta(minutes=2)
+    _background_tasks: set[asyncio.Task] = set()
+    tracer = get_tracer(__name__)
 
     @classmethod
     async def get_account_by_wechat_id(cls, wechat_user_id: str) -> Account | None:
@@ -55,324 +59,352 @@ class WeChatService:
     async def process_incoming_message(cls, message, bot):
         content, voice_transcript, has_voice = cls._extract_message_content(message)
         wechat_user_id = getattr(message, "user_id", "unknown_user")
+        typing_started = False
 
-        if not content:
-            if has_voice:
-                await bot.reply(
-                    message,
-                    "这条语音我没有识别清楚。您可以再说一次，或者直接发文字命令。",
-                )
-            logger.debug(
-                f"[WeChat Service] 收到空消息，已忽略。user_id={wechat_user_id}"
-            )
-            return
+        with cls.tracer.start_as_current_span("wechat.process_message") as span:
+            span.set_attribute("wechat.user_id", wechat_user_id)
+            span.set_attribute("wechat.has_voice", has_voice)
 
-        logger.info(
-            f"[WeChat Service] 收到消息: user_id={wechat_user_id}, 内容='{content[:50]}'"
-        )
-
-        # 尝试查找关联的系统账户
-        account = await cls.get_account_by_wechat_id(wechat_user_id)
-        if not account:
-            logger.warning(
-                f"[WeChat Service] ⚠️ 收到未分配账户的消息: wechat_user_id={wechat_user_id}。将以受限模式运行。"
-            )
-
-        # ✨ 记忆引擎：将用户消息写入向量库（仅当账户存在时）
-        if account:
-            await MemoryService.record_conversation(
-                account, "user", content, platform_user_id=wechat_user_id
-            )
-
-        try:
-            # ✨ 检索与当前消息相关的历史记忆，作为上下文注入 AI
-            memory_context = ""
-            if account:
-                memory_context = await MemoryService.get_context_for_chat(
-                    account, content
-                )
-
-            mode = detect_command_mode(content)
-            normalized_content = strip_wakeup_prefix(content) if mode == "command" else content
-
-            if has_voice and cls._is_low_signal_voice_text(normalized_content):
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    "这条语音的识别结果太短了，我怕误操作。请直接说完整一点，或者发文字命令。",
-                    account=account,
-                    wechat_user_id=wechat_user_id,
+            if not content:
+                if has_voice:
+                    await bot.reply(
+                        message,
+                        "这条语音我没有识别清楚。您可以再说一次，或者直接发文字命令。",
+                    )
+                logger.debug(
+                    f"[WeChat Service] 收到空消息，已忽略。user_id={wechat_user_id}"
                 )
                 return
 
+            logger.info(
+                f"[WeChat Service] 收到消息: user_id={wechat_user_id}, 内容='{content[:50]}'"
+            )
+            span.set_attribute("wechat.content_preview", content[:80])
+
+            account = await cls.get_account_by_wechat_id(wechat_user_id)
+            if not account:
+                logger.warning(
+                    f"[WeChat Service] ⚠️ 收到未分配账户的消息: wechat_user_id={wechat_user_id}。将以受限模式运行。"
+                )
+            else:
+                span.set_attribute("account.email", account.email)
+
             if account:
-                clarification_handled = await cls._maybe_handle_device_clarification(
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                    message=message,
-                    bot=bot,
-                    content=content,
-                    normalized_content=normalized_content,
-                    voice_transcript=voice_transcript,
+                cls._schedule_background_job(
+                    MemoryService.record_conversation(
+                        account,
+                        "user",
+                        content,
+                        platform_user_id=wechat_user_id,
+                    ),
+                    label=f"user-memory:{wechat_user_id}",
                 )
-                if clarification_handled:
-                    return
 
-            if account and (mode == "command" or should_check_device_intent(normalized_content)):
-                device_intent = await analyze_device_intent(
-                    normalized_content,
-                    account,
-                    memory_context=memory_context,
-                    command_mode=(mode == "command"),
-                )
-                logger.info(f"[Device Intent Result] {device_intent.get('type')}")
+            try:
+                typing_started = await cls._send_typing(bot, wechat_user_id)
 
-                if device_intent.get("type") in {"DEVICE_CONTROL", "DEVICE_QUERY"}:
-                    handled = await cls.handle_device_intent(
-                        intent=device_intent,
-                        message=message,
-                        bot=bot,
+                memory_context = ""
+                if account:
+                    memory_context = await MemoryService.get_context_for_chat(
+                        account, content
+                    )
+
+                mode = detect_command_mode(content)
+                span.set_attribute("wechat.mode", mode)
+                normalized_content = strip_wakeup_prefix(content) if mode == "command" else content
+
+                if has_voice and cls._is_low_signal_voice_text(normalized_content):
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        "这条语音的识别结果太短了，我怕误操作。请直接说完整一点，或者发文字命令。",
                         account=account,
                         wechat_user_id=wechat_user_id,
-                        raw_content=content,
+                    )
+                    return
+
+                if account:
+                    clarification_handled = await cls._maybe_handle_device_clarification(
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                        message=message,
+                        bot=bot,
+                        content=content,
                         normalized_content=normalized_content,
                         voice_transcript=voice_transcript,
                     )
-                    if handled:
+                    if clarification_handled:
                         return
 
-            # 无论什么话，一律送入超级大脑进行分类理解
-            intent_data = await analyze_intent(normalized_content if mode == "command" else content, memory_context=memory_context)
-            logger.info(f"[Intent Result] {intent_data.get('type')}")
-            intent_type = intent_data.get("type")
-
-            if mode == "command" and (intent_type == "CHAT" or not intent_type):
-                reply_text = "这是命令模式，但我还没理解您希望我执行什么操作。"
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    reply_text,
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                )
-                return
-
-            # 1. 处理 CHAT 闲聊 或 意图不明 的兜底
-            if intent_type == "CHAT" or not intent_type:
-                reply_text = intent_data.get(
-                    "response", "系统分析您的指令时遇到了一点困惑。"
-                )
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    reply_text,
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                )
-                return
-
-            # --- 以下意图均与 Manual-Gate （PendingCommand） 强相关 ---
-
-            # 2. 从头发起复杂的底层控制指令
-            if intent_type == "COMPLEX_SHELL":
-                shell_cmd = (
-                    intent_data.get("shell_prompt")
-                    or intent_data.get("command")
-                    or normalized_content
-                    or content
-                )
-                confirm_txt = intent_data.get(
-                    "confirm_text", "准备进行 Shell 操作，请指示："
-                )
-                mission_metadata = cls._build_shell_mission_metadata(
-                    raw_content=content,
-                    shell_command=shell_cmd,
-                    incoming_metadata=intent_data.get("metadata", {}),
-                    confirm_text=confirm_txt,
-                )
-
-                # 存入数据库排队缓存区待批阅
-                new_mission = await sync_to_async(cls.create_shell_mission)(
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                    raw_content=content,
-                    shell_command=shell_cmd,
-                    metadata=mission_metadata,
-                )
-                logger.info(
-                    f"[WeChat Service] 挂起一条待审批任务 (ID: {new_mission.id})"
-                )
-
-                alert_text = mission_metadata.get("confirm_message") or cls._build_shell_confirm_message(
-                    confirm_text=confirm_txt,
-                    shell_command=shell_cmd,
-                )
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    alert_text,
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                )
-                return
-
-            # 3. 针对 CONFIRM, PERMANENT_ALLOW, DENY 处理 (这些必然是对之前的某个任务请求的回复)
-            # 抓取当前账户（或 BROADCAST）最近一个还在待审批状态的任务
-            pending_missions = await cls._find_pending_missions(account, wechat_user_id)
-            mission = cls._select_pending_mission(pending_missions, intent_type=intent_type)
-
-            logger.debug(
-                f"[WeChat Service] 查找任务: wechat_user_id={wechat_user_id}, 结果={'找到 ID=' + str(mission.id) if mission else '无'}"
-            )
-
-            if len(pending_missions) > 1 and mission is None:
-                reply_txt = "我这边同时有多条待确认任务。为了避免误执行，请您重新说清楚要确认哪一条。"
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    reply_txt,
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                )
-                return
-
-            if mission is None:
-                # 兜底逻辑：如果找不到挂起的，查查最近一个任务的状态，看是否已完成
-                base_filter = (
-                    Q(account=account) | Q(user_id="BROADCAST")
-                    if account
-                    else Q(user_id=wechat_user_id)
-                )
-                recent_any = await sync_to_async(
-                    lambda: Mission.objects.filter(base_filter)
-                    .order_by("-created_at")
-                    .first()
-                )()
-
-                if recent_any and recent_any.status != Mission.StatusChoices.PENDING:
-                    reply_txt = f"刚才的任务 (ID: {recent_any.id}) 已经处理过了，当前状态为【{recent_any.get_status_display()}】。"
-                else:
-                    reply_txt = (
-                        intent_data.get("response")
-                        or "目前并没有找到需要您授权操作的任务。"
+                if account and (mode == "command" or should_check_device_intent(normalized_content)):
+                    device_intent_started_at = time.perf_counter()
+                    device_intent = await analyze_device_intent(
+                        normalized_content,
+                        account,
+                        memory_context=memory_context,
+                        command_mode=(mode == "command"),
                     )
+                    logger.info(
+                        f"[Device Intent Result] {device_intent.get('type')} (elapsed={time.perf_counter() - device_intent_started_at:.2f}s)"
+                    )
+                    span.set_attribute("device.intent_type", str(device_intent.get("type") or ""))
 
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    reply_txt,
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                )
-                return
-
-            # 若任务尚未绑定账户（从 Monitor 广播产生），将其绑定到当前响应的账户
-            if not mission.account_id and account:
-                mission.account = account
-                mission.user_id = wechat_user_id
-                await sync_to_async(mission.save)()
-
-            # 4. 用户表示拒绝或不同意
-            if intent_type == "DENY":
-                mission.status = Mission.StatusChoices.REJECTED  # 标记拒绝
-                await sync_to_async(mission.save)()
-
-                reply_txt = intent_data.get("response", "好的，已将此任务作废。")
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    reply_txt,
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                )
-
-                # 如果这个指令是后台米家感知器抛出的，还需要重置掉耐心忍让计数器！
-                await cls._reset_counter_if_mijia(mission.original_prompt)
-                return
-
-            # 5. 用户表示放行
-            if intent_type in ["CONFIRM", "PERMANENT_ALLOW"]:
-                msg_ack = "🫡 正在全力执行，请稍候..."
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    msg_ack,
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                )
-
-                mission.status = Mission.StatusChoices.APPROVED
-                await sync_to_async(mission.save)()
-
-                # 区分是不是普通系统操作 还是米家设备修改动作
-                try:
-                    if mission.source_type == Mission.SourceTypeChoices.DEVICE_CONTROL:
-                        result = await DeviceCommandService.execute_device_operation(
-                            account,
-                            control_id=mission.control_id,
-                            operation_action=mission.operation_action,
-                            operation_value=mission.operation_value,
+                    if device_intent.get("type") in {"DEVICE_CONTROL", "DEVICE_QUERY"}:
+                        handled = await cls.handle_device_intent(
+                            intent=device_intent,
+                            message=message,
+                            bot=bot,
+                            account=account,
+                            wechat_user_id=wechat_user_id,
+                            raw_content=content,
+                            normalized_content=normalized_content,
+                            voice_transcript=voice_transcript,
                         )
-                        result_msg = cls._build_device_result_reply(
-                            intent=(mission.metadata or {}).get("intent_json", {}),
-                            result=result,
-                        )
-                        if result.get("success"):
-                            await sync_to_async(cls._record_device_context_from_mission)(
-                                mission,
-                                content=content,
-                                normalized_content=normalized_content,
-                                voice_transcript=voice_transcript,
-                                execution_result=result,
-                            )
-                        else:
-                            mission.status = Mission.StatusChoices.FAILED
-                            mission.metadata = {
-                                **(mission.metadata or {}),
-                                "execution_result": result,
-                            }
-                            await sync_to_async(mission.save)()
-                    elif mission.shell_command:
-                        result_msg = await ShellExecutor.execute_yolo(
-                            mission.shell_command
-                        )
+                        if handled:
+                            return
+
+                intent_started_at = time.perf_counter()
+                intent_data = await analyze_intent(
+                    normalized_content if mode == "command" else content,
+                    memory_context=memory_context,
+                )
+                intent_type = intent_data.get("type")
+                if intent_type == "simple":
+                    raw_response = str(intent_data.get("raw_response") or "").strip()
+                    logger.warning(
+                        "[WeChat Service] 通用意图解析未返回合规结构，已回退为聊天兜底。"
+                    )
+                    intent_data = (
+                        {
+                            "type": "CHAT",
+                            "response": raw_response,
+                        }
+                        if raw_response and mode != "command"
+                        else {
+                            "type": "CHAT",
+                            "response": "我刚才没有理解清楚，您可以换种说法再发一次。",
+                        }
+                    )
+                    intent_type = intent_data["type"]
+                logger.info(f"[Intent Result] {intent_type} (elapsed={time.perf_counter() - intent_started_at:.2f}s)")
+                span.set_attribute("intent.type", str(intent_type or ""))
+
+                if mode == "command" and (intent_type == "CHAT" or not intent_type):
+                    reply_text = "这是命令模式，但我还没理解您希望我执行什么操作。"
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        reply_text,
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                    )
+                    return
+
+                if intent_type == "CHAT" or not intent_type:
+                    reply_text = intent_data.get(
+                        "response", "系统分析您的指令时遇到了一点困惑。"
+                    )
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        reply_text,
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                    )
+                    return
+
+                if intent_type == "COMPLEX_SHELL":
+                    await cls._reply_progress(bot, message, "收到，稍等，我先整理一下操作计划。")
+                    shell_cmd = (
+                        intent_data.get("shell_prompt")
+                        or intent_data.get("command")
+                        or normalized_content
+                        or content
+                    )
+                    confirm_txt = intent_data.get(
+                        "confirm_text", "准备进行 Shell 操作，请指示："
+                    )
+                    mission_metadata = cls._build_shell_mission_metadata(
+                        raw_content=content,
+                        shell_command=shell_cmd,
+                        incoming_metadata=intent_data.get("metadata", {}),
+                        confirm_text=confirm_txt,
+                    )
+                    new_mission = await sync_to_async(cls.create_shell_mission)(
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                        raw_content=content,
+                        shell_command=shell_cmd,
+                        metadata=mission_metadata,
+                    )
+                    logger.info(
+                        f"[WeChat Service] 挂起一条待审批任务 (ID: {new_mission.id})"
+                    )
+                    span.set_attribute("mission.id", new_mission.id)
+                    span.set_attribute("mission.source_type", new_mission.source_type)
+                    alert_text = mission_metadata.get("confirm_message") or cls._build_shell_confirm_message(
+                        confirm_text=confirm_txt,
+                        shell_command=shell_cmd,
+                    )
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        alert_text,
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                    )
+                    return
+
+                pending_missions = await cls._find_pending_missions(account, wechat_user_id)
+                mission = cls._select_pending_mission(pending_missions, intent_type=intent_type)
+
+                logger.debug(
+                    f"[WeChat Service] 查找任务: wechat_user_id={wechat_user_id}, 结果={'找到 ID=' + str(mission.id) if mission else '无'}"
+                )
+                if mission:
+                    span.set_attribute("mission.id", mission.id)
+                    span.set_attribute("mission.source_type", mission.source_type)
+
+                if len(pending_missions) > 1 and mission is None:
+                    reply_txt = "我这边同时有多条待确认任务。为了避免误执行，请您重新说清楚要确认哪一条。"
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        reply_txt,
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                    )
+                    return
+
+                if mission is None:
+                    base_filter = (
+                        Q(account=account) | Q(user_id="BROADCAST")
+                        if account
+                        else Q(user_id=wechat_user_id)
+                    )
+                    recent_any = await sync_to_async(
+                        lambda: Mission.objects.filter(base_filter)
+                        .order_by("-created_at")
+                        .first()
+                    )()
+
+                    if recent_any and recent_any.status != Mission.StatusChoices.PENDING:
+                        reply_txt = f"刚才的任务 (ID: {recent_any.id}) 已经处理过了，当前状态为【{recent_any.get_status_display()}】。"
                     else:
-                        # 没有 shell 脚本说明是一次模拟的内部 API 操控
-                        # 这通常为内部监视器 (brain/monitor.py) 打好包送过来的
-                        result_msg = "✅ 内部代理控制成功完成！(Mijia Hook)"
-                except Exception as e:
-                    result_msg = f"❌ 执行异常: {str(e)}"
-                    mission.status = Mission.StatusChoices.FAILED
+                        reply_txt = (
+                            intent_data.get("response")
+                            or "目前并没有找到需要您授权操作的任务。"
+                        )
+
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        reply_txt,
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                    )
+                    return
+
+                if not mission.account_id and account:
+                    mission.account = account
+                    mission.user_id = wechat_user_id
                     await sync_to_async(mission.save)()
 
-                # 记录归档（如果没失败，保持为已通过或可以增加 EXECUTED 状态，目前暂以 APPROVED 为终点）
-                # 可根据需要细化
+                if intent_type == "DENY":
+                    mission.status = Mission.StatusChoices.REJECTED
+                    await sync_to_async(mission.save)()
 
-                # 特别：如果是感知模式过来的，且用户本次回复是永久放权
-                if intent_type == "PERMANENT_ALLOW":
-                    await cls._elevate_policy_if_mijia(mission.original_prompt)
-                    result_msg += "\n\n💡 已将您针对此情景下的偏好永久化存储，以后将默认自动帮您代劳而不必费心。"
+                    reply_txt = intent_data.get("response", "好的，已将此任务作废。")
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        reply_txt,
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                    )
+                    await cls._reset_counter_if_mijia(mission.original_prompt)
+                    return
 
-                # 特别：普通授权米家动作时增加其计数器
-                elif intent_type == "CONFIRM":
-                    await cls._increment_counter_if_mijia(mission.original_prompt)
+                if intent_type in ["CONFIRM", "PERMANENT_ALLOW"]:
+                    msg_ack = "🫡 正在全力执行，请稍候..."
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        msg_ack,
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                    )
 
-                await cls._reply_and_record(
-                    bot,
-                    message,
-                    result_msg,
-                    account=account,
-                    wechat_user_id=wechat_user_id,
-                )
-                logger.info(f"[WeChat Target] 任务彻底完成 (ID: {mission.id})")
-                return
+                    mission.status = Mission.StatusChoices.APPROVED
+                    await sync_to_async(mission.save)()
 
-        except Exception as e:
-            logger.error(f"[WeChat Target] 中枢流转发生阻断式故障: {str(e)}")
-            try:
-                await bot.reply(message, f"❌ 内部调度异常: {str(e)}")
-            except:
-                pass
+                    try:
+                        if mission.source_type == Mission.SourceTypeChoices.DEVICE_CONTROL:
+                            result = await DeviceCommandService.execute_device_operation(
+                                account,
+                                control_id=mission.control_id,
+                                operation_action=mission.operation_action,
+                                operation_value=mission.operation_value,
+                            )
+                            result_msg = cls._build_device_result_reply(
+                                intent=(mission.metadata or {}).get("intent_json", {}),
+                                result=result,
+                            )
+                            if result.get("success"):
+                                cls._schedule_background_job(
+                                    sync_to_async(cls._record_device_context_from_mission)(
+                                        mission,
+                                        content=content,
+                                        normalized_content=normalized_content,
+                                        voice_transcript=voice_transcript,
+                                        execution_result=result,
+                                    ),
+                                    label=f"device-context-mission:{mission.id}",
+                                )
+                            else:
+                                mission.status = Mission.StatusChoices.FAILED
+                                mission.metadata = {
+                                    **(mission.metadata or {}),
+                                    "execution_result": result,
+                                }
+                                await sync_to_async(mission.save)()
+                        elif mission.shell_command:
+                            result_msg = await ShellExecutor.execute_yolo(
+                                mission.shell_command
+                            )
+                        else:
+                            result_msg = "✅ 内部代理控制成功完成！(Mijia Hook)"
+                    except Exception as e:
+                        result_msg = f"❌ 执行异常: {str(e)}"
+                        mission.status = Mission.StatusChoices.FAILED
+                        await sync_to_async(mission.save)()
+
+                    if intent_type == "PERMANENT_ALLOW":
+                        await cls._elevate_policy_if_mijia(mission.original_prompt)
+                        result_msg += "\n\n💡 已将您针对此情景下的偏好永久化存储，以后将默认自动帮您代劳而不必费心。"
+                    elif intent_type == "CONFIRM":
+                        await cls._increment_counter_if_mijia(mission.original_prompt)
+
+                    await cls._reply_and_record(
+                        bot,
+                        message,
+                        result_msg,
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                    )
+                    logger.info(f"[WeChat Target] 任务彻底完成 (ID: {mission.id})")
+                    return
+
+            except Exception as e:
+                span.set_attribute("wechat.error", str(e))
+                logger.error(f"[WeChat Target] 中枢流转发生阻断式故障: {str(e)}")
+                try:
+                    await bot.reply(message, f"❌ 内部调度异常: {str(e)}")
+                except:
+                    pass
+            finally:
+                if typing_started:
+                    await cls._stop_typing(bot, wechat_user_id)
 
     @classmethod
     def _extract_message_content(cls, message) -> tuple[str, str, bool]:
@@ -392,12 +424,62 @@ class WeChatService:
     async def _reply_and_record(cls, bot, message, reply_text: str, *, account, wechat_user_id: str):
         await bot.reply(message, reply_text)
         if account:
-            await MemoryService.record_conversation(
-                account,
-                "assistant",
-                reply_text,
-                platform_user_id=wechat_user_id,
+            cls._schedule_background_job(
+                MemoryService.record_conversation(
+                    account,
+                    "assistant",
+                    reply_text,
+                    platform_user_id=wechat_user_id,
+                ),
+                label=f"assistant-memory:{wechat_user_id}",
             )
+
+    @classmethod
+    def _schedule_background_job(cls, coroutine, *, label: str):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(f"[WeChat Service] 无法调度后台任务: {label}，当前没有事件循环。")
+            return None
+
+        task = loop.create_task(coroutine)
+        cls._background_tasks.add(task)
+
+        def _on_done(done_task: asyncio.Task):
+            cls._background_tasks.discard(done_task)
+            try:
+                done_task.result()
+            except Exception as error:
+                logger.error(f"[WeChat Service] 后台任务失败 ({label}): {error}")
+
+        task.add_done_callback(_on_done)
+        return task
+
+    @classmethod
+    async def _reply_progress(cls, bot, message, reply_text: str):
+        await bot.reply(message, reply_text)
+
+    @classmethod
+    async def _send_typing(cls, bot, wechat_user_id: str) -> bool:
+        send_typing = getattr(bot, "send_typing", None)
+        if send_typing is None:
+            return False
+        try:
+            await send_typing(wechat_user_id)
+            return True
+        except Exception as error:
+            logger.warning(f"[WeChat Service] send_typing 失败: user_id={wechat_user_id}, error={error}")
+            return False
+
+    @classmethod
+    async def _stop_typing(cls, bot, wechat_user_id: str):
+        stop_typing = getattr(bot, "stop_typing", None)
+        if stop_typing is None:
+            return
+        try:
+            await stop_typing(wechat_user_id)
+        except Exception as error:
+            logger.warning(f"[WeChat Service] stop_typing 失败: user_id={wechat_user_id}, error={error}")
 
     @classmethod
     async def _find_pending_missions(cls, account, wechat_user_id: str) -> list[Mission]:
@@ -471,13 +553,88 @@ class WeChatService:
         normalized_content: str,
         voice_transcript: str,
     ) -> bool:
-        resolved = await DeviceCommandService.resolve_device_target(account, intent)
-        control = resolved.get("matched_control")
-        device = resolved.get("matched_device")
-        if control is None or device is None:
-            alternatives = resolved.get("alternatives") or []
-            if alternatives:
-                await sync_to_async(cls.create_device_clarification_mission)(
+        with cls.tracer.start_as_current_span("wechat.handle_device_intent") as span:
+            intent_started_at = time.perf_counter()
+            span.set_attribute("device.intent_type", str(intent.get("type") or ""))
+            span.set_attribute("device.room", str(intent.get("room") or ""))
+            span.set_attribute("device.name", str(intent.get("device") or ""))
+            span.set_attribute("device.control_key", str(intent.get("control_key") or ""))
+
+            resolved = await DeviceCommandService.resolve_device_target(account, intent)
+            control = resolved.get("matched_control")
+            device = resolved.get("matched_device")
+            if control is None or device is None:
+                span.set_attribute("device.resolved", False)
+                alternatives = resolved.get("alternatives") or []
+                if alternatives:
+                    await sync_to_async(cls.create_device_clarification_mission)(
+                        account=account,
+                        wechat_user_id=wechat_user_id,
+                        raw_content=raw_content,
+                        normalized_content=normalized_content,
+                        voice_transcript=voice_transcript,
+                        intent=intent,
+                        resolved=resolved,
+                    )
+                    reply_text = cls._build_clarification_prompt(alternatives)
+                    reply_text = cls._prepend_voice_transcript_confirmation(
+                        reply_text,
+                        voice_transcript=voice_transcript,
+                    )
+                else:
+                    reply_text = intent.get("error_hint") or "我没有找到对应的设备或控制项。"
+                await cls._reply_and_record(
+                    bot,
+                    message,
+                    reply_text,
+                    account=account,
+                    wechat_user_id=wechat_user_id,
+                )
+                return True
+
+            span.set_attribute("device.resolved", True)
+            span.set_attribute("device.external_id", device.external_id)
+            span.set_attribute("device.control_label", control.label)
+
+            if intent.get("type") == "DEVICE_QUERY":
+                await cls._reply_progress(bot, message, "收到，稍等，我帮您查一下设备状态。")
+                result = await DeviceCommandService.execute_device_query(
+                    resolved,
+                    account=account,
+                )
+                span.set_attribute("device.query.success", bool(result.get("success")))
+                logger.info(
+                    f"[Device Query Chain] 完成: room={intent.get('room') or '-'}, device={device.name}, control={control.label}, elapsed={time.perf_counter() - intent_started_at:.2f}s"
+                )
+                await cls._reply_and_record(
+                    bot,
+                    message,
+                    result.get("message", "查询完成。"),
+                    account=account,
+                    wechat_user_id=wechat_user_id,
+                )
+                return True
+
+            auth = await DeviceCommandService.check_authorization(
+                account,
+                resolved,
+                command_mode=(detect_command_mode(raw_content) == "command"),
+            )
+            span.set_attribute("device.auth.allowed", bool(auth.get("allowed")))
+            span.set_attribute("device.auth.need_confirm", bool(auth.get("need_confirm")))
+            span.set_attribute("device.auth.policy", str(auth.get("policy") or ""))
+            if not auth.get("allowed"):
+                await cls._reply_and_record(
+                    bot,
+                    message,
+                    "这条设备指令当前不允许直接执行。",
+                    account=account,
+                    wechat_user_id=wechat_user_id,
+                )
+                return True
+
+            if auth.get("need_confirm") or resolved.get("ambiguous"):
+                mission = await sync_to_async(cls.create_device_mission)(
                     account=account,
                     wechat_user_id=wechat_user_id,
                     raw_content=raw_content,
@@ -486,104 +643,63 @@ class WeChatService:
                     intent=intent,
                     resolved=resolved,
                 )
-                reply_text = cls._build_clarification_prompt(alternatives)
+                span.set_attribute("mission.id", mission.id)
+                span.set_attribute("mission.source_type", mission.source_type)
+                reply_text = (
+                    (mission.metadata or {}).get("confirm_message")
+                    or cls._build_device_confirm_message(device.name, control.label, intent.get("value"))
+                )
                 reply_text = cls._prepend_voice_transcript_confirmation(
                     reply_text,
                     voice_transcript=voice_transcript,
                 )
-            else:
-                reply_text = intent.get("error_hint") or "我没有找到对应的设备或控制项。"
-            await cls._reply_and_record(
-                bot,
-                message,
-                reply_text,
-                account=account,
-                wechat_user_id=wechat_user_id,
-            )
-            return True
+                await cls._reply_and_record(
+                    bot,
+                    message,
+                    reply_text,
+                    account=account,
+                    wechat_user_id=wechat_user_id,
+                )
+                return True
 
-        if intent.get("type") == "DEVICE_QUERY":
-            result = await DeviceCommandService.execute_device_query(resolved)
-            await cls._reply_and_record(
-                bot,
-                message,
-                result.get("message", "查询完成。"),
-                account=account,
-                wechat_user_id=wechat_user_id,
-            )
-            return True
-
-        auth = await DeviceCommandService.check_authorization(
-            account,
-            resolved,
-            command_mode=(detect_command_mode(raw_content) == "command"),
-        )
-        if not auth.get("allowed"):
-            await cls._reply_and_record(
-                bot,
-                message,
-                "这条设备指令当前不允许直接执行。",
-                account=account,
-                wechat_user_id=wechat_user_id,
-            )
-            return True
-
-        if auth.get("need_confirm") or resolved.get("ambiguous"):
-            mission = await sync_to_async(cls.create_device_mission)(
-                account=account,
-                wechat_user_id=wechat_user_id,
-                raw_content=raw_content,
-                normalized_content=normalized_content,
-                voice_transcript=voice_transcript,
-                intent=intent,
-                resolved=resolved,
-            )
-            reply_text = (
-                (mission.metadata or {}).get("confirm_message")
-                or cls._build_device_confirm_message(device.name, control.label, intent.get("value"))
-            )
-            reply_text = cls._prepend_voice_transcript_confirmation(
-                reply_text,
-                voice_transcript=voice_transcript,
-            )
-            await cls._reply_and_record(
-                bot,
-                message,
-                reply_text,
-                account=account,
-                wechat_user_id=wechat_user_id,
-            )
-            return True
-
-        result = await DeviceCommandService.execute_device_operation(
-            account,
-            control_id=control.external_id,
-            operation_action=str(intent.get("action") or ""),
-            operation_value=intent.get("value"),
-        )
-        if result.get("success"):
-            await sync_to_async(DeviceContextManager.record_operation)(
-                account=account,
-                device=device,
+            await cls._reply_progress(bot, message, "收到，稍等，我正在处理设备操作。")
+            result = await DeviceCommandService.execute_device_operation(
+                account,
                 control_id=control.external_id,
-                control_key=control.key,
-                operation_type=str(intent.get("action") or "set_property"),
-                value=intent.get("value"),
-                raw_user_msg=raw_content,
-                normalized_msg=normalized_content,
-                voice_transcript=voice_transcript,
-                intent_json=intent,
-                resolver_result=cls._serialize_resolved_target(resolved),
-                execution_result=result,
+                operation_action=str(intent.get("action") or ""),
+                operation_value=intent.get("value"),
             )
-        await cls._reply_and_record(
-            bot,
-            message,
-            cls._build_device_result_reply(intent=intent, result=result),
-            account=account,
-            wechat_user_id=wechat_user_id,
-        )
-        return True
+            span.set_attribute("device.control.success", bool(result.get("success")))
+            span.set_attribute("device.control.error", str(result.get("error") or ""))
+            logger.info(
+                f"[Device Control Chain] 完成: room={intent.get('room') or '-'}, device={device.name}, control={control.label}, elapsed={time.perf_counter() - intent_started_at:.2f}s"
+            )
+            if result.get("success"):
+                cls._schedule_background_job(
+                    sync_to_async(DeviceContextManager.record_operation)(
+                        account=account,
+                        device=device,
+                        control_id=control.external_id,
+                        control_key=control.key,
+                        operation_type=str(intent.get("action") or "set_property"),
+                        value=intent.get("value"),
+                        raw_user_msg=raw_content,
+                        normalized_msg=normalized_content,
+                        voice_transcript=voice_transcript,
+                        intent_json=intent,
+                        resolver_result=cls._serialize_resolved_target(resolved),
+                        execution_result=result,
+                    ),
+                    label=f"device-context-direct:{wechat_user_id}",
+                )
+            await cls._reply_and_record(
+                bot,
+                message,
+                cls._build_device_result_reply(intent=intent, result=result),
+                account=account,
+                wechat_user_id=wechat_user_id,
+            )
+            return True
 
     @classmethod
     def create_device_mission(
@@ -812,19 +928,22 @@ class WeChatService:
             operation_value=mission.operation_value,
         )
         if result.get("success"):
-            await sync_to_async(DeviceContextManager.record_operation)(
-                account=account,
-                device=device,
-                control_id=control.external_id,
-                control_key=control.key,
-                operation_type=mission.operation_action or "set_property",
-                value=(mission.operation_value or {}).get("value"),
-                raw_user_msg=mission.original_prompt,
-                normalized_msg=normalized_content,
-                voice_transcript=voice_transcript,
-                intent_json=intent_json,
-                resolver_result=cls._serialize_resolved_target(resolved),
-                execution_result=result,
+            cls._schedule_background_job(
+                sync_to_async(DeviceContextManager.record_operation)(
+                    account=account,
+                    device=device,
+                    control_id=control.external_id,
+                    control_key=control.key,
+                    operation_type=mission.operation_action or "set_property",
+                    value=(mission.operation_value or {}).get("value"),
+                    raw_user_msg=mission.original_prompt,
+                    normalized_msg=normalized_content,
+                    voice_transcript=voice_transcript,
+                    intent_json=intent_json,
+                    resolver_result=cls._serialize_resolved_target(resolved),
+                    execution_result=result,
+                ),
+                label=f"device-context-clarification:{mission.id}",
             )
         await cls._reply_and_record(
             bot,

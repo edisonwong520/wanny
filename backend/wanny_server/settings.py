@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'memory.apps.MemoryConfig',
     'providers.apps.ProvidersConfig',
     'devices.apps.DevicesConfig',
+    'scheduler.apps.SchedulerConfig',
 ]
 
 MIDDLEWARE = [

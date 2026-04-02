@@ -34,11 +34,23 @@ const homeAssistantAccessToken = ref("");
 const mideaCloudAccount = ref("");
 const mideaCloudPassword = ref("");
 const mideaCloudServer = ref<"1" | "2">("2"); // 默认美的美居
+const mbapi2020Account = ref("");
+const mbapi2020AccessToken = ref("");
+const mbapi2020RefreshToken = ref("");
+const mbapi2020ExpiresIn = ref("14399");
+const mbapi2020Region = ref<"Europe" | "North America" | "Asia-Pacific" | "China">("China");
 
 // 美的服务器选项
 const mideaServerOptions = computed(() => [
   { value: "2", label: t("manage.auth.servers.meiju") },
   { value: "1", label: t("manage.auth.servers.msmartHome") },
+]);
+
+const mbapi2020RegionOptions = computed(() => [
+  { value: "China", label: t("manage.auth.regions.china") },
+  { value: "Europe", label: t("manage.auth.regions.europe") },
+  { value: "North America", label: t("manage.auth.regions.northAmerica") },
+  { value: "Asia-Pacific", label: t("manage.auth.regions.asiaPacific") },
 ]);
 
 const modalProvider = computed(() =>
@@ -67,6 +79,7 @@ const modalQrImageUrl = computed(() => {
 
 const isHomeAssistantModal = computed(() => modalProvider.value?.platform === "home_assistant");
 const isMideaCloudModal = computed(() => modalProvider.value?.platform === "midea_cloud");
+const isMbApi2020Modal = computed(() => modalProvider.value?.platform === "mbapi2020");
 
 const homeAssistantInstanceName = computed(() => {
   const preview = modalProvider.value?.payload_preview ?? {};
@@ -75,6 +88,12 @@ const homeAssistantInstanceName = computed(() => {
 });
 
 const mideaCloudInstanceName = computed(() => {
+  const preview = modalProvider.value?.payload_preview ?? {};
+  const value = preview.instance_name;
+  return typeof value === "string" ? value : "";
+});
+
+const mbapi2020InstanceName = computed(() => {
   const preview = modalProvider.value?.payload_preview ?? {};
   const value = preview.instance_name;
   return typeof value === "string" ? value : "";
@@ -173,6 +192,23 @@ function openModal(platform: string) {
     mideaCloudPassword.value = "";
     mideaCloudServer.value = typeof preview.server === "number" ? String(preview.server) : "2";
   }
+  if (platform === "mbapi2020") {
+    const preview = provider?.payload_preview ?? {};
+    mbapi2020Account.value = typeof preview.account === "string" ? preview.account : "";
+    mbapi2020AccessToken.value = "";
+    mbapi2020RefreshToken.value = "";
+    mbapi2020ExpiresIn.value =
+      typeof preview.expires_in === "number" || typeof preview.expires_in === "string"
+        ? String(preview.expires_in)
+        : "14399";
+    mbapi2020Region.value =
+      preview.region === "China" ||
+      preview.region === "North America" ||
+      preview.region === "Asia-Pacific" ||
+      preview.region === "Europe"
+        ? preview.region
+        : "China";
+  }
 }
 
 function closeModal() {
@@ -180,6 +216,9 @@ function closeModal() {
   modalLoading.value = false;
   homeAssistantAccessToken.value = "";
   mideaCloudPassword.value = ""; // 清除密码
+  mbapi2020AccessToken.value = "";
+  mbapi2020RefreshToken.value = "";
+  mbapi2020ExpiresIn.value = "14399";
 }
 
 function handleDialogOpenChange(open: boolean) {
@@ -206,7 +245,11 @@ async function handleAuthorize(provider: ProviderRecord, force: boolean) {
 
 async function handleClick(provider: ProviderRecord) {
   // Home Assistant 或美的需要先输入配置信息，直接打开弹窗
-  if (provider.platform === "home_assistant" || provider.platform === "midea_cloud") {
+  if (
+    provider.platform === "home_assistant" ||
+    provider.platform === "midea_cloud" ||
+    provider.platform === "mbapi2020"
+  ) {
     openModal(provider.platform);
     return;
   }
@@ -265,6 +308,37 @@ async function handleMideaCloudAuthorize() {
     updateProvider(response.provider);
     sessions.value = { ...sessions.value, [provider.platform]: response.session };
     mideaCloudPassword.value = ""; // 清除密码
+    closeModal();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : t("manage.auth.errors.action");
+  } finally {
+    busyAction.value = "";
+    modalLoading.value = false;
+  }
+}
+
+async function handleMbApi2020Authorize() {
+  const provider = modalProvider.value;
+  if (!provider || provider.platform !== "mbapi2020") return;
+
+  modalLoading.value = true;
+  busyAction.value = `${provider.platform}:connect`;
+  errorMessage.value = "";
+
+  try {
+    const response = await startAuthorization(provider.platform, {
+      payload: {
+        account: mbapi2020Account.value.trim(),
+        access_token: mbapi2020AccessToken.value.trim(),
+        refresh_token: mbapi2020RefreshToken.value.trim() || undefined,
+        expires_in: mbapi2020ExpiresIn.value.trim() || undefined,
+        region: mbapi2020Region.value,
+      },
+    });
+    updateProvider(response.provider);
+    sessions.value = { ...sessions.value, [provider.platform]: response.session };
+    mbapi2020AccessToken.value = "";
+    mbapi2020RefreshToken.value = "";
     closeModal();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : t("manage.auth.errors.action");
@@ -466,6 +540,95 @@ onBeforeUnmount(() => stopAllPolling());
               :disabled="modalLoading || !mideaCloudAccount.trim() || !mideaCloudPassword.trim()"
               class="w-full rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
               @click="handleMideaCloudAuthorize"
+            >
+              {{ $t("manage.auth.actions.save") }}
+            </button>
+          </div>
+
+          <div v-if="isMbApi2020Modal" class="space-y-3">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.account") }}
+              </label>
+              <input
+                v-model="mbapi2020Account"
+                type="text"
+                :placeholder="$t('manage.auth.fields.accountOptionalPlaceholder')"
+                class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
+              />
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.accessToken") }}
+              </label>
+              <input
+                v-model="mbapi2020AccessToken"
+                type="password"
+                :placeholder="$t('manage.auth.fields.mbapiAccessTokenPlaceholder')"
+                class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
+              />
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.refreshToken") }}
+              </label>
+              <input
+                v-model="mbapi2020RefreshToken"
+                type="password"
+                :placeholder="$t('manage.auth.fields.refreshTokenPlaceholder')"
+                class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
+              />
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.expiresIn") }}
+              </label>
+              <input
+                v-model="mbapi2020ExpiresIn"
+                type="number"
+                min="1"
+                step="1"
+                :placeholder="$t('manage.auth.fields.expiresInPlaceholder')"
+                class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
+              />
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.region") }}
+              </label>
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  v-for="option in mbapi2020RegionOptions"
+                  :key="option.value"
+                  :class="[
+                    'px-4 py-2.5 rounded-full text-sm font-medium transition-all duration-200',
+                    mbapi2020Region === option.value
+                      ? 'bg-[#E8F8EC] text-[#07C160]'
+                      : 'bg-[#F7F7F7] text-[#888888] hover:bg-[#EDEDED] hover:text-[#333333]'
+                  ]"
+                  @click="mbapi2020Region = option.value"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="rounded-2xl border border-[#E8F1EA] bg-[#F5FBF7] px-4 py-3 text-xs text-[#4E6A57] leading-relaxed">
+              <div class="font-medium mb-1">{{ $t("manage.auth.hint.mbapi2020") }}</div>
+              <div class="text-[#6C8373]">{{ $t("manage.auth.hint.mbapi2020_token_info") }}</div>
+              <div v-if="mbapi2020InstanceName" class="mt-2 pt-2 border-t border-[#E8F1EA] text-[#6C8373]">
+                {{ $t("manage.auth.currentInstance") }}: {{ mbapi2020InstanceName }}
+              </div>
+            </div>
+
+            <button
+              :disabled="modalLoading || !mbapi2020AccessToken.trim()"
+              class="w-full rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+              @click="handleMbApi2020Authorize"
             >
               {{ $t("manage.auth.actions.save") }}
             </button>

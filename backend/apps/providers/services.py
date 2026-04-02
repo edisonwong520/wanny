@@ -18,6 +18,7 @@ from utils.crypto import encrypt_value, decrypt_value
 from utils.logger import logger
 
 from .models import PlatformAuth
+from .clients.mbapi2020 import MbApi2020Client
 from .clients.midea_cloud import MideaCloudClient
 
 
@@ -527,3 +528,79 @@ class MideaCloudAuthService:
         validated_payload = cls.validate_payload(payload)
         logger.info(f"[Midea Auth] Creating MideaCloudClient for account_id={account.id}")
         return MideaCloudClient(validated_payload)
+
+
+class MbApi2020AuthService:
+    platform_name = "mbapi2020"
+    platform_aliases = ("mbapi2020", "mercedes", "mercedes-benz", "mercedes_benz")
+
+    @classmethod
+    def get_auth_record(cls, account: Account, active_only: bool = False) -> PlatformAuth | None:
+        queryset = PlatformAuth.objects.filter(account=account, platform_name__in=cls.platform_aliases)
+        if active_only:
+            queryset = queryset.filter(is_active=True)
+
+        records = list(queryset.order_by("platform_name"))
+        for record in records:
+            if record.platform_name == cls.platform_name:
+                return record
+        return records[0] if records else None
+
+    @classmethod
+    def _extract_payload(cls, auth_obj: PlatformAuth | None) -> dict:
+        payload = getattr(auth_obj, "auth_payload", None)
+        return payload if isinstance(payload, dict) else {}
+
+    @classmethod
+    def validate_payload(cls, payload: dict) -> dict:
+        return MbApi2020Client.validate_payload(payload)
+
+    @classmethod
+    def validate_and_store(cls, account: Account, payload: dict) -> PlatformAuth:
+        logger.info(f"[MbApi2020 Auth] validate_and_store called for account_id={account.id}, email={account.email}")
+
+        validated_payload = cls.validate_payload(payload)
+        client = MbApi2020Client(validated_payload)
+        profile = client.get_account_profile()
+
+        auth_state = profile.get("auth_state", {})
+        validated_payload.update(auth_state)
+        validated_payload["account"] = profile.get("account") or validated_payload.get("account") or account.email
+        validated_payload["api_base"] = profile.get("api_base", "")
+        validated_payload["locale"] = profile.get("locale", validated_payload.get("locale", "en-GB"))
+        validated_payload["region"] = profile.get("region", validated_payload.get("region"))
+        validated_payload["nickname"] = profile.get("nickname", "")
+        validated_payload["vehicles"] = profile.get("vehicles", [])
+        validated_payload["pin_available"] = bool(profile.get("pin_available")) or bool(validated_payload.get("pin"))
+        validated_payload["instance_name"] = f"Mercedes-Benz ({validated_payload['region']})"
+
+        auth_obj, _ = PlatformAuth.objects.update_or_create(
+            account=account,
+            platform_name=cls.platform_name,
+            defaults={
+                "auth_payload": validated_payload,
+                "is_active": True,
+            },
+        )
+        logger.info(f"[MbApi2020 Auth] 已保存账户 {account.email} 的奔驰配置。")
+        return auth_obj
+
+    @classmethod
+    def get_client(cls, account: Account) -> MbApi2020Client:
+        auth_obj = cls.get_auth_record(account=account, active_only=True)
+        if auth_obj is None:
+            raise ValueError("No active mbapi2020 authorization found")
+
+        payload = cls._extract_payload(auth_obj)
+        if not payload:
+            raise ValueError("No active mbapi2020 authorization found")
+
+        validated_payload = cls.validate_payload(payload)
+
+        def persist_token_state(next_state: dict[str, object]) -> None:
+            merged_payload = dict(payload)
+            merged_payload.update(next_state)
+            PlatformAuth.objects.filter(pk=auth_obj.pk).update(auth_payload=merged_payload)
+            payload.update(next_state)
+
+        return MbApi2020Client(validated_payload, on_token_update=persist_token_state)

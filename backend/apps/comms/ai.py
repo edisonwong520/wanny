@@ -1,10 +1,15 @@
 import os
 import json
 import asyncio
+import time
 from openai import AsyncOpenAI
 from google import genai
 from google.genai import types
 from utils.logger import logger
+from utils.telemetry import get_tracer
+
+
+tracer = get_tracer(__name__)
 
 class AIAgent:
     """
@@ -38,61 +43,89 @@ class AIAgent:
         """
         根据当前初始化的客户端执行推理，强制要求返回 JSON 对象结构，最终转化并返回 dict。
         """
-        if self.provider == "none":
-            return {"type": "simple", "response": "[系统提示] 开发者尚未在 .env 中正确配置模型路由。"}
-            
-        content = ""
-        try:
-            if self.provider == "openai":
-                response = await self._openai_client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt.strip()},
-                        {"role": "user", "content": user_prompt}
-                    ]
-                )
-                content = response.choices[0].message.content.strip()
-            
-            elif self.provider == "gemini":
-                # 利用 Thread 规避同步阻塞，或使用新的 aio.models
-                def _run_gemini():
-                    res = self._gemini_client.models.generate_content(
-                        model=self.gemini_model_name,
-                        contents=user_prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_prompt.strip(),
-                            response_mime_type="application/json"
-                        )
+        with tracer.start_as_current_span("ai.generate_json") as span:
+            span.set_attribute("ai.provider", self.provider)
+            span.set_attribute("ai.model", self.model if self.provider == "openai" else self.gemini_model_name)
+
+            if self.provider == "none":
+                return {"type": "simple", "response": "[系统提示] 开发者尚未在 .env 中正确配置模型路由。"}
+
+            content = ""
+            started_at = time.perf_counter()
+            try:
+                if self.provider == "openai":
+                    response = await self._openai_client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt.strip()},
+                            {"role": "user", "content": user_prompt}
+                        ]
                     )
-                    return res.text.strip()
-                content = await asyncio.to_thread(_run_gemini)
-                
-            # 清理 DeepSeek 等推理模型可能附带的 <think>...</think> 思维链
-            import re
-            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-            
-            # 清理可能附带的 markdown 格式头尾
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            
-            # 尝试提取第一个完整的 JSON 对象
-            content = content.strip()
-            json_match = re.search(r'\{.*\}', content, flags=re.DOTALL)
-            if json_match:
-                content = json_match.group(0)
-            
-            return json.loads(content.strip())
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"[AI Agent] 模型没有返回合规 JSON，原文: {content}, 错误: {e}")
-            return {"type": "simple", "response": "[系统报错] 模型没有正确返回 JSON 格式，意图解析失败。"}
-        except Exception as e:
-            logger.error(f"[AI Agent] {self.provider} 请求发生异常: {str(e)}")
-            return {"type": "simple", "response": f"[系统报错] 大脑管线离线异常：{str(e)}"}
+                    content = response.choices[0].message.content.strip()
+
+                elif self.provider == "gemini":
+                    def _run_gemini():
+                        res = self._gemini_client.models.generate_content(
+                            model=self.gemini_model_name,
+                            contents=user_prompt,
+                            config=types.GenerateContentConfig(
+                                system_instruction=system_prompt.strip(),
+                                response_mime_type="application/json"
+                            )
+                        )
+                        return res.text.strip()
+                    content = await asyncio.to_thread(_run_gemini)
+
+                import re
+                content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+
+                if content.startswith("```json"):
+                    content = content[7:]
+                if content.startswith("```"):
+                    content = content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+
+                content = content.strip()
+                json_match = re.search(r'\{.*\}', content, flags=re.DOTALL)
+                if json_match:
+                    content = json_match.group(0)
+                result = json.loads(content.strip())
+                elapsed = time.perf_counter() - started_at
+                span.set_attribute("ai.elapsed_seconds", elapsed)
+                logger.info(
+                    f"[AI Agent] generate_json 完成: provider={self.provider}, model={self.model if self.provider == 'openai' else self.gemini_model_name}, elapsed={elapsed:.2f}s"
+                )
+                return result
+
+            except json.JSONDecodeError as e:
+                elapsed = time.perf_counter() - started_at
+                span.set_attribute("ai.elapsed_seconds", elapsed)
+                span.set_attribute("ai.error", "invalid_json")
+                logger.error(f"[AI Agent] 模型没有返回合规 JSON，原文: {content}, 错误: {e}")
+                logger.info(
+                    f"[AI Agent] generate_json 失败: provider={self.provider}, model={self.model if self.provider == 'openai' else self.gemini_model_name}, elapsed={elapsed:.2f}s, reason=invalid_json"
+                )
+                return {
+                    "type": "simple",
+                    "response": "[系统报错] 模型没有正确返回 JSON 格式，意图解析失败。",
+                    "raw_response": content.strip(),
+                    "error": "invalid_json",
+                }
+            except Exception as e:
+                elapsed = time.perf_counter() - started_at
+                span.set_attribute("ai.elapsed_seconds", elapsed)
+                span.set_attribute("ai.error", "provider_exception")
+                logger.error(f"[AI Agent] {self.provider} 请求发生异常: {str(e)}")
+                logger.info(
+                    f"[AI Agent] generate_json 失败: provider={self.provider}, model={self.model if self.provider == 'openai' else self.gemini_model_name}, elapsed={elapsed:.2f}s, reason=provider_exception"
+                )
+                return {
+                    "type": "simple",
+                    "response": f"[系统报错] 大脑管线离线异常：{str(e)}",
+                    "raw_response": "",
+                    "error": "provider_exception",
+                }
 
 
 async def analyze_intent(user_msg: str, memory_context: str = "") -> dict:
@@ -114,7 +147,7 @@ async def analyze_intent(user_msg: str, memory_context: str = "") -> dict:
     {
       "type": "CHAT",          // 一定要是 CHAT, COMPLEX_SHELL, CONFIRM, PERMANENT_ALLOW, DENY 这五个字符串之一
       "response": "仅当类型为 CHAT 或 DENY 时，用来直接回复用户的话术。Jarvis风格",
-      "shell_prompt": "仅 COMPLEX_SHELL 需要填写，向底壳传递的具体任务执行要求",
+      "shell_prompt": "仅 COMPLEX_SHELL 需要填写，向 Shell 传递的具体任务执行要求",
       "confirm_text": "仅 COMPLEX_SHELL 需要填写，发给用户请求人工同意的提示语",
       "metadata": {            // 仅当 COMPLEX_SHELL 时需要尽可能详细填写，用于前端展示
         "title": "任务摘要标题",

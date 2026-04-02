@@ -37,8 +37,8 @@ const mideaCloudServer = ref<"1" | "2">("2"); // 默认美的美居
 
 // 美的云服务器选项
 const mideaServerOptions = computed(() => [
-  { value: "1", label: t("manage.auth.servers.msmartHome") },
   { value: "2", label: t("manage.auth.servers.meiju") },
+  { value: "1", label: t("manage.auth.servers.msmartHome") },
 ]);
 
 const modalProvider = computed(() =>
@@ -442,7 +442,7 @@ onBeforeUnmount(() => stopAllPolling());
                   :class="[
                     'flex-1 px-4 py-2.5 rounded-full text-sm font-medium transition-all duration-200',
                     mideaCloudServer === option.value
-                      ? 'bg-[#07C160] text-white shadow-sm'
+                      ? 'bg-[#E8F8EC] text-[#07C160]'
                       : 'bg-[#F7F7F7] text-[#888888] hover:bg-[#EDEDED] hover:text-[#333333]'
                   ]"
                   @click="mideaCloudServer = option.value"

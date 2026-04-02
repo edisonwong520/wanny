@@ -34,8 +34,8 @@ PLATFORM_CATALOG = {
         "auth_mode": "form",
     },
     "midea_cloud": {
-        "display_name": "Midea Cloud",
-        "display_name_zh": "美的云",
+        "display_name": "Midea",
+        "display_name_zh": "美的",
         "category": "iot",
         "auth_mode": "form",
     },

@@ -7,6 +7,7 @@ import AppHeader from "@/components/AppHeader.vue";
 import { isAuthenticated } from "@/lib/auth";
 
 const { t, tm } = useI18n();
+const discordUrl = "https://discord.gg/zpSVespn";
 
 const primaryAction = computed(() => (isAuthenticated.value ? "/console" : "/register"));
 const primaryLabel = computed(() => (isAuthenticated.value ? t("landing.primary") : t("landing.secondary")));
@@ -147,7 +148,21 @@ onMounted(() => {
     </main>
 
     <footer class="border-t border-[#EDEDED] py-4 text-center text-sm text-[#888888]">
-      Wanny - {{ $t("landing.butler") }}
+      <div class="flex flex-col items-center justify-center gap-2 sm:flex-row sm:gap-3">
+        <span>Wanny - {{ $t("landing.butler") }}</span>
+        <span class="hidden sm:inline text-[#D7D7D7]">|</span>
+        <a
+          :href="discordUrl"
+          class="inline-flex items-center gap-2 text-[#888888] transition-colors duration-200 hover:text-[#5865F2]"
+          rel="noreferrer"
+          target="_blank"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20.317 4.369A19.791 19.791 0 0 0 15.885 3c-.191.328-.403.77-.554 1.117a18.27 18.27 0 0 0-5.487 0A11.64 11.64 0 0 0 9.29 3a19.736 19.736 0 0 0-4.438 1.372C2.047 8.578 1.285 12.68 1.666 16.73a19.9 19.9 0 0 0 5.301 2.663c.43-.587.813-1.21 1.142-1.866-.626-.236-1.223-.53-1.788-.876.149-.11.294-.223.434-.34 3.447 1.618 7.18 1.618 10.586 0 .142.117.287.23.434.34-.567.347-1.166.642-1.793.878.328.654.711 1.276 1.142 1.864a19.84 19.84 0 0 0 5.304-2.665c.447-4.701-.764-8.766-3.111-12.361ZM8.02 14.273c-1.03 0-1.877-.936-1.877-2.084 0-1.148.827-2.084 1.877-2.084 1.057 0 1.895.945 1.877 2.084 0 1.148-.828 2.084-1.877 2.084Zm7.94 0c-1.03 0-1.877-.936-1.877-2.084 0-1.148.827-2.084 1.877-2.084 1.057 0 1.895.945 1.877 2.084 0 1.148-.82 2.084-1.877 2.084Z"/>
+          </svg>
+          {{ $t("nav.discord") }}
+        </a>
+      </div>
     </footer>
   </div>
 </template>

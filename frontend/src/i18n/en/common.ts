@@ -19,5 +19,6 @@ export default {
     console: "Console",
     landing: "Home",
     github: "GitHub",
+    discord: "Discord",
   },
 };

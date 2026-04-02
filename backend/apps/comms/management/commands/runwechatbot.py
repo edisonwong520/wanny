@@ -12,6 +12,8 @@ from providers.models import PlatformAuth
 class Command(BaseCommand):
     help = "启动微信消息监听代理守护进程"
     credential_sync_interval_seconds = 5
+    auth_poll_interval_seconds = 5
+    auth_wait_log_interval_seconds = 60
     target_account_id = None
 
     def add_arguments(self, parser):

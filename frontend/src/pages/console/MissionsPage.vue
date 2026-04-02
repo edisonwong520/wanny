@@ -70,6 +70,21 @@ function selectMission(id: string) {
   selectedMissionId.value = id;
 }
 
+function canApproveMission(mission: MissionRecord) {
+  return mission.canApprove;
+}
+
+function canRejectMission(mission: MissionRecord) {
+  return mission.canReject;
+}
+
+function pendingHint(mission: MissionRecord) {
+  if (mission.sourceType === "device_clarification") {
+    return t("missions.hints.deviceClarificationPending");
+  }
+  return "";
+}
+
 async function handleApprove() {
   const mission = selectedMission.value;
   if (!mission || processing.value) return;
@@ -155,8 +170,9 @@ async function handleReject() {
                 <p class="text-sm text-[#555555] mb-5 leading-relaxed">{{ mission.summary }}</p>
 
                 <!-- 仅待处理状态展示按钮 -->
-                <div v-if="mission.status === 'pending'" class="flex gap-2 mb-5">
+                <div v-if="mission.status === 'pending'" class="flex gap-2 mb-3">
                   <button
+                    v-if="canApproveMission(mission)"
                     :disabled="processing"
                     class="px-5 py-2 rounded-full bg-[#07C160] text-white text-sm font-medium transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     @click="handleApprove"
@@ -164,6 +180,7 @@ async function handleReject() {
                     {{ processing ? "..." : $t("missions.actions.approve") }}
                   </button>
                   <button
+                    v-if="canRejectMission(mission)"
                     :disabled="processing"
                     class="px-5 py-2 rounded-full border border-[#dce6dd] bg-white text-[#888888] text-sm font-medium transition-all duration-200 hover:border-[#E84343]/30 hover:text-[#E84343] hover:bg-[#FFE8E8]/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     @click="handleReject"
@@ -171,16 +188,62 @@ async function handleReject() {
                     {{ processing ? "..." : $t("missions.actions.reject") }}
                   </button>
                 </div>
+                <p v-if="mission.status === 'pending' && pendingHint(mission)" class="mb-5 text-xs leading-5 text-[#888888]">
+                  {{ pendingHint(mission) }}
+                </p>
 
                 <div class="space-y-4 text-sm bg-white/50 p-4 rounded-xl">
+                  <div class="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.source") }}</div>
+                      <div class="text-[#333333] bg-white/80 p-2 rounded-lg border border-[#07C160]/5">{{ mission.source }}</div>
+                    </div>
+                    <div>
+                      <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.intent") }}</div>
+                      <div class="text-[#333333] bg-white/80 p-2 rounded-lg border border-[#07C160]/5">{{ mission.intent }}</div>
+                    </div>
+                  </div>
                   <div>
                     <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.userMessage") }}</div>
                     <div class="text-[#333333] bg-white/80 p-2 rounded-lg border border-[#07C160]/5">{{ mission.rawMessage }}</div>
+                  </div>
+                  <div v-if="mission.confirmMessage">
+                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.reply") }}</div>
+                    <div class="text-[#333333] bg-white/80 p-2 rounded-lg border border-[#07C160]/5">{{ mission.confirmMessage }}</div>
+                  </div>
+                  <div v-if="mission.resultMessage">
+                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.result") }}</div>
+                    <div class="text-[#333333] bg-[#E8F8EC]/70 p-2 rounded-lg border border-[#07C160]/10">{{ mission.resultMessage }}</div>
                   </div>
                   <div v-if="mission.commandPreview">
                     <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.command") }}</div>
                     <div class="font-mono text-[11px] text-[#07C160] bg-[#1e1e1e] p-3 rounded-lg overflow-x-auto shadow-inner">
                       {{ mission.commandPreview }}
+                    </div>
+                  </div>
+                  <div v-if="mission.plan.length > 0">
+                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.plan") }}</div>
+                    <div class="space-y-2">
+                      <div
+                        v-for="(step, index) in mission.plan"
+                        :key="`${mission.id}-plan-${index}`"
+                        class="text-[#333333] bg-white/80 p-2 rounded-lg border border-[#07C160]/5"
+                      >
+                        {{ index + 1 }}. {{ step }}
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="mission.timeline.length > 0">
+                    <div class="text-[#888888] text-xs mb-1.5 font-medium uppercase tracking-wider">{{ $t("missions.detail.timeline") }}</div>
+                    <div class="space-y-2">
+                      <div
+                        v-for="item in mission.timeline"
+                        :key="item.id"
+                        class="rounded-lg border border-[#07C160]/5 bg-white/80 p-2"
+                      >
+                        <div class="text-[11px] text-[#888888] mb-1">{{ item.time }}</div>
+                        <div class="text-[#333333]">{{ item.message }}</div>
+                      </div>
                     </div>
                   </div>
                 </div>

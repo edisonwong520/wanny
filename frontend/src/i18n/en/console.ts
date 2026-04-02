@@ -51,7 +51,7 @@ export default {
     },
     status: {
       pending: "Pending",
-      approved: "Approved",
+      approved: "Completed",
       failed: "Failed",
     },
     risk: {
@@ -73,6 +73,7 @@ export default {
       plan: "Steps",
       context: "Extra context",
       reply: "Reply preview",
+      result: "Execution result",
       timeline: "History",
     },
     timeline: {
@@ -80,6 +81,9 @@ export default {
       rejected: "You rejected this task.",
     },
     empty: "There are no tasks under the current filter.",
+    hints: {
+      deviceClarificationPending: "This task still needs the user to choose a device in WeChat before the console can continue.",
+    },
   },
   devices: {
     title: "Devices",

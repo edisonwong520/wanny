@@ -476,6 +476,31 @@ class DeviceDashboardService:
         return cls.request_refresh(account, trigger="control")
 
     @classmethod
+    def refresh_device(
+        cls,
+        account: Account,
+        *,
+        device_external_id: str,
+        trigger: str = "query",
+    ) -> dict:
+        device = DeviceSnapshot.objects.filter(account=account, external_id=device_external_id).first()
+        if device is None:
+            raise ValueError("Device not found")
+        control = (
+            DeviceControl.objects.filter(account=account, device=device)
+            .order_by("sort_order", "id")
+            .first()
+        )
+        if control is None:
+            raise ValueError("Control not found")
+        return cls._refresh_device_after_control(
+            account,
+            device=device,
+            control=control,
+            trigger=trigger,
+        )
+
+    @classmethod
     def has_active_device_provider_auth(cls, account: Account) -> bool:
         return PlatformAuth.objects.filter(
             account=account,

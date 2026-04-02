@@ -1,5 +1,6 @@
 export type MissionStatus = "pending" | "approved" | "failed";
 export type MissionRisk = "high" | "medium" | "low";
+export type MissionSourceType = "shell" | "device_control" | "device_clarification";
 
 export interface MissionTimelineEntry {
   id: string;
@@ -10,6 +11,7 @@ export interface MissionTimelineEntry {
 export interface MissionRecord {
   id: string;
   status: MissionStatus;
+  sourceType: MissionSourceType;
   risk: MissionRisk;
   createdAt: string;
   title: string;
@@ -21,6 +23,10 @@ export interface MissionRecord {
   plan: string[];
   context: string[];
   suggestedReply: string;
+  confirmMessage: string;
+  resultMessage: string;
+  canApprove: boolean;
+  canReject: boolean;
   timeline: MissionTimelineEntry[];
 }
 

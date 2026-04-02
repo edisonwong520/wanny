@@ -51,7 +51,7 @@ export default {
     },
     status: {
       pending: "待处理",
-      approved: "已启用",
+      approved: "已完成",
       failed: "失败",
     },
     risk: {
@@ -73,6 +73,7 @@ export default {
       plan: "执行步骤",
       context: "背景上下文",
       reply: "回复预览",
+      result: "执行结果",
       timeline: "任务轨迹",
     },
     timeline: {
@@ -80,6 +81,9 @@ export default {
       rejected: "您拒绝了这个任务。",
     },
     empty: "当前筛选条件下没有任务。",
+    hints: {
+      deviceClarificationPending: "这类任务需要用户先在微信里补充设备选择，Web 控制台暂不支持直接批准执行。",
+    },
     errors: {
       load: "无法加载任务列表，请稍后刷新。",
     },

@@ -122,13 +122,16 @@ class Command(BaseCommand):
 
         from wechatbot import WeChatBot
         from brain.monitor import MonitorService
+        from care.services.push import CarePushService
         from comms.services import WeChatService
+        from comms.bot_runtime import set_current_bot
         from memory.review import ReviewEngine
 
         logger.info("[WeChat Bot] 正在初始化底层的 wechatbot-sdk...")
 
         # 初始化 wechatbot-sdk 实例并应用凭证路径
         bot = WeChatBot(cred_path=cred_file)
+        set_current_bot(bot)
 
         @bot.on_message
         async def handle_message(message):
@@ -150,6 +153,8 @@ class Command(BaseCommand):
             asyncio.create_task(MonitorService.loop_start(bot))
             # 开启每日复盘引擎并行协程
             asyncio.create_task(ReviewEngine.loop_start(bot))
+            # 开启主动关怀推送循环
+            asyncio.create_task(CarePushService.loop_start(bot))
             # 配合 asyncio，调用真实的底层异步入口
             await bot._run_sync()
 

@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     # Custom Apps
     'accounts.apps.AccountsConfig',
     'brain.apps.BrainConfig',
+    'care.apps.CareConfig',
     'comms.apps.CommsConfig',
     'database.apps.DatabaseConfig',
     'memory.apps.MemoryConfig',

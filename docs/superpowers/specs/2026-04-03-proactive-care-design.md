@@ -2,10 +2,20 @@
 
 ## 1. 功能概述
 
-为 Wanny 增加"主动巡检"和"人文关怀"两类智能建议能力：
+为 Wanny 增加"主动巡检"和"人文关怀"两类智能建议能力。
 
-- **主动巡检**：设备保养提醒（滤芯更换、清洁周期）、健康监控（离线、异常功耗）、用户自定义规则
-- **人文关怀**：环境联动（天气变化→设备调节）、生活节奏（作息习惯）、特殊事件（极端天气、节假日）
+当前主干实现状态：
+- `care` 独立应用、数据模型、基础 API、前端 `CareCenterPage/CareRulesPage` 已落地
+- 定时巡检、天气抓取、微信主动推送均已接入 APScheduler / WeChat bot 常驻循环
+- `FeedbackLearner` 已接入 `ProactiveLog + UserProfile`
+- 系统规则初始化、天气源配置、HA 天气实体读取、缓存降级已可用
+- 规则配置器单位感知/推荐值联动、关怀中心 push audit、`tests/scripts/care/` 脚本目录已补齐
+- `CareSuggestionCard.vue`、`ConfirmActionDialog.vue` 已拆分为独立组件
+- 关怀中心已提供推送策略总览卡；聚合来源已语义化到规则名 / 数据源名 / 事件说明
+- 规则配置器已扩充更多字段预设，并支持建议模板快捷插入
+
+- **主动巡检**：设备保养提醒（滤芯更换、低水位）、健康监控（离线）、用户自定义规则
+- **人文关怀**：环境联动（天气变化→设备调节）、后续可继续扩展生活节奏与特殊事件
 
 **核心特性**：
 - 时间驱动 + 事件驱动混合触发
@@ -60,7 +70,7 @@ class CareSuggestion:
     status: "pending" | "approved" | "rejected" | "ignored" | "executed"
     user_feedback: dict                                # 用户反馈记录
     feedback_collected_at: datetime                    # 反馈时间
-    aggregated_from: list[int]                         # 合并来源 ID 列表
+    aggregated_from: list[int | str]                  # 合并来源标识（规则 ID / 源 ID）
     created_at: datetime
     account: Account
 ```
@@ -91,10 +101,13 @@ class ExternalDataSource:
 **HA 实体配置示例**：
 ```json
 {
-  "ha_entity_id": "weather.home",
-  "ha_base_url": "http://homeassistant.local:8123"
+  "ha_entity_id": "weather.home"
 }
 ```
+
+说明：
+- HA 鉴权不放在 `ExternalDataSource.config`，而是复用现有 `home_assistant` Provider 授权
+- `weather_api` 既支持 Open-Meteo，也支持自定义 endpoint/params/字段路径
 
 ## 3. 触发与执行流程
 
@@ -143,7 +156,7 @@ class ExternalDataSource:
 [用户点击"采纳"]
     ↓
 [创建 Mission 任务]
-    ├── source_type = "care_suggestion"
+    ├── 当前复用 source_type = "device_control"
     └── 解析 action_spec
     ↓
 [展示二次确认详情]
@@ -185,9 +198,9 @@ backend/apps/
 ├── devices/                 # 扩展
 │   └── monitor.py          # 增加事件订阅
 │
-├── comms/                   # 扩展
-│   ├── models.py           # Mission 增加 source_type: "care_suggestion"
-│   └── executor.py         # 支持 CareSuggestion 关联
+├── comms/                   # 复用
+│   ├── models.py           # 当前复用既有 Mission.SourceTypeChoices.DEVICE_CONTROL
+│   └── management/commands/runwechatbot.py
 │
 ├── memory/                  # 扩展
 │   ├── models.py           # ProactiveLog 增加 source: "care"
@@ -198,30 +211,25 @@ backend/apps/
 
 | 服务 | 职责 | 输入 | 输出 |
 |------|------|------|------|
-| InspectionScanner | 定时巡检 | InspectionRule 列表 | 原始建议列表 |
-| SuggestionAggregator | 聚合去重 | 原始建议 | CareSuggestion |
-| CareEventProcessor | 事件处理 | 天气/设备变化 | 原始建议 |
+| InspectionScanner | 定时巡检 | InspectionRule 列表 | CareSuggestion |
+| SuggestionAggregator | 聚合去重/合并更新 | 候选建议 | CareSuggestion |
+| CareEventProcessor | 事件处理 | 天气/设备变化 | CareSuggestion |
 | WeatherDataService | 天气获取 | 位置、配置 | 天气快照 |
 | FeedbackLearner | 反馈学习 | 用户反馈 | 权重 + UserProfile |
+| CarePushService | 微信分批推送 | 待处理建议 | 微信消息投递 |
 
 ### 4.3 定时任务配置
 
 ```python
-CELERYBEAT_SCHEDULE = {
-    'inspection-daily': {
-        'task': 'care.services.scanner.run_daily_inspection',
-        'schedule': crontab(hour=8, minute=0),
-    },
-    'weather-fetch': {
-        'task': 'care.services.weather.fetch_weather_data',
-        'schedule': crontab(minute='*/30'),
-    },
-    'rule-specific-checks': {
-        'task': 'care.services.scanner.run_rule_checks',
-        'schedule': crontab(minute='*/5'),
-    },
-}
+register_default_schedules(...)
+├── run_periodic_inspection           # 每 1 小时
+├── fetch_weather_and_generate_care   # 每 30 分钟
+└── deliver_care_suggestions          # 每 15 分钟
 ```
+
+当前实现说明：
+- 项目使用 APScheduler 4 持久化调度，不使用 Celery Beat
+- WeChat bot 进程内还会额外启动 `CarePushService.loop_start(bot)`，在活跃微信上下文存在时尝试主动推送
 
 ## 5. 前端界面
 
@@ -235,14 +243,16 @@ frontend/src/pages/console/
 │   ├── 二次确认弹窗
 │   └── 规则配置入口
 │
-├── CareRulesPage.vue        # 规则配置
+├── CareRulesPage.vue        # 规则配置 + 天气源配置
 │   ├── 系统预置规则
 │   ├── 用户自定义规则
+│   ├── condition builder
 │   ├── 启用/禁用开关
-│   └── 频率调整
+│   └── 天气源配置
 │
-└── SettingsPage.vue         # 扩展
-    └── 天气 API 配置
+frontend/src/components/console/care/
+├── CareSuggestionCard.vue   # 建议卡片
+└── ConfirmActionDialog.vue  # 执行确认弹窗
 ```
 
 ### 5.2 建议卡片组件
@@ -324,7 +334,12 @@ GET  /api/care/weather/current/
 - **按设备分组**：同一设备多条建议合并
 - **按规则类型分组**：同类巡检规则合并
 - **按时间窗口分组**：短时间内同类建议合并
-- **aggregated_from** 记录原始 ID 列表
+- **aggregated_from** 记录规则 ID / 源 ID 列表
+
+当前实现说明：
+- 当前主聚合键基于 `device/control/field` 或天气事件源 `dedupe_key`
+- 命中重复时不会新建，而是更新已有 `CareSuggestion` 的 `aggregated_count / aggregated_from / source_event`
+- 当前 `GET /api/care/suggestions/` 会额外返回 `aggregationSources`，前端展示为规则名、数据源名或事件说明，而不是直接显示 marker
 
 ### 7.2 优先级计算公式
 
@@ -358,6 +373,11 @@ priority_score = (
 - 同设备同类建议 24h 冷却
 - 用户忽略建议 48h 冷却
 
+当前实现状态：
+- 已实现：单次最多 3 条、高优先级优先、中优先级每小时限 1 次、低优先级仅控制台、24h 重复推送间隔、忽略后 48h 冷却
+- 已实现：关怀中心详情页展示 push audit，包括推送等级、最近推送时间、再次可推送时间、忽略冷却截止与抑制原因
+- 已实现：关怀中心左侧提供推送策略总览卡，聚合展示高/中/低优先级、仅控制台、忽略冷却和重复推送冷却数量
+
 ## 8. 错误处理
 
 | 场景 | 处理策略 |
@@ -375,28 +395,23 @@ priority_score = (
 
 ## 9. 测试策略
 
-### 9.1 单元测试
+### 9.1 当前测试覆盖
 
 ```
-tests/unit/care/
-├── test_scanner.py
-├── test_aggregator.py
-├── test_processor.py
-├── test_learner.py
-├── test_weather.py
-└── test_rule_condition.py
+backend/tests/unit/
+├── test_care_scanner.py
+├── test_care_weather.py
+├── test_care_push.py
+└── test_scheduler_registration.py
 ```
 
-### 9.2 集成测试
+### 9.2 当前集成测试覆盖
 
 ```
-tests/integration/care/
-├── test_inspection_flow.py
-├── test_care_event_flow.py
-├── test_feedback_learning.py
-├── test_execution_chain.py
-├── test_aggregation_merge.py
-└── test_external_data_source.py
+backend/tests/integration/
+├── test_care_api.py
+├── test_care_weather_api.py
+└── test_care_push_flow.py
 ```
 
 ### 9.3 验证脚本
@@ -409,36 +424,36 @@ tests/scripts/care/
 └── benchmark_aggregator.py
 ```
 
+补充说明：
+- `test_care_api.py` 已覆盖 `pushAudit` 序列化字段
+- `test_care_push.py` 已覆盖忽略后 48h 冷却
+
 ## 10. 实施里程碑
 
-### Phase 1 - 基础框架（1-2 周）
+### Phase 1 - 基础框架
+- 已完成：数据模型、InspectionScanner、CareCenterPage、建议 API、微信推送主链路
 
-- 数据模型：CareSuggestion, InspectionRule, ExternalDataSource
-- InspectionScanner（基础定时巡检）
-- SuggestionAggregator（简单聚合）
-- 建议列表 API + CareCenterPage 基础展示
-- 微信推送集成
+### Phase 2 - 事件驱动与天气
+- 已完成：CareEventProcessor、WeatherDataService（天气 API + HA 双源）、外部数据源配置 API、前端天气展示
 
-### Phase 2 - 事件驱动与天气（1 周）
+### Phase 3 - 智能聚合与学习
+- 已完成：完整聚合逻辑、优先级调节、FeedbackLearner、分批推送策略、忽略后 48h 冷却、关怀中心 push audit 展示
 
-- CareEventProcessor
-- WeatherDataService（天气 API + HA 双源）
-- 外部数据源配置 API
-- 前端天气展示
+### Phase 4 - 规则配置
+- 已完成：CareRulesPage、规则 CRUD API、用户自定义规则、condition_spec 校验、condition builder、字段推荐值/单位感知联动、更多字段预设、建议模板快捷插入
+- 剩余细化：拖拽式模板
 
-### Phase 3 - 智能聚合与学习（1 周）
+### Phase 5 - 脚本与组件整理
+- 已完成：`tests/scripts/care/` 脚本目录、`CareSuggestionCard.vue`、`ConfirmActionDialog.vue`
 
-- 完整聚合逻辑
-- 优先级计算公式
-- FeedbackLearner（权重 + 画像融合）
-- 分批推送策略
+### Phase 6 - 可视化解释
+- 已完成：推送策略总览卡、push audit、聚合来源语义化展示
 
-### Phase 4 - 规则配置（1 周）
+## 12. 当前剩余工作
 
-- CareRulesPage
-- 规则 CRUD API
-- 用户自定义规则
-- condition_spec 校验与可视化配置
+- 文档与 README 持续对齐
+- 规则配置器拖拽式模板编排
+- 更多 care 自动化测试
 
 ## 11. 技术依赖
 

@@ -7,6 +7,8 @@ import LoginPage from "@/pages/LoginPage.vue";
 import DevicesPage from "@/pages/console/DevicesPage.vue";
 import ManagePage from "@/pages/console/ManagePage.vue";
 import MissionsPage from "@/pages/console/MissionsPage.vue";
+import CareCenterPage from "@/pages/console/CareCenterPage.vue";
+import CareRulesPage from "@/pages/console/CareRulesPage.vue";
 import { isAuthenticated } from "@/lib/auth";
 
 const router = createRouter({
@@ -49,6 +51,16 @@ const router = createRouter({
           path: "missions",
           name: "console-missions",
           component: MissionsPage,
+        },
+        {
+          path: "care",
+          name: "console-care",
+          component: CareCenterPage,
+        },
+        {
+          path: "care/rules",
+          name: "console-care-rules",
+          component: CareRulesPage,
         },
         {
           path: "manage",

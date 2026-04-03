@@ -35,6 +35,9 @@ async def register_default_schedules(scheduler):
         keyword_learning_interval_user_seconds,
         keyword_learning_interval_global_seconds,
     )
+    from care.tasks import deliver_care_suggestions
+    from care.tasks import run_periodic_inspection
+    from care.tasks import fetch_weather_and_generate_care
 
     # Daily memory review at 2 AM Beijing time
     await scheduler.add_schedule(
@@ -86,6 +89,30 @@ async def register_default_schedules(scheduler):
         conflict_policy="replace",
     )
     logger.info("Registered schedule: run_global_keyword_learning")
+
+    await scheduler.add_schedule(
+        run_periodic_inspection,
+        IntervalTrigger(hours=1),
+        id="run_periodic_inspection",
+        conflict_policy="replace",
+    )
+    logger.info("Registered schedule: run_periodic_inspection (interval: 1h)")
+
+    await scheduler.add_schedule(
+        fetch_weather_and_generate_care,
+        IntervalTrigger(minutes=30),
+        id="fetch_weather_and_generate_care",
+        conflict_policy="replace",
+    )
+    logger.info("Registered schedule: fetch_weather_and_generate_care (interval: 30min)")
+
+    await scheduler.add_schedule(
+        deliver_care_suggestions,
+        IntervalTrigger(minutes=15),
+        id="deliver_care_suggestions",
+        conflict_policy="replace",
+    )
+    logger.info("Registered schedule: deliver_care_suggestions (interval: 15min)")
 
 
 def register_default_tasks():

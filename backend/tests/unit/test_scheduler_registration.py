@@ -23,6 +23,9 @@ async def test_register_default_schedules_includes_keyword_jobs(monkeypatch):
     assert "refresh_global_keyword_cache" in added_ids
     assert "run_user_keyword_learning" in added_ids
     assert "run_global_keyword_learning" in added_ids
+    assert "run_periodic_inspection" in added_ids
+    assert "fetch_weather_and_generate_care" in added_ids
+    assert "deliver_care_suggestions" in added_ids
 
 
 def test_scheduler_keyword_interval_helpers_use_env(monkeypatch):

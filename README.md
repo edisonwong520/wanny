@@ -105,9 +105,21 @@ That is also why this project keeps expanding toward more device integrations an
 ## 📖 Project Documents
 
 - The system overview lives in [2026-03-29-wanny-design.md](./docs/superpowers/specs/2026-03-29-wanny-design.md).
+- The proactive care design and implementation status lives in [2026-04-03-proactive-care-design.md](./docs/superpowers/specs/2026-04-03-proactive-care-design.md).
 - The roadmap lives in [docs/ROADMAP.md](./docs/ROADMAP.md).
 - Detailed specifications and implementation notes live under [`docs/superpowers/specs`](./docs/superpowers/specs).
 - Chinese documentation is available in [README.zh-CN.md](./README.zh-CN.md).
+
+## 💡 Proactive Care Quick Start
+
+1. Connect at least one device platform and, if needed, a Home Assistant account.
+2. Open the console and go to `Care`.
+3. Add a weather source in `Care Rules`.
+4. Review system rules or create a custom rule with the condition builder.
+5. Run `Scan now` or refresh weather to generate suggestions.
+6. Approve, reject, ignore, or execute suggestions from the care center.
+
+For the current backend/frontend scope, scheduler behavior, and remaining gaps, see [2026-04-03-proactive-care-design.md](./docs/superpowers/specs/2026-04-03-proactive-care-design.md).
 
 ## 🖥️ Frontend Workspace
 

@@ -11,11 +11,12 @@ const { t } = useI18n();
 const tabs = computed(() => [
   { to: "/console/devices", label: t("console.nav.devices") },
   { to: "/console/missions", label: t("console.nav.tasks") },
+  { to: "/console/care", label: t("console.nav.care") },
   { to: "/console/manage", label: t("console.nav.manage") },
 ]);
 
 function isActive(path: string) {
-  return route.path === path;
+  return route.path === path || route.path.startsWith(`${path}/`);
 }
 </script>
 

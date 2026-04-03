@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from comms.models import DeviceOperationContext
+from comms.models import ChatMessage, DeviceOperationContext
 
 
 class DeviceContextManager:
@@ -16,6 +16,7 @@ class DeviceContextManager:
         cls,
         *,
         account,
+        platform_user_id: str = "",
         device,
         control_id: str = "",
         control_key: str,
@@ -30,6 +31,7 @@ class DeviceContextManager:
     ) -> DeviceOperationContext:
         record = DeviceOperationContext.objects.create(
             account=account,
+            platform_user_id=platform_user_id,
             device=device,
             control_id=control_id,
             control_key=control_key,
@@ -42,6 +44,7 @@ class DeviceContextManager:
             resolver_result=resolver_result or {},
             execution_result=execution_result or {},
         )
+        cls._link_chat_message(record=record, raw_user_msg=raw_user_msg, platform_user_id=platform_user_id)
         stale_ids = list(
             DeviceOperationContext.objects.filter(account=account)
             .order_by("-operated_at")
@@ -50,6 +53,32 @@ class DeviceContextManager:
         if stale_ids:
             DeviceOperationContext.objects.filter(id__in=stale_ids).delete()
         return record
+
+    @classmethod
+    def _link_chat_message(cls, *, record: DeviceOperationContext, raw_user_msg: str, platform_user_id: str):
+        normalized_user_id = str(platform_user_id or "").strip()
+        normalized_msg = str(raw_user_msg or "").strip()
+        if not normalized_user_id or not normalized_msg:
+            return
+
+        recent_window_start = record.operated_at - timedelta(minutes=30)
+        chat_message = (
+            ChatMessage.objects.filter(
+                account=record.account,
+                role=ChatMessage.RoleChoices.USER,
+                platform_user_id=normalized_user_id,
+                content=normalized_msg,
+                linked_device_context__isnull=True,
+                created_at__gte=recent_window_start,
+                created_at__lte=record.operated_at,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if chat_message is None:
+            return
+        chat_message.linked_device_context = record
+        chat_message.save(update_fields=["linked_device_context"])
 
     @classmethod
     def get_recent_context(cls, account, limit: int = 5) -> list[dict]:

@@ -4,6 +4,7 @@ from django.test import TestCase
 
 from accounts.models import Account
 from comms.device_intent import (
+    _postprocess_ai_result,
     analyze_device_intent,
     detect_command_mode,
     should_check_device_intent,
@@ -33,6 +34,22 @@ class DeviceIntentParserTest(TestCase):
         self.assertTrue(should_check_device_intent("把卧室空调调到 24 度"))
         self.assertTrue(should_check_device_intent("查下客厅灯状态"))
         self.assertFalse(should_check_device_intent("帮我写个总结"))
+
+    def test_should_check_device_intent_accepts_dynamic_keyword_cache(self):
+        self.assertTrue(
+            should_check_device_intent(
+                "check aircon status",
+                keyword_cache={
+                    "devices": {"aircon"},
+                    "rooms": set(),
+                    "controls": set(),
+                    "actions": set(),
+                    "colloquial": set(),
+                    "mapping": {"aircon": "空调"},
+                    "payloads": {},
+                },
+            )
+        )
 
     def test_analyze_device_intent_heuristic_handles_relative_adjustment(self):
         import asyncio
@@ -161,3 +178,27 @@ class DeviceIntentParserTest(TestCase):
 
         self.assertEqual(result["type"], "UNSUPPORTED_COMMAND")
         self.assertEqual(result["reason"], "heuristic_unmatched")
+
+    def test_postprocess_ai_result_normalizes_target_temperature_key(self):
+        result = _postprocess_ai_result(
+            {
+                "type": "DEVICE_QUERY",
+                "device": "空调",
+                "control_key": "climate.bedroom_ac:target_temperature",
+            },
+            user_msg="我想知道卧室现在有多热",
+        )
+
+        self.assertEqual(result["control_key"], "temperature")
+
+    def test_postprocess_ai_result_corrects_vehicle_fuel_query(self):
+        result = _postprocess_ai_result(
+            {
+                "type": "DEVICE_QUERY",
+                "device": "车",
+                "control_key": "power",
+            },
+            user_msg="帮我看看车子还剩多少油",
+        )
+
+        self.assertEqual(result["control_key"], "tanklevelpercent")

@@ -10,12 +10,12 @@ from utils.logger import logger
 from comms.models import Mission
 from brain.models import HabitPolicy, ObservationCounter
 from comms.ai import analyze_intent
+from comms.command_router import route_command
 from comms.device_command_service import DeviceCommandService
 from comms.device_context_manager import DeviceContextManager
 from comms.device_intent import (
     analyze_device_intent,
     detect_command_mode,
-    should_check_device_intent,
     strip_wakeup_prefix,
 )
 from comms.executor import ShellExecutor
@@ -136,18 +136,37 @@ class WeChatService:
                     if clarification_handled:
                         return
 
-                if account and (mode == "command" or should_check_device_intent(normalized_content)):
+                router_result = None
+                if account:
+                    router_result = await route_command(
+                        normalized_content,
+                        account=account,
+                        command_mode=(mode == "command"),
+                    )
+                    span.set_attribute("device.route", str(router_result.get("route") or ""))
+                    span.set_attribute("device.route_reason", str(router_result.get("reason") or ""))
+                    route_signals = router_result.get("signals") or {}
+                    span.set_attribute("device.route_english_signals", int(route_signals.get("english") or 0))
+                    span.set_attribute("device.route_colloquial_signals", int(route_signals.get("colloquial") or 0))
+                    span.set_attribute("device.route_multi_intent_signals", int(route_signals.get("multi_intent") or 0))
+                    span.set_attribute("device.route_query_signals", int(route_signals.get("query") or 0))
+                    span.set_attribute("device.route_length", int(route_signals.get("length") or 0))
+                    span.set_attribute("device.route_has_signal", bool(route_signals.get("has_device_signal")))
+
+                if account and router_result and router_result.get("route") != "skip_device":
                     device_intent_started_at = time.perf_counter()
                     device_intent = await analyze_device_intent(
                         normalized_content,
                         account,
                         memory_context=memory_context,
                         command_mode=(mode == "command"),
+                        allow_normalize=router_result.get("route") in {"try_heuristic_then_normalize", "needs_normalize"},
                     )
                     logger.info(
                         f"[Device Intent Result] {device_intent.get('type')} (elapsed={time.perf_counter() - device_intent_started_at:.2f}s)"
                     )
                     span.set_attribute("device.intent_type", str(device_intent.get("type") or ""))
+                    span.set_attribute("device.path_taken", "device_intent")
 
                     if device_intent.get("type") in {"DEVICE_CONTROL", "DEVICE_QUERY"}:
                         handled = await cls.handle_device_intent(
@@ -161,13 +180,18 @@ class WeChatService:
                             voice_transcript=voice_transcript,
                         )
                         if handled:
+                            span.set_attribute("device.handled", True)
                             return
+                    span.set_attribute("device.handled", False)
+                elif router_result:
+                    span.set_attribute("device.path_taken", "skip_device")
 
                 intent_started_at = time.perf_counter()
                 intent_data = await analyze_intent(
                     normalized_content if mode == "command" else content,
                     memory_context=memory_context,
                 )
+                span.set_attribute("device.general_intent_fallback", True)
                 intent_type = intent_data.get("type")
                 if intent_type == "simple":
                     raw_response = str(intent_data.get("raw_response") or "").strip()
@@ -354,6 +378,7 @@ class WeChatService:
                                 cls._schedule_background_job(
                                     sync_to_async(cls._record_device_context_from_mission)(
                                         mission,
+                                        wechat_user_id=wechat_user_id,
                                         content=content,
                                         normalized_content=normalized_content,
                                         voice_transcript=voice_transcript,
@@ -678,6 +703,7 @@ class WeChatService:
                 cls._schedule_background_job(
                     sync_to_async(DeviceContextManager.record_operation)(
                         account=account,
+                        platform_user_id=wechat_user_id,
                         device=device,
                         control_id=control.external_id,
                         control_key=control.key,
@@ -931,6 +957,7 @@ class WeChatService:
             cls._schedule_background_job(
                 sync_to_async(DeviceContextManager.record_operation)(
                     account=account,
+                    platform_user_id=wechat_user_id,
                     device=device,
                     control_id=control.external_id,
                     control_key=control.key,
@@ -1134,6 +1161,7 @@ class WeChatService:
         cls,
         mission: Mission,
         *,
+        wechat_user_id: str,
         content: str,
         normalized_content: str,
         voice_transcript: str,
@@ -1151,6 +1179,7 @@ class WeChatService:
             return
         DeviceContextManager.record_operation(
             account=mission.account,
+            platform_user_id=wechat_user_id,
             device=control.device,
             control_id=control.external_id,
             control_key=mission.control_key or control.key,

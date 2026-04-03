@@ -45,11 +45,25 @@ class DeviceCommandService:
     tracer = get_tracer(__name__)
 
     @classmethod
+    def _coalesce_intent_payload(cls, intent: dict) -> dict:
+        payload_hints = intent.get("payload_hints") if isinstance(intent.get("payload_hints"), dict) else {}
+        merged = dict(intent or {})
+        for key in ("room", "device", "control_key", "action", "value", "unit"):
+            if merged.get(key) in (None, "", []):
+                hint_value = payload_hints.get(key)
+                if hint_value not in (None, "", []):
+                    merged[key] = hint_value
+        merged["payload_hints"] = payload_hints
+        return merged
+
+    @classmethod
     async def resolve_device_target(cls, account, intent: dict) -> dict:
-        room_text = _normalize_text(intent.get("room"))
-        device_text = _normalize_text(intent.get("device"))
-        control_text = _normalize_text(intent.get("control_key"))
-        desired_value = intent.get("value")
+        normalized_intent = cls._coalesce_intent_payload(intent)
+        room_text = _normalize_text(normalized_intent.get("room"))
+        device_text = _normalize_text(normalized_intent.get("device"))
+        control_text = _normalize_text(normalized_intent.get("control_key"))
+        desired_value = normalized_intent.get("value")
+        desired_action = str(normalized_intent.get("action") or "")
 
         controls = await sync_to_async(list)(
             DeviceControl.objects.filter(account=account)
@@ -110,7 +124,7 @@ class DeviceCommandService:
                 else:
                     continue
             else:
-                score += cls._infer_control_score_from_value(control, desired_value)
+                score += cls._infer_control_score_from_value(control, desired_value, desired_action=desired_action)
             if not room_text and not device_text and not control_text:
                 continue
             candidates.append((score, control))
@@ -156,7 +170,8 @@ class DeviceCommandService:
 
     @classmethod
     def _resolve_from_context(cls, account, intent: dict) -> dict | None:
-        control_key = _normalize_text(intent.get("control_key"))
+        normalized_intent = cls._coalesce_intent_payload(intent)
+        control_key = _normalize_text(normalized_intent.get("control_key"))
         if not cls._is_inheritable_control(control_key):
             return None
         last_operation = DeviceContextManager.get_last_operation(account)
@@ -210,11 +225,16 @@ class DeviceCommandService:
         return 0.0
 
     @classmethod
-    def _infer_control_score_from_value(cls, control: DeviceControl, desired_value) -> float:
+    def _infer_control_score_from_value(cls, control: DeviceControl, desired_value, *, desired_action: str = "") -> float:
+        normalized_action = str(desired_action or "").strip().lower()
         if control.kind == DeviceControl.KindChoices.TOGGLE and isinstance(desired_value, bool):
+            return 1.5
+        if control.kind == DeviceControl.KindChoices.TOGGLE and normalized_action in {"turn_on", "turn_off"}:
             return 1.5
         if control.kind == DeviceControl.KindChoices.RANGE and isinstance(desired_value, (int, float)):
             return 1.2
+        if control.kind == DeviceControl.KindChoices.RANGE and isinstance(desired_value, str) and desired_value[:1] in {"+", "-"}:
+            return 1.0
         if control.kind == DeviceControl.KindChoices.ENUM and isinstance(desired_value, str):
             return 0.8
         return 0.0
@@ -306,8 +326,11 @@ class DeviceCommandService:
     def _build_execution_payload(cls, control: DeviceControl, operation_action: str, operation_value):
         action = operation_action or ""
         value = operation_value
-        if isinstance(operation_value, dict) and "value" in operation_value and len(operation_value) == 1:
-            value = operation_value["value"]
+        if isinstance(operation_value, dict):
+            if not action and operation_value.get("action"):
+                action = str(operation_value.get("action") or "")
+            if "value" in operation_value:
+                value = operation_value["value"]
         value = cls._resolve_relative_value(control, value)
         if control.kind == DeviceControl.KindChoices.TOGGLE:
             if isinstance(value, str):

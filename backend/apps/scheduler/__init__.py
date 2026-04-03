@@ -28,6 +28,12 @@ async def register_default_schedules(scheduler):
         daily_memory_review,
         device_status_check,
         cleanup_expired_sessions,
+        refresh_global_keyword_cache_task,
+        run_user_keyword_learning_task,
+        run_global_keyword_learning_task,
+        keyword_refresh_interval_seconds,
+        keyword_learning_interval_user_seconds,
+        keyword_learning_interval_global_seconds,
     )
 
     # Daily memory review at 2 AM Beijing time
@@ -56,6 +62,30 @@ async def register_default_schedules(scheduler):
         conflict_policy="replace",
     )
     logger.info("Registered schedule: cleanup_expired_sessions (interval: 1h)")
+
+    await scheduler.add_schedule(
+        refresh_global_keyword_cache_task,
+        IntervalTrigger(seconds=keyword_refresh_interval_seconds()),
+        id="refresh_global_keyword_cache",
+        conflict_policy="replace",
+    )
+    logger.info("Registered schedule: refresh_global_keyword_cache")
+
+    await scheduler.add_schedule(
+        run_user_keyword_learning_task,
+        IntervalTrigger(seconds=keyword_learning_interval_user_seconds()),
+        id="run_user_keyword_learning",
+        conflict_policy="replace",
+    )
+    logger.info("Registered schedule: run_user_keyword_learning")
+
+    await scheduler.add_schedule(
+        run_global_keyword_learning_task,
+        IntervalTrigger(seconds=keyword_learning_interval_global_seconds()),
+        id="run_global_keyword_learning",
+        conflict_policy="replace",
+    )
+    logger.info("Registered schedule: run_global_keyword_learning")
 
 
 def register_default_tasks():

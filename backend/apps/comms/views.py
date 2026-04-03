@@ -78,6 +78,7 @@ def handle_mission_approve(request, pk):
             return JsonResponse({"status": "failed", "result": result})
         WeChatService._record_device_context_from_mission(
             mission,
+            wechat_user_id=mission.user_id,
             content=mission.original_prompt,
             normalized_content=(mission.metadata or {}).get("normalized_msg", mission.original_prompt),
             voice_transcript=(mission.metadata or {}).get("voice_transcript", ""),

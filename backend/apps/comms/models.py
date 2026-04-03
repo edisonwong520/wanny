@@ -1,4 +1,5 @@
-from django.db import models
+from django.db import IntegrityError, models
+from django.db.models import Q
 
 class Mission(models.Model):
     """
@@ -85,6 +86,7 @@ class DeviceOperationContext(models.Model):
         related_name='device_operation_contexts',
         verbose_name="所属账户"
     )
+    platform_user_id = models.CharField(max_length=255, blank=True, db_index=True, verbose_name="发起人标识")
     device = models.ForeignKey(
         'devices.DeviceSnapshot',
         on_delete=models.CASCADE,
@@ -134,6 +136,15 @@ class ChatMessage(models.Model):
 
     # 发起者唯一标识 (例如微信 OpenID)
     platform_user_id = models.CharField(max_length=255, db_index=True, verbose_name="发起人标识")
+
+    linked_device_context = models.ForeignKey(
+        'comms.DeviceOperationContext',
+        on_delete=models.SET_NULL,
+        related_name='linked_chat_messages',
+        null=True,
+        blank=True,
+        verbose_name="关联设备上下文",
+    )
     
     # 消息来源平台标识 (wechat, api, etc.)
     source = models.CharField(max_length=50, default='wechat', verbose_name="来源平台")
@@ -157,3 +168,81 @@ class ChatMessage(models.Model):
 
     def __str__(self):
         return f"[{self.get_role_display()}] {self.content[:30]}... ({self.platform_user_id})"
+
+
+class LearnedKeyword(models.Model):
+    """
+    动态学习得到的关键词映射。
+    account 为空表示全局关键词；否则为用户私有关键词。
+    """
+
+    class CategoryChoices(models.TextChoices):
+        DEVICE = "device", "设备"
+        ROOM = "room", "房间"
+        CONTROL = "control", "控制项"
+        ACTION = "action", "动作"
+        COLLOQUIAL = "colloquial", "口语化"
+
+    class SourceChoices(models.TextChoices):
+        HISTORY = "history", "历史对话"
+        DEVICE = "device", "设备数据库"
+        USER = "user", "用户自定义"
+        SYSTEM = "system", "系统预置"
+
+    account = models.ForeignKey(
+        "accounts.Account",
+        on_delete=models.CASCADE,
+        related_name="learned_keywords",
+        null=True,
+        blank=True,
+        verbose_name="所属账户",
+    )
+    keyword = models.CharField(max_length=64, verbose_name="原始关键词")
+    normalized_keyword = models.CharField(max_length=64, db_index=True, verbose_name="归一化关键词")
+    canonical = models.CharField(max_length=64, blank=True, verbose_name="标准映射")
+    canonical_payload = models.JSONField(default=dict, blank=True, verbose_name="结构化映射")
+    category = models.CharField(max_length=24, choices=CategoryChoices.choices, verbose_name="关键词分类")
+    source = models.CharField(max_length=24, choices=SourceChoices.choices, verbose_name="关键词来源")
+    confidence = models.FloatField(default=0.5, verbose_name="置信度")
+    usage_count = models.IntegerField(default=1, verbose_name="使用次数")
+    last_used_at = models.DateTimeField(null=True, blank=True, verbose_name="最后使用时间")
+    learned_at = models.DateTimeField(auto_now_add=True, verbose_name="学习时间")
+    is_active = models.BooleanField(default=True, verbose_name="是否启用")
+
+    class Meta:
+        db_table = "comms_learned_keyword"
+        ordering = ["account_id", "category", "-confidence", "-usage_count", "normalized_keyword"]
+        verbose_name = "学习关键词"
+        verbose_name_plural = "学习关键词"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account", "normalized_keyword", "category"],
+                condition=Q(account__isnull=False),
+                name="uniq_learned_keyword_account",
+            ),
+            models.UniqueConstraint(
+                fields=["normalized_keyword", "category"],
+                condition=Q(account__isnull=True),
+                name="uniq_learned_keyword_global",
+            ),
+        ]
+
+    def __str__(self):
+        scope = f"account={self.account_id}" if self.account_id else "global"
+        return f"{scope}:{self.category}:{self.keyword}->{self.canonical or '-'}"
+
+    def save(self, *args, **kwargs):
+        duplicate_query = LearnedKeyword.objects.filter(
+            normalized_keyword=self.normalized_keyword,
+            category=self.category,
+            is_active=True,
+        )
+        if self.pk:
+            duplicate_query = duplicate_query.exclude(pk=self.pk)
+        if self.account_id:
+            duplicate_query = duplicate_query.filter(account_id=self.account_id)
+        else:
+            duplicate_query = duplicate_query.filter(account__isnull=True)
+        if duplicate_query.exists():
+            raise IntegrityError("Duplicate learned keyword in the same scope is not allowed.")
+        return super().save(*args, **kwargs)

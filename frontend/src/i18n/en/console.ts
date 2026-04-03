@@ -198,6 +198,11 @@ export default {
       expand: "Expand",
       collapse: "Collapse",
       dragSort: "Drag to reorder",
+      turnOn: "Turn On",
+      turnOff: "Turn Off",
+      toggle: "Toggle",
+      unlock: "Unlock",
+      lock: "Lock",
     },
     controlKinds: {
       sensor: "Read",

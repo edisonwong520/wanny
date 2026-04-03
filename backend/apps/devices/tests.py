@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 from unittest.mock import patch
 
@@ -346,6 +347,141 @@ class DeviceDashboardServiceTest(TestCase):
 
         self.assertEqual(payload["snapshot"]["source"], "mbapi2020")
         self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["source_type"], "mbapi2020_property")
+
+    def test_mbapi2020_lock_status_is_humanized(self):
+        raw_vehicle = {
+            "vin": "LE4LG4GB2SL195893",
+            "name": "E 300 L 豪华型轿车",
+            "license_plate": "川GPT032",
+            "status_payload": {
+                "doorlockstatusvehicle": 2,
+                "tanklevelpercent": 86,
+            },
+            "command_capabilities": [],
+            "pin_available": False,
+        }
+
+        controls = DeviceDashboardService._build_mbapi2020_controls(raw_vehicle)
+        lock_control = next(control for control in controls if control["key"] == "doorlockstatusvehicle")
+        self.assertEqual(lock_control["value"], "已锁车")
+
+        summary = DeviceDashboardService._summarize_mbapi2020_vehicle(raw_vehicle, controls)
+        self.assertIn("车锁 已锁车", summary)
+
+    def test_mbapi2020_common_status_strings_are_humanized(self):
+        raw_vehicle = {
+            "vin": "LE4LG4GB2SL195893",
+            "name": "E 300 L 豪华型轿车",
+            "license_plate": "川GPT032",
+            "status_payload": {
+                "decklidstatus": "open",
+                "chargingstatusdisplay": "charging",
+            },
+            "command_capabilities": [],
+            "pin_available": False,
+        }
+
+        controls = DeviceDashboardService._build_mbapi2020_controls(raw_vehicle)
+        decklid = next(control for control in controls if control["key"] == "decklidstatus")
+        charging = next(control for control in controls if control["key"] == "chargingstatusdisplay")
+
+        self.assertEqual(decklid["value"], "已打开")
+        self.assertEqual(charging["value"], "充电中")
+
+    def test_mbapi2020_realistic_window_and_roof_statuses_are_humanized(self):
+        raw_vehicle = {
+            "vin": "LE4LG4GB2SL195893",
+            "name": "E 300 L 豪华型轿车",
+            "license_plate": "川GPT032",
+            "status_payload": {
+                "doorStatusOverall": "1",
+                "windowstatusfrontleft": "2",
+                "windowstatusfrontright": "2",
+                "sunroofstatus": "0",
+                "doorstatusfrontleft": False,
+                "doorlockstatusfrontleft": False,
+            },
+            "command_capabilities": [],
+            "pin_available": False,
+        }
+
+        controls = DeviceDashboardService._build_mbapi2020_controls(raw_vehicle)
+        indexed = {control["key"]: control for control in controls}
+
+        self.assertEqual(indexed["doorStatusOverall"]["label"], "车门总状态")
+        self.assertEqual(indexed["doorStatusOverall"]["value"], "全部关闭")
+        self.assertEqual(indexed["windowstatusfrontleft"]["label"], "左前窗")
+        self.assertEqual(indexed["windowstatusfrontleft"]["value"], "已关闭")
+        self.assertEqual(indexed["sunroofstatus"]["label"], "天窗状态")
+        self.assertEqual(indexed["sunroofstatus"]["value"], "已关闭")
+        self.assertEqual(indexed["doorstatusfrontleft"]["label"], "左前门")
+        self.assertEqual(indexed["doorstatusfrontleft"]["value"], "已关闭")
+        self.assertEqual(indexed["doorlockstatusfrontleft"]["label"], "左前门锁")
+        self.assertEqual(indexed["doorlockstatusfrontleft"]["value"], "已锁止")
+
+    def test_mbapi2020_brake_and_parking_statuses_are_humanized(self):
+        raw_vehicle = {
+            "vin": "LE4LG4GB2SL195893",
+            "name": "E 300 L 豪华型轿车",
+            "license_plate": "川GPT032",
+            "status_payload": {
+                "parkbrakestatus": True,
+                "warningbrakefluid": False,
+            },
+            "command_capabilities": [],
+            "pin_available": False,
+        }
+
+        controls = DeviceDashboardService._build_mbapi2020_controls(raw_vehicle)
+        indexed = {control["key"]: control for control in controls}
+
+        self.assertEqual(indexed["parkbrakestatus"]["label"], "驻车制动")
+        self.assertEqual(indexed["parkbrakestatus"]["value"], "已启用")
+        self.assertEqual(indexed["warningbrakefluid"]["label"], "制动液状态")
+        self.assertEqual(indexed["warningbrakefluid"]["value"], "正常")
+
+    def test_refresh_runs_provider_snapshots_in_parallel(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mijia",
+            auth_payload={"serviceToken": "demo", "ssecurity": "demo", "userId": "demo"},
+            is_active=True,
+        )
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mbapi2020",
+            auth_payload={"account": "driver@example.com", "access_token": "mb-token", "region": "China"},
+            is_active=True,
+        )
+
+        started = set()
+        started_lock = threading.Lock()
+        second_started = threading.Event()
+        def slow_mijia(_account):
+            with started_lock:
+                started.add("mijia")
+                if "mbapi2020" in started:
+                    second_started.set()
+            second_started.wait(timeout=2)
+            return build_sample_snapshot("mijia")
+
+        def fast_mbapi(_account):
+            with started_lock:
+                started.add("mbapi2020")
+                if "mijia" in started:
+                    second_started.set()
+            return build_sample_snapshot("mbapi2020")
+
+        with patch(
+            "devices.services.DeviceDashboardService._build_mijia_snapshot",
+            side_effect=slow_mijia,
+        ), patch(
+            "devices.services.DeviceDashboardService._build_mbapi2020_snapshot",
+            side_effect=fast_mbapi,
+        ):
+            DeviceDashboardService.refresh(self.account, trigger="test")
+
+        self.assertTrue(second_started.is_set())
 
     def test_refresh_preserves_existing_device_sort_order(self):
         room = DeviceRoom.objects.create(

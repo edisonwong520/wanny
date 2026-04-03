@@ -30,6 +30,8 @@ export default {
     passwordLength: "密码长度至少需要 6 个字符",
     loginFailed: "登录失败",
     registerFailed: "注册失败",
+    duplicateEmail: "该邮箱已被注册",
+    duplicateName: "该昵称已被使用",
     systemBusy: "系统繁忙，请稍后再试",
   },
 };

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -108,6 +109,168 @@ class DeviceDashboardService:
             ),
         },
     )
+    mbapi2020_status_value_maps = {
+        "doorlockstatusvehicle": {
+            "0": "未锁车",
+            "1": "车内锁止",
+            "2": "已锁车",
+            "3": "部分未锁",
+            "4": "状态未知",
+            "locked": "已锁车",
+            "unlocked": "未锁车",
+        },
+        "doorstatusoverall": {
+            "0": "有车门开启",
+            "1": "全部关闭",
+            "2": "无此状态",
+            "3": "状态未知",
+        },
+        "decklidstatus": {
+            "false": "已关闭",
+            "true": "已打开",
+            "open": "已打开",
+            "opened": "已打开",
+            "closed": "已关闭",
+            "close": "已关闭",
+            "locked": "已关闭",
+            "unlocked": "已打开",
+        },
+        "chargingstatusdisplay": {
+            "0": "充电中",
+            "1": "充电即将结束",
+            "2": "充电暂停",
+            "3": "未连接",
+            "4": "故障",
+            "5": "慢充",
+            "6": "快充",
+            "7": "放电中",
+            "8": "未充电",
+            "9": "到达目的地后慢充",
+            "10": "到达目的地后充电",
+            "11": "到达目的地后快充",
+            "12": "已连接",
+            "13": "交流充电",
+            "14": "直流充电",
+            "15": "电池校准中",
+            "16": "状态未知",
+            "charging": "充电中",
+            "not_charging": "未充电",
+            "not charging": "未充电",
+            "disconnected": "未连接",
+            "connected": "已连接",
+            "complete": "已充满",
+            "finished": "已完成",
+        },
+        "windowstatusfrontleft": {"2": "已关闭", "0": "已打开", "1": "已打开"},
+        "windowstatusfrontright": {"2": "已关闭", "0": "已打开", "1": "已打开"},
+        "windowstatusrearleft": {"2": "已关闭", "0": "已打开", "1": "已打开"},
+        "windowstatusrearright": {"2": "已关闭", "0": "已打开", "1": "已打开"},
+        "sunroofstatus": {
+            "0": "已关闭",
+            "1": "已打开",
+            "2": "上掀开启",
+            "3": "运行中",
+            "4": "静音位置",
+            "5": "半开滑动",
+            "6": "半开上掀",
+            "7": "开启中",
+            "8": "关闭中",
+            "9": "向静音位上掀",
+            "10": "中间位置",
+            "11": "开启并上掀",
+            "12": "关闭并上掀",
+        },
+        "chargeflapacstatus": {"0": "已打开", "1": "已关闭", "2": "已按压", "3": "状态未知"},
+        "chargeflapdcstatus": {"0": "已打开", "1": "已关闭", "2": "已按压", "3": "状态未知"},
+        "starterbatterystate": {"0": "正常", "1": "偏低", "2": "告警"},
+        "tirewarningsrdk": {"0": "无告警", "1": "轻微告警", "2": "胎压过低", "3": "漏气"},
+        "warningbrakefluid": {"false": "正常", "true": "告警"},
+        "parkbrakestatus": {"false": "未启用", "true": "已启用"},
+        "trackingstatehu": {"false": "未启用", "true": "已启用"},
+        "enginestate": {"false": "已熄火", "true": "运行中"},
+        "remotestartactive": {"false": "未启动", "true": "已启动"},
+        "doorstatusfrontleft": {"false": "已关闭", "true": "已打开"},
+        "doorstatusfrontright": {"false": "已关闭", "true": "已打开"},
+        "doorstatusrearleft": {"false": "已关闭", "true": "已打开"},
+        "doorstatusrearright": {"false": "已关闭", "true": "已打开"},
+        "enginehoodstatus": {"false": "已关闭", "true": "已打开"},
+        "doorlockstatusfrontleft": {"false": "已锁止", "true": "已解锁"},
+        "doorlockstatusfrontright": {"false": "已锁止", "true": "已解锁"},
+        "doorlockstatusrearleft": {"false": "已锁止", "true": "已解锁"},
+        "doorlockstatusrearright": {"false": "已锁止", "true": "已解锁"},
+        "doorlockstatusdecklid": {"false": "已锁止", "true": "已解锁"},
+        "doorlockstatusgas": {"false": "已锁止", "true": "已解锁"},
+    }
+    mbapi2020_status_label_maps = {
+        "doorstatusoverall": "车门总状态",
+        "windowstatusfrontleft": "左前窗",
+        "windowstatusfrontright": "右前窗",
+        "windowstatusrearleft": "左后窗",
+        "windowstatusrearright": "右后窗",
+        "doorstatusfrontleft": "左前门",
+        "doorstatusfrontright": "右前门",
+        "doorstatusrearleft": "左后门",
+        "doorstatusrearright": "右后门",
+        "doorlockstatusfrontleft": "左前门锁",
+        "doorlockstatusfrontright": "右前门锁",
+        "doorlockstatusrearleft": "左后门锁",
+        "doorlockstatusrearright": "右后门锁",
+        "doorlockstatusdecklid": "后备箱锁",
+        "doorlockstatusgas": "油箱盖锁",
+        "enginehoodstatus": "引擎盖",
+        "sunroofstatus": "天窗状态",
+        "starterbatterystate": "启动电瓶状态",
+        "tirewarningsrdk": "胎压告警",
+        "warningbrakefluid": "制动液状态",
+        "parkbrakestatus": "驻车制动",
+        "trackingstatehu": "追踪功能",
+        "enginestate": "发动机状态",
+        "remotestartactive": "远程启动",
+        "chargeflapacstatus": "交流充电口盖",
+        "chargeflapdcstatus": "直流充电口盖",
+    }
+
+    @classmethod
+    def _provider_refresh_tasks(cls) -> tuple[dict[str, Any], ...]:
+        from providers.services import HomeAssistantAuthService, MbApi2020AuthService, MideaCloudAuthService, MijiaAuthService
+
+        return (
+            {
+                "platform": "mijia",
+                "auth_service": MijiaAuthService,
+                "builder": cls._build_mijia_snapshot,
+                "label": "Mijia",
+            },
+            {
+                "platform": "home_assistant",
+                "auth_service": HomeAssistantAuthService,
+                "builder": cls._build_home_assistant_snapshot,
+                "label": "HomeAssistant",
+            },
+            {
+                "platform": "midea_cloud",
+                "auth_service": MideaCloudAuthService,
+                "builder": cls._build_midea_cloud_snapshot,
+                "label": "MideaCloud",
+            },
+            {
+                "platform": "mbapi2020",
+                "auth_service": MbApi2020AuthService,
+                "builder": cls._build_mbapi2020_snapshot,
+                "label": "MbApi2020",
+            },
+        )
+
+    @classmethod
+    def _run_provider_refresh_task(cls, account: Account, task: dict[str, Any]) -> dict:
+        provider_started_at = time.perf_counter()
+        payload = task["builder"](account)
+        logger.info(
+            f"[Device Sync] {task['label']} snapshot built for account_id={account.id}: "
+            f"devices={len(payload.get('devices', []))} "
+            f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
+        )
+        return payload
 
     @classmethod
     def _get_state(cls, account: Account) -> DeviceDashboardState:
@@ -292,71 +455,42 @@ class DeviceDashboardService:
         logger.info(f"[Device Sync] refresh() called for account_id={account.id} email={account.email} trigger={trigger}")
         refresh_started_at = time.perf_counter()
         provider_payloads: list[dict] = []
-        from providers.services import HomeAssistantAuthService, MbApi2020AuthService, MideaCloudAuthService, MijiaAuthService
+        enabled_tasks: list[dict[str, Any]] = []
 
-        try:
-            mijia_auth = MijiaAuthService.get_auth_record(account=account, active_only=True)
-            logger.debug(f"[Device Sync] Mijia auth check for account_id={account.id}: found={mijia_auth is not None}")
-            if mijia_auth:
-                logger.info(f"[Device Sync] Building Mijia snapshot for account_id={account.id}")
-                provider_started_at = time.perf_counter()
-                mijia_payload = cls._build_mijia_snapshot(account)
-                logger.info(
-                    f"[Device Sync] Mijia snapshot built for account_id={account.id}: "
-                    f"devices={len(mijia_payload.get('devices', []))} "
-                    f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
+        for task in cls._provider_refresh_tasks():
+            try:
+                auth_record = task["auth_service"].get_auth_record(account=account, active_only=True)
+                logger.debug(
+                    f"[Device Sync] {task['label']} auth check for account_id={account.id}: "
+                    f"found={auth_record is not None}"
                 )
-                provider_payloads.append(mijia_payload)
-        except Exception as error:
-            logger.error(f"[Device Sync] Failed to check Mijia auth state for user {account.email}: {error}")
+                if auth_record:
+                    enabled_tasks.append(task)
+            except Exception as error:
+                logger.error(
+                    f"[Device Sync] Failed to check {task['label']} auth state for user {account.email}: {error}"
+                )
 
-        try:
-            ha_auth = HomeAssistantAuthService.get_auth_record(account=account, active_only=True)
-            logger.debug(f"[Device Sync] HomeAssistant auth check for account_id={account.id}: found={ha_auth is not None}")
-            if ha_auth:
-                logger.info(f"[Device Sync] Building HomeAssistant snapshot for account_id={account.id}")
-                provider_started_at = time.perf_counter()
-                ha_payload = cls._build_home_assistant_snapshot(account)
-                logger.info(
-                    f"[Device Sync] HomeAssistant snapshot built for account_id={account.id}: "
-                    f"devices={len(ha_payload.get('devices', []))} "
-                    f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
-                )
-                provider_payloads.append(ha_payload)
-        except Exception as error:
-            logger.error(f"[Device Sync] Failed to check Home Assistant auth state for user {account.email}: {error}")
+        if enabled_tasks:
+            max_workers = min(len(enabled_tasks), 4)
+            logger.info(
+                f"[Device Sync] Running {len(enabled_tasks)} provider refresh task(s) in parallel "
+                f"for account_id={account.id} with max_workers={max_workers}"
+            )
+            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="device-sync") as executor:
+                future_to_task = {}
+                for task in enabled_tasks:
+                    logger.info(f"[Device Sync] Building {task['label']} snapshot for account_id={account.id}")
+                    future_to_task[executor.submit(cls._run_provider_refresh_task, account, task)] = task
 
-        try:
-            midea_cloud_auth = MideaCloudAuthService.get_auth_record(account=account, active_only=True)
-            logger.debug(f"[Device Sync] MideaCloud auth check for account_id={account.id}: found={midea_cloud_auth is not None}")
-            if midea_cloud_auth:
-                logger.info(f"[Device Sync] Building MideaCloud snapshot for account_id={account.id}")
-                provider_started_at = time.perf_counter()
-                midea_cloud_payload = cls._build_midea_cloud_snapshot(account)
-                logger.info(
-                    f"[Device Sync] MideaCloud snapshot built for account_id={account.id}: "
-                    f"devices={len(midea_cloud_payload.get('devices', []))} "
-                    f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
-                )
-                provider_payloads.append(midea_cloud_payload)
-        except Exception as error:
-            logger.error(f"[Device Sync] Failed to check Midea auth state for user {account.email}: {error}")
-
-        try:
-            mbapi_auth = MbApi2020AuthService.get_auth_record(account=account, active_only=True)
-            logger.debug(f"[Device Sync] MbApi2020 auth check for account_id={account.id}: found={mbapi_auth is not None}")
-            if mbapi_auth:
-                logger.info(f"[Device Sync] Building MbApi2020 snapshot for account_id={account.id}")
-                provider_started_at = time.perf_counter()
-                mbapi_payload = cls._build_mbapi2020_snapshot(account)
-                logger.info(
-                    f"[Device Sync] MbApi2020 snapshot built for account_id={account.id}: "
-                    f"devices={len(mbapi_payload.get('devices', []))} "
-                    f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
-                )
-                provider_payloads.append(mbapi_payload)
-        except Exception as error:
-            logger.error(f"[Device Sync] Failed to check MbApi2020 auth state for user {account.email}: {error}")
+                for future in as_completed(future_to_task):
+                    task = future_to_task[future]
+                    try:
+                        provider_payloads.append(future.result())
+                    except Exception as error:
+                        logger.error(
+                            f"[Device Sync] Failed to build {task['label']} snapshot for user {account.email}: {error}"
+                        )
 
         logger.info(f"[Device Sync] Merging {len(provider_payloads)} provider payloads for account_id={account.id}")
         payload = cls._merge_snapshots(provider_payloads) if provider_payloads else cls._build_empty_snapshot()
@@ -2762,7 +2896,11 @@ class DeviceDashboardService:
                     "label": group["label"],
                     "group_label": group["group_label"],
                     "writable": True,
-                    "value": status_payload.get("doorlockstatusvehicle") if group["key"] == "door_lock" else "",
+                    "value": (
+                        cls._format_mbapi2020_status_value("doorlockstatusvehicle", status_payload.get("doorlockstatusvehicle"))
+                        if group["key"] == "door_lock"
+                        else ""
+                    ),
                     "unit": "",
                     "options": [],
                     "range_spec": {},
@@ -2784,10 +2922,16 @@ class DeviceDashboardService:
             ("rangeelectric", "续航里程", ""),
             ("odometer", "总里程", ""),
             ("tanklevelpercent", "油量", "%"),
+            ("engineHoodStatus", "引擎盖", ""),
+            ("doorlockstatusdecklid", "后备箱锁", ""),
+            ("doorStatusOverall", "车门总状态", ""),
+            ("sunroofstatus", "天窗状态", ""),
+            ("parkbrakestatus", "驻车制动", ""),
+            ("warningbrakefluid", "制动液状态", ""),
         ]
         used_keys: set[str] = set()
         for key, label, unit in preferred_sensors:
-            value = status_payload.get(key)
+            value = cls._format_mbapi2020_status_value(key, status_payload.get(key))
             if value in (None, "", {}, []):
                 continue
             controls.append(
@@ -2813,6 +2957,7 @@ class DeviceDashboardService:
             used_keys.add(key)
 
         for key, value in status_payload.items():
+            value = cls._format_mbapi2020_status_value(key, value)
             if key in used_keys or value in (None, "", {}, []) or isinstance(value, (list, dict)):
                 continue
             controls.append(
@@ -2822,7 +2967,7 @@ class DeviceDashboardService:
                     "source_type": DeviceControl.SourceTypeChoices.MBAPI2020_PROPERTY,
                     "kind": DeviceControl.KindChoices.SENSOR,
                     "key": key,
-                    "label": key,
+                    "label": cls._format_mbapi2020_status_label(key),
                     "group_label": "状态",
                     "writable": False,
                     "value": value,
@@ -2840,6 +2985,22 @@ class DeviceDashboardService:
 
         return controls
 
+    @classmethod
+    def _format_mbapi2020_status_value(cls, key: str, value: Any) -> Any:
+        if value in (None, "", {}, []):
+            return value
+        normalized_key = str(key or "").strip().lower()
+        mapped_values = cls.mbapi2020_status_value_maps.get(normalized_key)
+        if not mapped_values:
+            return value
+        normalized_value = str(value).strip().lower()
+        return mapped_values.get(normalized_value, value)
+
+    @classmethod
+    def _format_mbapi2020_status_label(cls, key: str) -> str:
+        normalized_key = str(key or "").strip().lower()
+        return cls.mbapi2020_status_label_maps.get(normalized_key, key)
+
     @staticmethod
     def _map_mbapi2020_status(raw_vehicle: dict) -> str:
         status_payload = raw_vehicle.get("status_payload") or {}
@@ -2856,8 +3017,9 @@ class DeviceDashboardService:
         parts: list[str] = []
         if raw_vehicle.get("license_plate"):
             parts.append(f"车牌 {raw_vehicle['license_plate']}")
-        if status_payload.get("doorlockstatusvehicle"):
-            parts.append(f"车锁 {status_payload['doorlockstatusvehicle']}")
+        lock_status = cls._format_mbapi2020_status_value("doorlockstatusvehicle", status_payload.get("doorlockstatusvehicle"))
+        if lock_status not in (None, "", {}, []):
+            parts.append(f"车锁 {lock_status}")
         range_value = status_payload.get("electricrange") or status_payload.get("rangeelectric")
         if range_value not in (None, "", {}, []):
             parts.append(f"续航 {range_value}")

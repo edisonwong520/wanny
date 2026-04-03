@@ -9,9 +9,8 @@ const route = useRoute();
 const { t } = useI18n();
 
 const tabs = computed(() => [
-  { to: "/console", label: t("console.nav.overview") },
-  { to: "/console/missions", label: t("console.nav.tasks") },
   { to: "/console/devices", label: t("console.nav.devices") },
+  { to: "/console/missions", label: t("console.nav.tasks") },
   { to: "/console/manage", label: t("console.nav.manage") },
 ]);
 

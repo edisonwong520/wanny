@@ -6,6 +6,14 @@ from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.contrib.auth.hashers import make_password, check_password
 
+
+def _error(message: str, status: int, *, code: str | None = None):
+    payload = {"error": message}
+    if code:
+        payload["error_code"] = code
+    return JsonResponse(payload, status=status)
+
+
 @csrf_exempt
 def login_user(request):
     """
@@ -13,7 +21,7 @@ def login_user(request):
     校验邮箱与密码，成功则返回用户信息。
     """
     if request.method != "POST":
-        return JsonResponse({"error": "仅支持 POST 请求"}, status=405)
+        return _error("仅支持 POST 请求", 405, code="method_not_allowed")
     
     try:
         data = json.loads(request.body)
@@ -21,18 +29,18 @@ def login_user(request):
         password = data.get("password", "")
         
         if not identifier or not password:
-            return JsonResponse({"error": "账号/邮箱和密码均为必填项"}, status=400)
+            return _error("账号/邮箱和密码均为必填项", 400, code="missing_login_fields")
             
         # 查找账户 (通过邮箱或昵称)
         from django.db.models import Q
         try:
             account = Account.objects.get(Q(email=identifier) | Q(name=identifier))
         except Account.DoesNotExist:
-            return JsonResponse({"error": "账号或密码错误"}, status=401)
+            return _error("账号或密码错误", 401, code="invalid_credentials")
             
         # 校验密码
         if not check_password(password, account.password):
-            return JsonResponse({"error": "邮箱或密码错误"}, status=401)
+            return _error("邮箱或密码错误", 401, code="invalid_credentials")
             
         return JsonResponse({
             "status": "success",
@@ -45,9 +53,9 @@ def login_user(request):
         })
         
     except json.JSONDecodeError:
-        return JsonResponse({"error": "无效的 JSON 数据"}, status=400)
+        return _error("无效的 JSON 数据", 400, code="invalid_json")
     except Exception as e:
-        return JsonResponse({"error": f"系统内部错误: {str(e)}"}, status=500)
+        return _error(f"系统内部错误: {str(e)}", 500, code="internal_error")
 
 @csrf_exempt
 def register_user(request):
@@ -57,7 +65,7 @@ def register_user(request):
     使用 Django 的哈希加密工具存储密码。
     """
     if request.method != "POST":
-        return JsonResponse({"error": "仅支持 POST 请求"}, status=405)
+        return _error("仅支持 POST 请求", 405, code="method_not_allowed")
     
     try:
         data = json.loads(request.body)
@@ -66,21 +74,23 @@ def register_user(request):
         password = data.get("password", "")
         
         if not email or not name or not password:
-            return JsonResponse({"error": "账号、邮箱、密码均为必填项"}, status=400)
+            return _error("账号、邮箱、密码均为必填项", 400, code="missing_register_fields")
             
         # 邮箱格式校验
         try:
             validate_email(email)
         except ValidationError:
-            return JsonResponse({"error": "邮箱格式不合法"}, status=400)
+            return _error("邮箱格式不合法", 400, code="invalid_email")
             
         # 密码强度检查 (示例)
         if len(password) < 6:
-            return JsonResponse({"error": "密码长度不能少于 6 位"}, status=400)
+            return _error("密码长度不能少于 6 位", 400, code="password_too_short")
             
         # 唯一性检查
         if Account.objects.filter(email=email).exists():
-            return JsonResponse({"error": "该邮箱已被注册"}, status=400)
+            return _error("该邮箱已被注册", 400, code="duplicate_email")
+        if Account.objects.filter(name=name).exists():
+            return _error("该昵称已被使用", 400, code="duplicate_name")
             
         # 创建账户，密码进行哈希
         account = Account.objects.create(
@@ -100,6 +110,6 @@ def register_user(request):
         }, status=201)
         
     except json.JSONDecodeError:
-        return JsonResponse({"error": "无效的 JSON 数据"}, status=400)
+        return _error("无效的 JSON 数据", 400, code="invalid_json")
     except Exception as e:
-        return JsonResponse({"error": f"系统内部错误: {str(e)}"}, status=500)
+        return _error(f"系统内部错误: {str(e)}", 500, code="internal_error")

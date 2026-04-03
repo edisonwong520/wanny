@@ -201,6 +201,11 @@ export default {
       expand: "展开",
       collapse: "收起",
       dragSort: "拖动排序",
+      turnOn: "开启",
+      turnOff: "关闭",
+      toggle: "切换",
+      unlock: "解锁",
+      lock: "锁定",
     },
     controlKinds: {
       sensor: "读取",

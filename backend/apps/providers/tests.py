@@ -1365,3 +1365,25 @@ class MbApi2020ClientNormalizationTest(TestCase):
 
         self.assertEqual(normalized["model"], "E 300 L 豪华型轿车")
         self.assertEqual(normalized["name"], "214")
+
+    def test_extract_attribute_value_recurses_nested_value_dict(self):
+        payload = {
+            "value": {
+                "value": {
+                    "int_value": 418,
+                }
+            }
+        }
+
+        self.assertEqual(MbApi2020Client._extract_attribute_value(payload), 418)
+
+    def test_extract_attribute_value_returns_none_for_nil_value_payload(self):
+        payload = {
+            "timestamp": "1775057071",
+            "status": 4,
+            "nil_value": True,
+            "timestamp_in_ms": "1775057071072",
+            "distance_unit": "KILOMETERS",
+        }
+
+        self.assertIsNone(MbApi2020Client._extract_attribute_value(payload))

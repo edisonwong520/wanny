@@ -15,6 +15,8 @@ class Account(models.Model):
     # 用户姓名 (账号)，由于 AI 称呼
     name = models.CharField(
         max_length=100, 
+        unique=True,
+        db_index=True,
         verbose_name="用户姓名/账号"
     )
     

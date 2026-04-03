@@ -368,6 +368,8 @@ class MbApi2020Client:
     def _extract_attribute_value(payload: Any) -> Any:
         if not isinstance(payload, dict):
             return payload
+        if payload.get("nil_value") is True:
+            return None
         for key in (
             "display_value",
             "bool_value",
@@ -378,9 +380,19 @@ class MbApi2020Client:
             "value",
         ):
             if key in payload and payload.get(key) not in (None, ""):
-                return payload.get(key)
+                value = payload.get(key)
+                if isinstance(value, dict):
+                    extracted = MbApi2020Client._extract_attribute_value(value)
+                    if extracted not in (None, "", {}, []):
+                        return extracted
+                return value
         if "formatted_value" in payload:
-            return payload.get("formatted_value")
+            formatted = payload.get("formatted_value")
+            if isinstance(formatted, dict):
+                extracted = MbApi2020Client._extract_attribute_value(formatted)
+                if extracted not in (None, "", {}, []):
+                    return extracted
+            return formatted
         if "timestamp" in payload and len(payload) == 1:
             return payload.get("timestamp")
         return payload

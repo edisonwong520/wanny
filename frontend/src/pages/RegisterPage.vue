@@ -16,6 +16,17 @@ const errorMessage = ref("");
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
+const resolveRegisterError = (errorCode?: string, fallback?: string) => {
+  switch (errorCode) {
+    case "duplicate_email":
+      return t("auth.errors.duplicateEmail");
+    case "duplicate_name":
+      return t("auth.errors.duplicateName");
+    default:
+      return fallback || t("auth.errors.registerFailed");
+  }
+};
+
 const handleRegister = async () => {
   if (!email.value || !name.value || !password.value) {
     errorMessage.value = t("auth.errors.allFields");
@@ -44,7 +55,7 @@ const handleRegister = async () => {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error || t("auth.errors.registerFailed"));
+      throw new Error(resolveRegisterError(data.error_code, data.error));
     }
 
     setAuth(data.data);

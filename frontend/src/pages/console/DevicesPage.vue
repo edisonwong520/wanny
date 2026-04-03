@@ -18,6 +18,9 @@ import { formatDateTime } from "@/lib/utils";
 
 const { t } = useI18n();
 
+const DEVICE_PANEL_STATE_STORAGE_KEY = "wanny.devices.panelState";
+const DEVICE_PLATFORM_FILTER_STORAGE_KEY = "wanny.devices.platformFilters";
+
 // Dashboard state
 const dashboard = ref<DeviceDashboardSnapshot | null>(null);
 const loading = ref(true);
@@ -46,6 +49,46 @@ const collapsedGroups = ref<Record<string, boolean>>({});
 const actionFeedback = ref<{ type: "success" | "error" | "info"; message: string } | null>(null);
 
 let pollTimer: number | null = null;
+
+function readLocalStorageJson<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocalStorageJson(key: string, value: unknown) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage write failures so the page remains interactive.
+  }
+}
+
+function restoreUiPreferences() {
+  const storedCollapsedGroups = readLocalStorageJson<Record<string, boolean>>(DEVICE_PANEL_STATE_STORAGE_KEY, {});
+  const storedPlatforms = readLocalStorageJson<string[]>(DEVICE_PLATFORM_FILTER_STORAGE_KEY, []);
+
+  collapsedGroups.value = Object.fromEntries(
+    Object.entries(storedCollapsedGroups).filter(
+      (entry): entry is [string, boolean] => typeof entry[0] === "string" && typeof entry[1] === "boolean",
+    ),
+  );
+  activePlatforms.value = storedPlatforms.filter((item): item is string => typeof item === "string");
+}
+
+function persistCollapsedGroups() {
+  writeLocalStorageJson(DEVICE_PANEL_STATE_STORAGE_KEY, collapsedGroups.value);
+}
+
+function persistActivePlatforms() {
+  writeLocalStorageJson(DEVICE_PLATFORM_FILTER_STORAGE_KEY, activePlatforms.value);
+}
 
 // Metrics computed from dashboard
 const metrics = computed(() => {
@@ -253,6 +296,7 @@ function togglePlatform(platformId: string) {
   activePlatforms.value = activePlatforms.value.includes(platformId)
     ? activePlatforms.value.filter((item) => item !== platformId)
     : [...activePlatforms.value, platformId];
+  persistActivePlatforms();
   pagination.value.page = 1;
   void loadDevices();
 }
@@ -260,6 +304,7 @@ function togglePlatform(platformId: string) {
 function clearPlatforms() {
   if (activePlatforms.value.length === 0) return;
   activePlatforms.value = [];
+  persistActivePlatforms();
   pagination.value.page = 1;
   void loadDevices();
 }
@@ -377,6 +422,7 @@ function toggleGroup(label: string) {
     ...collapsedGroups.value,
     [key]: !isGroupCollapsed(label),
   };
+  persistCollapsedGroups();
 }
 
 function isTelemetryGroup(label: string) {
@@ -455,17 +501,32 @@ function clearFeedback() {
   actionFeedback.value = null;
 }
 
+function formatActionLabel(actionId: string, fallbackLabel: string) {
+  const actionLabels: Record<string, string> = {
+    turn_on: t("devices.actions.turnOn"),
+    turn_off: t("devices.actions.turnOff"),
+    toggle: t("devices.actions.toggle"),
+    unlock: t("devices.actions.unlock"),
+    lock: t("devices.actions.lock"),
+  };
+  return actionLabels[actionId] ?? fallbackLabel;
+}
+
 function controlActions(control: DeviceControlRecord) {
   const actions = control.action_params.actions;
   if (Array.isArray(actions) && actions.length > 0) {
-    return actions.map((item) => ({
-      id: String((item as { id?: unknown }).id ?? ""),
-      label: String((item as { label?: unknown }).label ?? t("devices.actions.run")),
-    }));
+    return actions.map((item) => {
+      const actionId = String((item as { id?: unknown }).id ?? "");
+      const rawLabel = String((item as { label?: unknown }).label ?? t("devices.actions.run"));
+      return {
+        id: actionId,
+        label: formatActionLabel(actionId, rawLabel),
+      };
+    });
   }
 
   const service = control.action_params.service;
-  return [{ id: String(service ?? "run"), label: t("devices.actions.run") }];
+  return [{ id: String(service ?? "run"), label: formatActionLabel(String(service ?? "run"), t("devices.actions.run")) }];
 }
 
 function normalizeToggleState(value: unknown) {
@@ -627,6 +688,7 @@ async function saveValue(control: DeviceControlRecord) {
 
 onMounted(async () => {
   window.addEventListener("click", handleWindowClick);
+  restoreUiPreferences();
   await loadDashboard();
   await loadDevices();
 });
@@ -859,7 +921,22 @@ onBeforeUnmount(() => {
                   >
                     <div class="flex items-center justify-between mb-2">
                       <span class="min-w-0 pr-3 text-sm text-[#333333]">{{ control.label }}</span>
+                      <!-- Toggle switch in header for toggle controls -->
+                      <button
+                        v-if="control.kind === 'toggle'"
+                        @click="runToggle(control, normalizeToggleState(control.value) === 'on' ? 'turn_off' : 'turn_on')"
+                        :disabled="executingControlId === control.id"
+                        class="relative w-12 h-6 rounded-full transition-all duration-200 disabled:opacity-50 shrink-0"
+                        :class="normalizeToggleState(control.value) === 'on' ? 'bg-[#07C160]' : 'bg-[#EDEDED]'"
+                      >
+                        <span
+                          class="absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200"
+                          :class="normalizeToggleState(control.value) === 'on' ? 'left-7' : 'left-1'"
+                        />
+                      </button>
+                      <!-- Value badge for non-toggle controls -->
                       <span
+                        v-else
                         class="max-w-[9rem] shrink-0 truncate rounded-full px-2 py-0.5 text-xs font-medium md:max-w-[12rem]"
                         :class="controlValueBadgeClass(control)"
                         :title="formatValue(control.value, control.unit)"
@@ -868,26 +945,8 @@ onBeforeUnmount(() => {
                       </span>
                     </div>
 
-                    <!-- Sensor -->
-                    <p v-if="control.kind === 'sensor'" class="text-xs text-[#888888]">
-                      {{ $t("devices.hints.readOnlyShort") }}
-                    </p>
-
-                    <!-- Toggle -->
-                    <div v-else-if="control.kind === 'toggle'" class="flex gap-2">
-                      <button
-                        v-for="action in visibleToggleActions(control)"
-                        :key="action.id"
-                        @click="runToggle(control, action.id)"
-                        :disabled="executingControlId === control.id"
-                        class="px-3 py-1 rounded-full text-xs transition-all duration-200 border border-[#07C160]/30 text-[#07C160] hover:bg-[#07C160] hover:text-white disabled:opacity-50"
-                      >
-                        {{ action.label }}
-                      </button>
-                    </div>
-
                     <!-- Range -->
-                    <div v-else-if="control.kind === 'range'" class="space-y-2">
+                    <div v-if="control.kind === 'range'" class="space-y-2">
                       <input
                         type="range"
                         class="w-full h-1 bg-[#EDEDED] rounded-lg appearance-none cursor-pointer accent-[#07C160]"

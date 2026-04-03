@@ -7,7 +7,6 @@ import LoginPage from "@/pages/LoginPage.vue";
 import DevicesPage from "@/pages/console/DevicesPage.vue";
 import ManagePage from "@/pages/console/ManagePage.vue";
 import MissionsPage from "@/pages/console/MissionsPage.vue";
-import OverviewPage from "@/pages/console/OverviewPage.vue";
 import { isAuthenticated } from "@/lib/auth";
 
 const router = createRouter({
@@ -39,18 +38,17 @@ const router = createRouter({
       children: [
         {
           path: "",
-          name: "console-overview",
-          component: OverviewPage,
-        },
-        {
-          path: "missions",
-          name: "console-missions",
-          component: MissionsPage,
+          redirect: "/console/devices",
         },
         {
           path: "devices",
           name: "console-devices",
           component: DevicesPage,
+        },
+        {
+          path: "missions",
+          name: "console-missions",
+          component: MissionsPage,
         },
         {
           path: "manage",

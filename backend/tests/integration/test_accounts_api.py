@@ -49,7 +49,36 @@ def test_user_registration_duplicate_email(client):
     )
     
     assert response.status_code == 400
+    assert response.json()["error_code"] == "duplicate_email"
     assert "已被注册" in response.json()["error"]
+
+
+@pytest.mark.django_db
+def test_user_registration_duplicate_name(client):
+    """
+    测试重复昵称注册应失败
+    """
+    Account.objects.create(
+        email="original@example.com",
+        name="Jarvis",
+        password="password"
+    )
+
+    url = reverse('register_user')
+    data = {
+        "email": "new@example.com",
+        "name": "Jarvis",
+        "password": "new_password"
+    }
+    response = client.post(
+        url,
+        data=json.dumps(data),
+        content_type='application/json'
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "duplicate_name"
+    assert "昵称" in response.json()["error"]
 
 @pytest.mark.django_db
 def test_user_registration_invalid_email(client):

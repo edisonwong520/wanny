@@ -136,7 +136,7 @@ onMounted(() => {
                     class="max-h-16 w-auto object-contain"
                     loading="lazy"
                   >
-                </div> 
+                </div>
                 <div class="mt-1 text-sm font-medium text-[#223126] md:text-base">
                   {{ platform.name }}
                 </div>
@@ -150,6 +150,7 @@ onMounted(() => {
     <footer class="border-t border-[#EDEDED] py-4 text-center text-sm text-[#888888]">
       <div class="flex flex-col items-center justify-center gap-2 sm:flex-row sm:gap-3">
         <span>Wanny - {{ $t("landing.butler") }}</span>
+        <!--
         <span class="hidden sm:inline text-[#D7D7D7]">|</span>
         <a
           :href="discordUrl"
@@ -162,6 +163,7 @@ onMounted(() => {
           </svg>
           {{ $t("nav.discord") }}
         </a>
+        -->
       </div>
     </footer>
   </div>

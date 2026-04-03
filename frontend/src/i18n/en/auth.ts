@@ -30,6 +30,8 @@ export default {
     passwordLength: "Password must be at least 6 characters",
     loginFailed: "Login failed",
     registerFailed: "Registration failed",
+    duplicateEmail: "This email has already been registered",
+    duplicateName: "This nickname is already in use",
     systemBusy: "System busy, please try again later",
   },
 };

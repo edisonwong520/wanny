@@ -36,6 +36,21 @@ This repository is licensed under [Apache License 2.0](./LICENSE). Third-party s
 
 ![Console Panel](./assets/readme/console-panel.jpg)
 
+## ✨ A Shared Vision
+
+Wanny is not just about controlling a few devices. The bigger idea is an AI butler that understands your rhythm, connects real-world context, and quietly gets things ready before you ask.
+
+Picture the trip home after work:
+
+- Your car leaves the office, and Jarvis uses vehicle location, route context, and expected arrival time to understand that you are heading home.
+- Instead of stopping at a reminder, it can start acting in the physical world by turning on the rice cooker so dinner is already underway before you arrive.
+- It can also check live weather and indoor or outdoor temperature, then preheat the floor heating if the home is getting too cold, so the space feels right the moment you open the door.
+- If fuel is running low, it can combine your current route, nearby station options, and real-world signals such as rising gas prices to proactively recommend a better place to refuel.
+
+The long-term goal is to connect device control, environmental sensing, mobility signals, real-world information, long-term memory, and proactive decision-making into one continuous experience. We want AI to do more than answer questions. We want it to understand context, participate in daily life, and make the right things happen at the right time.
+
+That is also why this project keeps expanding toward more device integrations and more real-world capabilities: every new connection makes Wanny feel less like a rule engine and more like a genuinely helpful companion.
+
 ## 🚀 Core Capabilities
 
 ### 1. Smart Device Control (Jarvis Brain)

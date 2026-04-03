@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# update code
+git submodule update --init --recursive
+
 # 定位到后端目录
 cd "$(dirname "$0")/../backend" || exit
 

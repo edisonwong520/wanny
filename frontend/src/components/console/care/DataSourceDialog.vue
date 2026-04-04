@@ -21,16 +21,16 @@ const { t } = useI18n();
 
 const form = ref({
   sourceType: "weather_api" as "weather_api" | "ha_entity",
-  name: "",
   location: "",
-  latitude: "",
   longitude: "",
+  latitude: "",
   timezone: "Asia/Shanghai",
   fetchFrequency: "30m",
   haEntityId: "weather.home",
 });
 
 const editingId = ref<number | null>(null);
+const loadingLocation = ref(false);
 
 const weatherSources = computed(() =>
   props.sources.filter((s) => ["weather_api", "ha_entity"].includes(s.sourceType))
@@ -40,14 +40,37 @@ function resetForm() {
   editingId.value = null;
   form.value = {
     sourceType: "weather_api",
-    name: t("care.weather.types.qweather"),
     location: "",
-    latitude: "",
     longitude: "",
+    latitude: "",
     timezone: "Asia/Shanghai",
     fetchFrequency: "30m",
     haEntityId: "weather.home",
   };
+}
+
+function requestBrowserLocation() {
+  if (!navigator.geolocation) {
+    alert(t("care.weather.errors.geolocationNotSupported"));
+    return;
+  }
+  loadingLocation.value = true;
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      form.value.longitude = position.coords.longitude.toFixed(4);
+      form.value.latitude = position.coords.latitude.toFixed(4);
+      loadingLocation.value = false;
+    },
+    (error) => {
+      loadingLocation.value = false;
+      let message = t("care.weather.errors.geolocationFailed");
+      if (error.code === error.PERMISSION_DENIED) {
+        message = t("care.weather.errors.geolocationDenied");
+      }
+      alert(message);
+    },
+    { enableHighAccuracy: false, timeout: 10000 }
+  );
 }
 
 function editSource(source: CareDataSourceRecord) {
@@ -55,10 +78,9 @@ function editSource(source: CareDataSourceRecord) {
   editingId.value = source.id;
   form.value = {
     sourceType: source.sourceType as "weather_api" | "ha_entity",
-    name: source.name,
     location: String(config.location || ""),
-    latitude: config.latitude == null ? "" : String(config.latitude),
     longitude: config.longitude == null ? "" : String(config.longitude),
+    latitude: config.latitude == null ? "" : String(config.latitude),
     timezone: String(config.timezone || "Asia/Shanghai"),
     fetchFrequency: source.fetchFrequency,
     haEntityId: String(config.ha_entity_id || config.entity_id || "weather.home"),
@@ -66,9 +88,13 @@ function editSource(source: CareDataSourceRecord) {
 }
 
 function handleSubmit() {
+  const defaultName = form.value.sourceType === "ha_entity"
+    ? t("care.weather.types.haEntity")
+    : t("care.weather.types.qweather");
+
   const payload: Partial<CareDataSourceRecord> = {
     sourceType: form.value.sourceType,
-    name: form.value.name,
+    name: editingId.value ? undefined : defaultName,
     fetchFrequency: form.value.fetchFrequency,
     isActive: true,
     config:
@@ -77,8 +103,8 @@ function handleSubmit() {
         : {
             provider: "qweather",
             location: form.value.location.trim() || undefined,
-            latitude: form.value.latitude.trim() ? Number(form.value.latitude) : undefined,
             longitude: form.value.longitude.trim() ? Number(form.value.longitude) : undefined,
+            latitude: form.value.latitude.trim() ? Number(form.value.latitude) : undefined,
             timezone: form.value.timezone,
           },
   };
@@ -183,13 +209,6 @@ watch(
             </button>
           </div>
 
-          <!-- Name -->
-          <input
-            v-model="form.name"
-            :placeholder="$t('care.weather.form.name')"
-            class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
-          />
-
           <!-- HA Entity ID -->
           <template v-if="form.sourceType === 'ha_entity'">
             <input
@@ -206,26 +225,43 @@ watch(
               :placeholder="$t('care.weather.form.location')"
               class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
             />
-            <div class="grid grid-cols-2 gap-2">
-              <input
-                v-model="form.latitude"
-                :placeholder="$t('care.weather.form.latitude')"
-                class="rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
-              />
-              <input
-                v-model="form.longitude"
-                :placeholder="$t('care.weather.form.longitude')"
-                class="rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
-              />
+            <div class="flex items-center gap-2">
+              <div class="flex-1 grid grid-cols-2 gap-2">
+                <input
+                  v-model="form.longitude"
+                  :placeholder="$t('care.weather.form.longitude')"
+                  class="rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
+                />
+                <input
+                  v-model="form.latitude"
+                  :placeholder="$t('care.weather.form.latitude')"
+                  class="rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
+                />
+              </div>
+              <button
+                type="button"
+                class="shrink-0 rounded-xl bg-[#F2F4F7] px-3 py-2.5 text-xs text-[#344054] hover:bg-[#E4E7EC] disabled:opacity-50"
+                :disabled="loadingLocation"
+                @click="requestBrowserLocation"
+              >
+                {{ loadingLocation ? $t("care.weather.form.locating") : $t("care.weather.form.autoLocation") }}
+              </button>
             </div>
           </template>
 
           <!-- Fetch Frequency -->
-          <input
-            v-model="form.fetchFrequency"
-            :placeholder="$t('care.weather.form.fetchFrequency')"
-            class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
-          />
+          <div class="flex items-center gap-2">
+            <select
+              v-model="form.fetchFrequency"
+              class="flex-1 rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160] bg-white"
+            >
+              <option value="10m">{{ $t("care.weather.fetchFrequency.10m") }}</option>
+              <option value="30m">{{ $t("care.weather.fetchFrequency.30m") }}</option>
+              <option value="1h">{{ $t("care.weather.fetchFrequency.1h") }}</option>
+              <option value="3h">{{ $t("care.weather.fetchFrequency.3h") }}</option>
+              <option value="6h">{{ $t("care.weather.fetchFrequency.6h") }}</option>
+            </select>
+          </div>
         </div>
       </div>
 

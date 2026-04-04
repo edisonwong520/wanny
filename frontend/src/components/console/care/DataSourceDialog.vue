@@ -200,17 +200,17 @@ watch(
           </div>
 
           <!-- Provider Selection (for weather_api) -->
-          <div v-if="form.sourceType === 'weather_api'" class="flex gap-2">
+          <div v-if="form.sourceType === 'weather_api'" class="flex gap-2 pl-2">
             <button
-              class="flex-1 rounded-full px-3 py-2 text-xs transition-all"
-              :class="form.provider === 'qweather' ? 'bg-[#07C160] text-white' : 'bg-white border border-[#E4E7EC] text-[#667085]'"
+              class="flex-1 rounded-full px-3 py-1.5 text-[11px] transition-all"
+              :class="form.provider === 'qweather' ? 'bg-[#07C160] text-white' : 'bg-[#F2F4F7] text-[#667085]'"
               @click="switchProvider('qweather')"
             >
               {{ $t("care.weather.types.qweather") }}
             </button>
             <button
-              class="flex-1 rounded-full px-3 py-2 text-xs transition-all"
-              :class="form.provider === 'open_meteo' ? 'bg-[#07C160] text-white' : 'bg-white border border-[#E4E7EC] text-[#667085]'"
+              class="flex-1 rounded-full px-3 py-1.5 text-[11px] transition-all"
+              :class="form.provider === 'open_meteo' ? 'bg-[#07C160] text-white' : 'bg-[#F2F4F7] text-[#667085]'"
               @click="switchProvider('open_meteo')"
             >
               {{ $t("care.weather.types.openMeteo") }}

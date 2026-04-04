@@ -168,9 +168,6 @@ watch(
         </div>
 
         <!-- Form -->
-        <div class="text-[10px] text-[#98A2B3] uppercase mb-2">
-          {{ editingId ? $t("care.weather.editTitle") : $t("care.weather.addSource") }}
-        </div>
         <div class="space-y-3">
           <input
             v-model="form.location"
@@ -178,6 +175,14 @@ watch(
             class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
           />
           <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="shrink-0 rounded-xl border border-[#E4E7EC] bg-[#F2F4F7] px-3 py-2.5 text-sm text-[#344054] hover:bg-[#E4E7EC] disabled:opacity-50"
+              :disabled="loadingLocation"
+              @click="requestBrowserLocation"
+            >
+              {{ loadingLocation ? $t("care.weather.form.locating") : $t("care.weather.form.autoLocation") }}
+            </button>
             <div class="flex-1 grid grid-cols-2 gap-2">
               <input
                 v-model="form.longitude"
@@ -190,14 +195,6 @@ watch(
                 class="rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
               />
             </div>
-            <button
-              type="button"
-              class="shrink-0 rounded-xl bg-[#F2F4F7] px-3 py-2.5 text-xs text-[#344054] hover:bg-[#E4E7EC] disabled:opacity-50"
-              :disabled="loadingLocation"
-              @click="requestBrowserLocation"
-            >
-              {{ loadingLocation ? $t("care.weather.form.locating") : $t("care.weather.form.autoLocation") }}
-            </button>
           </div>
 
           <!-- Fetch Frequency -->

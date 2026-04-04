@@ -1,0 +1,421 @@
+{
+  "name": "米家智能宠物饮水机2",
+  "model": "xiaomi.pet_waterer.70m2",
+  "properties": [
+    {
+      "name": "fault",
+      "description": "Device Fault / 故障",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "No Faults"
+        }
+      ],
+      "method": {
+        "siid": 2,
+        "piid": 1
+      }
+    },
+    {
+      "name": "status",
+      "description": "Status / 水泵工作状态",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 1,
+          "description": "Waterless",
+          "desc_zh_cn": "未出水"
+        },
+        {
+          "value": 2,
+          "description": "Watering",
+          "desc_zh_cn": "出水中"
+        }
+      ],
+      "method": {
+        "siid": 2,
+        "piid": 3
+      }
+    },
+    {
+      "name": "mode",
+      "description": "Mode / 模式",
+      "type": "uint",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "Auto",
+          "desc_zh_cn": "感应出水"
+        },
+        {
+          "value": 1,
+          "description": "Interval",
+          "desc_zh_cn": "间歇出水"
+        },
+        {
+          "value": 2,
+          "description": "Constant",
+          "desc_zh_cn": "长出水"
+        }
+      ],
+      "method": {
+        "siid": 2,
+        "piid": 4
+      }
+    },
+    {
+      "name": "out-water-interval",
+      "description": "Out Water Interval / 出水间隔",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "minutes",
+      "range": [
+        15,
+        120,
+        15
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 7
+      }
+    },
+    {
+      "name": "water-shortage-status",
+      "description": "Water Shortage Status / 缺水状态",
+      "type": "bool",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 10
+      }
+    },
+    {
+      "name": "pet-drinking-fountain-out-water-interval",
+      "description": "Out Water Interval / 出水间隔",
+      "type": "uint",
+      "rw": "rw",
+      "unit": null,
+      "range": [
+        10,
+        120,
+        5
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 11
+      }
+    },
+    {
+      "name": "filter-life-level",
+      "description": "Filter Life Level / 滤芯剩余寿命",
+      "type": "uint",
+      "rw": "r",
+      "unit": "percentage",
+      "range": [
+        0,
+        100,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 3,
+        "piid": 1
+      }
+    },
+    {
+      "name": "filter-left-time",
+      "description": "Filter Left Time / 滤芯剩余时间",
+      "type": "uint",
+      "rw": "r",
+      "unit": "hours",
+      "range": [
+        0,
+        1000,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 3,
+        "piid": 2
+      }
+    },
+    {
+      "name": "physical-controls-locked",
+      "description": "Physical Control Locked / 物理控制锁",
+      "type": "bool",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 4,
+        "piid": 1
+      }
+    },
+    {
+      "name": "battery-level",
+      "description": "Battery Level / 电池电量",
+      "type": "uint",
+      "rw": "r",
+      "unit": "percentage",
+      "range": [
+        0,
+        100,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 5,
+        "piid": 1
+      }
+    },
+    {
+      "name": "charging-state",
+      "description": "Charging State / 电池充电状态",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "No Charge",
+          "desc_zh_cn": "未充电"
+        },
+        {
+          "value": 1,
+          "description": "Charging",
+          "desc_zh_cn": "充电中"
+        },
+        {
+          "value": 2,
+          "description": "Charge Full",
+          "desc_zh_cn": "充满电"
+        }
+      ],
+      "method": {
+        "siid": 5,
+        "piid": 2
+      }
+    },
+    {
+      "name": "no-disturb",
+      "description": "No Disturb / 勿扰",
+      "type": "bool",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 6,
+        "piid": 1
+      }
+    },
+    {
+      "name": "low-battery",
+      "description": "low-battery / 电量不足",
+      "type": "bool",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 9,
+        "piid": 5
+      }
+    },
+    {
+      "name": "usb-insert-state",
+      "description": "USB plug-in status / USB插入状态",
+      "type": "bool",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 9,
+        "piid": 6
+      }
+    },
+    {
+      "name": "time-period-start",
+      "description": "Do not disturb time period (start time) / 勿扰时间段（开始时间）",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "seconds",
+      "range": [
+        0,
+        86400,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 9,
+        "piid": 10
+      }
+    },
+    {
+      "name": "time-period-end",
+      "description": "time-period-end / 勿扰时间段（结束时间）",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "seconds",
+      "range": [
+        0,
+        86400,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 9,
+        "piid": 11
+      }
+    },
+    {
+      "name": "pump-block",
+      "description": "Water pump blocked / 水泵堵转",
+      "type": "bool",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 9,
+        "piid": 12
+      }
+    },
+    {
+      "name": "event-time",
+      "description": " / 日志时间戳",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": [
+        0,
+        4294967295,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 9,
+        "piid": 13
+      }
+    },
+    {
+      "name": "event-mode",
+      "description": " / 设备出水时模式",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "PirMode"
+        },
+        {
+          "value": 1,
+          "description": "IntermittentMode"
+        },
+        {
+          "value": 2,
+          "description": "AlltimeMode"
+        }
+      ],
+      "method": {
+        "siid": 9,
+        "piid": 14
+      }
+    },
+    {
+      "name": "event-water",
+      "description": " / 设备出水",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "Mode-change"
+        },
+        {
+          "value": 1,
+          "description": "Water-out"
+        }
+      ],
+      "method": {
+        "siid": 9,
+        "piid": 15
+      }
+    },
+    {
+      "name": "event-timezone",
+      "description": " / 日志时区",
+      "type": "int",
+      "rw": "r",
+      "unit": null,
+      "range": [
+        -2147483647,
+        2147483647,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 9,
+        "piid": 16
+      }
+    },
+    {
+      "name": "factory-mode-switch",
+      "description": "factory-mode-switch / 切换设备模式",
+      "type": "uint",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "User Mode"
+        },
+        {
+          "value": 1,
+          "description": "Debug Mode"
+        },
+        {
+          "value": 2,
+          "description": "Eng Mode"
+        }
+      ],
+      "method": {
+        "siid": 9,
+        "piid": 17
+      }
+    }
+  ],
+  "actions": [
+    {
+      "name": "reset-filter-life",
+      "description": "Reset Filter Life / 重置滤芯",
+      "method": {
+        "siid": 3,
+        "aiid": 1
+      }
+    }
+  ]
+}

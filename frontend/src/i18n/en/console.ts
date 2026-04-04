@@ -353,6 +353,10 @@ export default {
       dataSource: "Data source",
       addSource: "Add data source",
       existingSources: "Configured sources",
+      emptySources: {
+        title: "No weather sources yet",
+        description: "Add a weather source first. Wanny will fetch weather immediately and show it here.",
+      },
       apiSource: "Weather API",
       indices: {
         humidity: "Humidity",
@@ -360,11 +364,25 @@ export default {
         wind: "Wind",
         pressure: "Pressure",
       },
+      sections: {
+        indices: "Weather indices",
+        forecast: "Forecast",
+        warning: "Warnings",
+      },
+      airQuality: {
+        title: "Air quality",
+        empty: "No AQI data yet",
+        primaryPollutant: "Primary pollutant",
+      },
+      forecast: {
+        uv: "UV",
+      },
       types: {
         qweather: "QWeather",
       },
       actions: {
         addSource: "Add weather source",
+        add: "Add",
         saveSource: "Save weather source",
         useCurrentLocation: "Use current location",
         locating: "Locating...",
@@ -375,13 +393,22 @@ export default {
         geolocationUnsupported: "This browser does not support geolocation. Please fill latitude and longitude manually.",
       },
       form: {
-        location: "Location name (optional)",
+        apiKey: "QWeather API key / id",
+        apiHost: "QWeather API host",
+        location: "Geographic location",
         longitude: "Longitude",
         latitude: "Latitude",
         timezone: "Timezone",
         haEntityId: "HA entity id, e.g. weather.home",
         autoLocation: "Auto locate",
         locating: "Locating...",
+      },
+      tutorial: {
+        title: "How to get QWeather config",
+        step1: "1. Sign in to the QWeather developer console, create a project, and copy the API key.",
+        step2: "2. Find your API host in the console and paste it into the host field above.",
+        step3: "3. For geographic location, start with browser geolocation or enter coordinates manually.",
+        step4: "4. Wanny fetches weather every 30 minutes.",
       },
       fetchFrequency: {
         "10m": "Every 10 min",
@@ -391,6 +418,7 @@ export default {
         "6h": "Every 6 hours",
       },
       errors: {
+        missingApiConfig: "Fill in the QWeather API key and host before using auto locate.",
         geolocationNotSupported: "Browser does not support geolocation",
         geolocationFailed: "Geolocation failed, please enter coordinates manually",
         geolocationDenied: "Geolocation permission denied, please allow in browser settings",

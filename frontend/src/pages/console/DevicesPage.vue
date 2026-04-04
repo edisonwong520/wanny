@@ -282,12 +282,6 @@ function handleSearchInput() {
   }, 300);
 }
 
-function clearSearch() {
-  searchQuery.value = "";
-  pagination.value.page = 1;
-  void loadDevices();
-}
-
 function togglePlatformSelect() {
   platformSelectOpen.value = !platformSelectOpen.value;
 }
@@ -749,23 +743,17 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- Filters + Refresh -->
-      <div class="flex items-center justify-between gap-4">
-        <div class="flex items-center gap-2 flex-1">
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5">
+        <div class="flex items-center gap-2 lg:col-span-4">
           <!-- Search -->
-          <div class="relative flex-1 max-w-xs">
+          <div class="relative flex-1">
             <input
               v-model="searchQuery"
-              type="text"
+              type="search"
               :placeholder="$t('common.search')"
               class="h-[34px] w-full rounded-full border border-[#EDEDED] bg-white px-3 pl-4 text-sm focus:outline-none focus:border-[#07C160] transition-colors"
-              :class="searchQuery ? 'pr-8' : ''"
               @input="handleSearchInput"
             />
-            <button
-              v-if="searchQuery"
-              @click="clearSearch"
-              class="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#333333] text-sm"
-            >✕</button>
           </div>
           <div class="flex items-center gap-2 text-sm text-[#667085] ml-4">
             <div class="relative" data-platform-select>
@@ -808,7 +796,7 @@ onBeforeUnmount(() => {
         <button
           @click="handleRefresh"
           :disabled="syncing || savingOrder"
-          class="inline-flex h-[34px] items-center rounded-full bg-[#07C160] px-4 text-sm font-medium text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+          class="inline-flex h-[34px] items-center rounded-full bg-[#07C160] px-4 text-sm font-medium text-white transition-all duration-200 hover:bg-[#06AD56] hover:shadow-md hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 lg:col-span-8 lg:justify-self-end"
         >
           {{ syncing ? $t("common.loading") : $t("devices.actions.refresh") }}
         </button>

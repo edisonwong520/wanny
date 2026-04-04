@@ -81,6 +81,33 @@ export interface WeatherSnapshot {
   temperature?: number | null;
   previous_temperature?: number | null;
   condition?: string;
+  humidity?: number | null;
+  feels_like?: number | null;
+  air_quality?: {
+    aqi?: string | number | null;
+    category?: string;
+    primaryPollutant?: string;
+    healthAdvice?: string;
+  };
+  indices?: Array<{
+    name?: string;
+    category?: string;
+    text?: string;
+  }>;
+  forecast?: Array<{
+    date?: string;
+    textDay?: string;
+    tempMin?: number | null;
+    tempMax?: number | null;
+    uvIndex?: string;
+    precip?: string;
+  }>;
+  warnings?: Array<{
+    title?: string;
+    severity?: string;
+    typeName?: string;
+    text?: string;
+  }>;
   fetched_at?: string;
   previous_fetched_at?: string;
   raw?: Record<string, unknown>;
@@ -241,8 +268,14 @@ export async function refreshCurrentWeather() {
   );
 }
 
-export async function reverseGeocode(longitude: number, latitude: number) {
+export async function reverseGeocode(longitude: number, latitude: number, apiKey: string, endpoint: string) {
+  const params = new URLSearchParams({
+    longitude: String(longitude),
+    latitude: String(latitude),
+    api_key: apiKey,
+    endpoint,
+  });
   return requestJson<{ name: string; adm1: string; adm2: string; country: string; locationId: string }>(
-    `/api/care/geocode/?longitude=${longitude}&latitude=${latitude}`,
+    `/api/care/geocode/?${params.toString()}`,
   );
 }

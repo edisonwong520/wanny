@@ -1,0 +1,172 @@
+{
+  "name": "智能双色灯V2(MESH)",
+  "model": "ftd.light.ftdlmp",
+  "properties": [
+    {
+      "name": "on",
+      "description": "Switch Status / 开关",
+      "type": "bool",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 1
+      }
+    },
+    {
+      "name": "brightness",
+      "description": "Brightness / 亮度",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "percentage",
+      "range": [
+        1,
+        100,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 2
+      }
+    },
+    {
+      "name": "color-temperature",
+      "description": "Color Temperature / 色温",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "kelvin",
+      "range": [
+        3000,
+        6500,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 3
+      }
+    },
+    {
+      "name": "flex-switch",
+      "description": "Flex Switch / 凌动开关",
+      "type": "bool",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 4
+      }
+    },
+    {
+      "name": "mode",
+      "description": "Mode / 模式",
+      "type": "uint",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "Warmth",
+          "desc_en": "Warmth Mode",
+          "desc_zh_cn": "温馨"
+        },
+        {
+          "value": 1,
+          "description": "Tv",
+          "desc_en": "Tv Mode",
+          "desc_zh_cn": "电视模式（影院模式）"
+        },
+        {
+          "value": 2,
+          "description": "Reading",
+          "desc_en": "Reading Mode",
+          "desc_zh_cn": "阅读模式"
+        },
+        {
+          "value": 3,
+          "description": "Night",
+          "desc_en": "Night Mode",
+          "desc_zh_cn": "月光（夜间）模式"
+        },
+        {
+          "value": 4,
+          "description": "Hospitality",
+          "desc_en": "Hospitality Mode",
+          "desc_zh_cn": "会客模式"
+        },
+        {
+          "value": 5,
+          "description": "Leisure",
+          "desc_en": "Leisure Mode",
+          "desc_zh_cn": "休闲模式"
+        },
+        {
+          "value": 6,
+          "description": "Office",
+          "desc_en": "Office Mode",
+          "desc_zh_cn": "办公模式"
+        },
+        {
+          "value": 255,
+          "description": "Normal",
+          "desc_en": "Normal Mode",
+          "desc_zh_cn": "正常模式"
+        }
+      ],
+      "method": {
+        "siid": 2,
+        "piid": 5
+      }
+    },
+    {
+      "name": "dimlum",
+      "description": "dimlum / 亮度增减",
+      "type": "bool",
+      "rw": "w",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 3,
+        "piid": 1
+      }
+    },
+    {
+      "name": "dimctl",
+      "description": "dimctl / 色温增减",
+      "type": "bool",
+      "rw": "w",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 3,
+        "piid": 2
+      }
+    }
+  ],
+  "actions": [
+    {
+      "name": "action-dimlum",
+      "description": "action-dimlum / 亮度增减",
+      "method": {
+        "siid": 3,
+        "aiid": 1
+      }
+    },
+    {
+      "name": "action-dimctl",
+      "description": "action-dimctl / 色温增减",
+      "method": {
+        "siid": 3,
+        "aiid": 2
+      }
+    }
+  ]
+}

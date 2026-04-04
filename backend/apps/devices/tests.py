@@ -1210,6 +1210,144 @@ class DeviceDashboardServiceTest(TestCase):
         mocked_request_refresh.assert_not_called()
         mocked_client.set.assert_called_once_with("power", "off")
 
+    def test_refresh_reuses_existing_mijia_controls_when_spec_load_fails(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mijia",
+            auth_payload={"serviceToken": "demo", "ssecurity": "demo", "userId": "demo"},
+            is_active=True,
+        )
+        room = DeviceRoom.objects.create(
+            account=self.account,
+            slug="mijia:kitchen",
+            name="厨房",
+            climate="默认家庭",
+            summary="来自米家家庭: 默认家庭",
+            sort_order=10,
+        )
+        device = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:998877",
+            room=room,
+            name="餐厅灯",
+            category="light",
+            status=DeviceSnapshot.StatusChoices.ONLINE,
+            telemetry="已开启",
+            note="旧设备",
+            capabilities=["power"],
+            sort_order=10,
+            source_payload={"did": "998877", "model": "ftd.light.ftdlmp", "name": "餐厅灯"},
+        )
+        DeviceControl.objects.create(
+            account=self.account,
+            device=device,
+            external_id="mijia:998877:property:power",
+            parent_external_id="mijia:998877",
+            source_type=DeviceControl.SourceTypeChoices.MIJIA_PROPERTY,
+            kind=DeviceControl.KindChoices.TOGGLE,
+            key="power",
+            label="电源",
+            group_label="灯光",
+            writable=True,
+            value=True,
+            action_params={"did": "998877", "property": "power"},
+            source_payload={"name": "power"},
+            sort_order=10,
+        )
+
+        mocked_api = type(
+            "MockedMijiaApi",
+            (),
+            {
+                "get_devices_list": lambda self: [
+                    {
+                        "did": "998877",
+                        "model": "ftd.light.ftdlmp",
+                        "name": "餐厅灯",
+                        "home_id": "1",
+                        "room_name": "厨房",
+                        "isOnline": True,
+                    }
+                ],
+                "get_homes_list": lambda self: [{"id": "1", "name": "默认家庭"}],
+            },
+        )()
+
+        with patch(
+            "providers.services.MijiaAuthService.get_authenticated_api",
+            return_value=mocked_api,
+        ), patch(
+            "mijiaAPI.get_device_info",
+            side_effect=RuntimeError("获取设备型号 'ftd.light.ftdlmp' 的设备信息失败"),
+        ):
+            payload = DeviceDashboardService.refresh(self.account, trigger="spec-fallback")
+
+        refreshed_device = DeviceSnapshot.objects.get(account=self.account, external_id="mijia:998877")
+        controls = list(DeviceControl.objects.filter(account=self.account, device=refreshed_device).order_by("sort_order"))
+        self.assertEqual(len(controls), 1)
+        self.assertEqual(controls[0].key, "power")
+        self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["key"], "power")
+
+    def test_single_mijia_refresh_reuses_existing_controls_when_spec_load_fails(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="mijia",
+            auth_payload={"serviceToken": "demo", "ssecurity": "demo", "userId": "demo"},
+            is_active=True,
+        )
+        room = DeviceRoom.objects.create(
+            account=self.account,
+            slug="mijia:kitchen",
+            name="厨房",
+            climate="默认家庭",
+            summary="来自米家家庭: 默认家庭",
+            sort_order=10,
+        )
+        device = DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mijia:998877",
+            room=room,
+            name="餐厅灯",
+            category="light",
+            status=DeviceSnapshot.StatusChoices.ONLINE,
+            telemetry="已开启",
+            note="旧设备",
+            capabilities=["power"],
+            sort_order=10,
+            source_payload={"did": "998877", "model": "ftd.light.ftdlmp", "name": "餐厅灯"},
+        )
+        DeviceControl.objects.create(
+            account=self.account,
+            device=device,
+            external_id="mijia:998877:property:power",
+            parent_external_id="mijia:998877",
+            source_type=DeviceControl.SourceTypeChoices.MIJIA_PROPERTY,
+            kind=DeviceControl.KindChoices.TOGGLE,
+            key="power",
+            label="电源",
+            group_label="灯光",
+            writable=True,
+            value=False,
+            action_params={"did": "998877", "property": "power"},
+            source_payload={"name": "power"},
+            sort_order=10,
+        )
+
+        with patch(
+            "providers.services.MijiaAuthService.get_authenticated_api",
+            return_value=object(),
+        ), patch("mijiaAPI.mijiaDevice"), patch(
+            "mijiaAPI.get_device_info",
+            side_effect=RuntimeError("获取设备型号 'ftd.light.ftdlmp' 的设备信息失败"),
+        ):
+            payload = DeviceDashboardService._refresh_mijia_device(self.account, device=device, trigger="single-refresh")
+
+        refreshed_device = DeviceSnapshot.objects.get(account=self.account, external_id="mijia:998877")
+        controls = list(DeviceControl.objects.filter(account=self.account, device=refreshed_device).order_by("sort_order"))
+        self.assertEqual(len(controls), 1)
+        self.assertEqual(controls[0].key, "power")
+        self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["key"], "power")
+
     def test_execute_midea_cloud_control_refreshes_only_target_device(self):
         PlatformAuth.objects.create(
             account=self.account,

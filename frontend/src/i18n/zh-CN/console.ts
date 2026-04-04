@@ -356,6 +356,10 @@ export default {
       dataSource: "数据源",
       addSource: "添加数据源",
       existingSources: "已配置数据源",
+      emptySources: {
+        title: "还没有天气数据源",
+        description: "先添加一个天气数据源，系统会立刻拉取天气并在这里展示。",
+      },
       apiSource: "天气 API",
       indices: {
         humidity: "湿度",
@@ -363,11 +367,25 @@ export default {
         wind: "风向",
         pressure: "气压",
       },
+      sections: {
+        indices: "天气指数",
+        forecast: "天气预报",
+        warning: "天气预警",
+      },
+      airQuality: {
+        title: "空气质量",
+        empty: "暂无空气质量数据",
+        primaryPollutant: "主要污染物",
+      },
+      forecast: {
+        uv: "紫外线",
+      },
       types: {
         qweather: "和风天气",
       },
       actions: {
         addSource: "添加天气源",
+        add: "添加",
         saveSource: "保存天气源",
         useCurrentLocation: "使用当前位置",
         locating: "正在定位...",
@@ -378,13 +396,22 @@ export default {
         geolocationUnsupported: "当前浏览器不支持地理定位，请手动填写经纬度。",
       },
       form: {
-        location: "位置名称（可选）",
+        apiKey: "和风 API Key / ID",
+        apiHost: "和风 API Host",
+        location: "地理位置",
         longitude: "经度",
         latitude: "纬度",
         timezone: "时区",
         haEntityId: "HA 实体 ID，如 weather.home",
         autoLocation: "自动定位",
         locating: "定位中...",
+      },
+      tutorial: {
+        title: "如何获取和风天气配置",
+        step1: "1. 登录和风天气开发者控制台，创建项目并复制 API Key。",
+        step2: "2. 在控制台查看你的 API Host，并填入上面的 Host 输入框。",
+        step3: "3. 地理位置可先用浏览器自动定位，也可以手动填写经纬度。",
+        step4: "4. 当前系统每 30 分钟自动拉取一次天气。",
       },
       fetchFrequency: {
         "10m": "每 10 分钟",
@@ -394,6 +421,7 @@ export default {
         "6h": "每 6 小时",
       },
       errors: {
+        missingApiConfig: "请先填写和风 API Key 和 API Host，再使用自动定位。",
         geolocationNotSupported: "浏览器不支持地理定位",
         geolocationFailed: "定位失败，请手动填写经纬度",
         geolocationDenied: "定位权限被拒绝，请在浏览器设置中允许",

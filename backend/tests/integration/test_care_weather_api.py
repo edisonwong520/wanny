@@ -70,6 +70,36 @@ def test_weather_source_creation_rejects_invalid_home_assistant_config(client):
 
 
 @pytest.mark.django_db
+def test_weather_source_creation_rejects_invalid_qweather_config(client):
+    account = Account.objects.create(email="weather-qweather-source@example.com", name="weather-qweather-source", password="x")
+
+    response = client.post(
+        reverse("care:data_sources"),
+        data='{"source_type":"weather_api","name":"QWeather","config":{"provider":"qweather"}}',
+        content_type="application/json",
+        HTTP_X_WANNY_EMAIL=account.email,
+    )
+
+    assert response.status_code == 400
+    assert "api_key" in response.json()["error"]
+
+
+@pytest.mark.django_db
+def test_weather_source_creation_rejects_qweather_without_endpoint(client):
+    account = Account.objects.create(email="weather-qweather-host@example.com", name="weather-qweather-host", password="x")
+
+    response = client.post(
+        reverse("care:data_sources"),
+        data='{"source_type":"weather_api","name":"QWeather","config":{"provider":"qweather","api_key":"Q0606E43B6","location":"101020100"}}',
+        content_type="application/json",
+        HTTP_X_WANNY_EMAIL=account.email,
+    )
+
+    assert response.status_code == 400
+    assert "endpoint" in response.json()["error"]
+
+
+@pytest.mark.django_db
 def test_weather_refresh_flow_exposes_generated_suggestion_with_action_spec(client):
     account = Account.objects.create(email="weather-flow@example.com", name="weather-flow", password="x")
     device = DeviceSnapshot.objects.create(
@@ -125,3 +155,69 @@ def test_weather_refresh_flow_exposes_generated_suggestion_with_action_spec(clie
     assert suggestion["device"]["id"] == device.external_id
     assert suggestion["control"]["id"] == control.external_id
     assert suggestion["actionSpec"]["value"] == 25
+
+
+@pytest.mark.django_db
+def test_weather_refresh_supports_qweather_source(client):
+    account = Account.objects.create(email="weather-qweather-flow@example.com", name="weather-qweather-flow", password="x")
+    device = DeviceSnapshot.objects.create(
+        account=account,
+        external_id="home_assistant:climate.bedroom",
+        name="卧室空调",
+        category="climate",
+        status=DeviceSnapshot.StatusChoices.ONLINE,
+    )
+    DeviceControl.objects.create(
+        account=account,
+        device=device,
+        external_id="home_assistant:climate.bedroom:target_temperature",
+        source_type=DeviceControl.SourceTypeChoices.HA_ENTITY,
+        kind=DeviceControl.KindChoices.RANGE,
+        key="target_temperature",
+        label="目标温度",
+        writable=True,
+        value=25,
+        unit="°C",
+    )
+    ExternalDataSource.objects.create(
+        account=account,
+        source_type=ExternalDataSource.SourceTypeChoices.WEATHER_API,
+        name="QWeather Shanghai",
+        config={
+            "provider": "qweather",
+            "endpoint": "https://p27mdaprbw.re.qweatherapi.com",
+            "api_key": "Q0606E43B6",
+            "location": "101020100",
+            "longitude": 121.47,
+            "latitude": 31.23,
+            "drop_threshold": 8,
+        },
+        last_data={"temperature": 26.0, "condition": "晴", "fetched_at": "2026-04-04 09:00:00"},
+        is_active=True,
+    )
+
+    def build_response(payload):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = payload
+        return response
+
+    with patch(
+        "care.services.weather.requests.get",
+        side_effect=[
+            build_response({"code": "200", "now": {"temp": "16", "text": "阴", "humidity": "75", "feelsLike": "15"}}),
+            build_response({"code": "200", "daily": [{"fxDate": "2026-04-05", "textDay": "阴", "tempMin": "14", "tempMax": "20"}]}),
+            build_response({"code": "200", "daily": [{"name": "穿衣指数", "category": "凉", "text": "建议外套"}]}),
+            build_response({"code": "200", "warning": []}),
+            build_response({"indexes": [{"aqiDisplay": "31", "category": "Excellent", "primaryPollutant": {"name": "PM2.5"}}]}),
+        ],
+    ):
+        refresh_result = client.post(reverse("care:weather_refresh"), data="{}", content_type="application/json", HTTP_X_WANNY_EMAIL=account.email)
+
+    assert refresh_result.status_code == 200
+    payload = refresh_result.json()
+    assert payload["weather"]["provider"] == "qweather"
+    assert payload["weather"]["temperature"] == 16.0
+    assert payload["weather"]["air_quality"]["aqi"] == "31"
+    assert payload["weather"]["indices"][0]["name"] == "穿衣指数"
+    assert payload["suggestionId"] is not None

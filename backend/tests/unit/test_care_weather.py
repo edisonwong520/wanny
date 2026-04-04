@@ -79,6 +79,89 @@ def test_weather_service_supports_home_assistant_weather_entity():
 
 
 @pytest.mark.django_db
+def test_weather_service_supports_qweather_payload():
+    account = Account.objects.create(email="weather-qweather@example.com", name="weather-qweather", password="x")
+    source = ExternalDataSource.objects.create(
+        account=account,
+        source_type=ExternalDataSource.SourceTypeChoices.WEATHER_API,
+        name="QWeather Shanghai",
+        config={
+            "provider": "qweather",
+            "endpoint": "https://p27mdaprbw.re.qweatherapi.com",
+            "api_key": "Q0606E43B6",
+            "location": "101020100",
+            "longitude": 121.47,
+            "latitude": 31.23,
+        },
+        last_data={"temperature": 26.0, "condition": "晴", "fetched_at": "2026-04-04 07:00:00"},
+    )
+
+    def build_response(payload):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = payload
+        return response
+
+    with patch(
+        "care.services.weather.requests.get",
+        side_effect=[
+            build_response({"code": "200", "now": {"temp": "19", "text": "多云", "humidity": "82", "feelsLike": "17"}}),
+            build_response(
+                {
+                    "code": "200",
+                    "daily": [
+                        {"fxDate": "2026-04-05", "textDay": "多云", "tempMin": "16", "tempMax": "24", "uvIndex": "3"},
+                        {"fxDate": "2026-04-06", "textDay": "小雨", "tempMin": "15", "tempMax": "21", "uvIndex": "2"},
+                    ],
+                }
+            ),
+            build_response(
+                {
+                    "code": "200",
+                    "daily": [
+                        {"name": "运动指数", "category": "较适宜", "text": "适合轻量户外活动"},
+                        {"name": "穿衣指数", "category": "偏凉", "text": "建议加一件薄外套"},
+                    ],
+                }
+            ),
+            build_response(
+                {
+                    "code": "200",
+                    "warning": [
+                        {"title": "大风蓝色预警", "severity": "Minor", "typeName": "大风", "text": "注意高空坠物"},
+                    ],
+                }
+            ),
+            build_response(
+                {
+                    "indexes": [
+                        {
+                            "aqiDisplay": "42",
+                            "category": "Excellent",
+                            "primaryPollutant": {"name": "PM2.5"},
+                            "health": {"advice": {"generalPopulation": "适宜外出活动"}},
+                        }
+                    ]
+                }
+            ),
+        ],
+    ) as requests_get:
+        updated = WeatherDataService.fetch_source(source)
+
+    assert requests_get.call_count == 5
+    assert updated.last_data["provider"] == "qweather"
+    assert updated.last_data["temperature"] == 19.0
+    assert updated.last_data["condition"] == "多云"
+    assert updated.last_data["previous_temperature"] == 26.0
+    assert updated.last_data["humidity"] == 82.0
+    assert updated.last_data["feels_like"] == 17.0
+    assert updated.last_data["air_quality"]["aqi"] == "42"
+    assert updated.last_data["forecast"][0]["textDay"] == "多云"
+    assert updated.last_data["indices"][0]["name"] == "运动指数"
+    assert updated.last_data["warnings"][0]["title"] == "大风蓝色预警"
+
+
+@pytest.mark.django_db
 def test_weather_service_raises_when_cache_missing_and_remote_fails():
     account = Account.objects.create(email="weather-fail@example.com", name="weather-fail", password="x")
     source = ExternalDataSource.objects.create(

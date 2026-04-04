@@ -221,6 +221,10 @@ def _validate_data_source(source_type: str, config: dict) -> tuple[bool, str]:
     if source_type == ExternalDataSource.SourceTypeChoices.WEATHER_API:
         provider = str(config.get("provider") or "").strip().lower()
         if provider == "qweather":
+            if not str(config.get("api_key") or "").strip():
+                return False, "qweather source requires api_key"
+            if not str(config.get("endpoint") or "").strip():
+                return False, "qweather source requires endpoint"
             has_coords = config.get("latitude") is not None and config.get("longitude") is not None
             has_location = bool(str(config.get("location") or "").strip())
             if not (has_location or has_coords):
@@ -567,15 +571,19 @@ def handle_geocode(request):
         return JsonResponse({"error": "Unauthorized"}, status=401)
     longitude = request.GET.get("longitude", "").strip()
     latitude = request.GET.get("latitude", "").strip()
+    api_key = request.GET.get("api_key", "").strip()
+    endpoint = request.GET.get("endpoint", "").strip()
     if not longitude or not latitude:
         return JsonResponse({"error": "longitude and latitude are required"}, status=400)
+    if not api_key or not endpoint:
+        return JsonResponse({"error": "api_key and endpoint are required"}, status=400)
     try:
         lon = float(longitude)
         lat = float(latitude)
     except ValueError:
         return JsonResponse({"error": "longitude and latitude must be numbers"}, status=400)
     try:
-        result = WeatherDataService.reverse_geocode(lon, lat)
+        result = WeatherDataService.reverse_geocode(lon, lat, api_key=api_key, endpoint=endpoint)
         return JsonResponse(result, status=200)
     except Exception as error:
         return JsonResponse({"error": str(error)}, status=500)

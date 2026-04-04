@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from "vue";
+import { ref, watch, computed, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { CareDataSourceRecord } from "@/lib/care";
@@ -22,6 +22,8 @@ const { t } = useI18n();
 
 const form = ref({
   location: "",
+  apiKey: "",
+  apiHost: "",
   longitude: "",
   latitude: "",
   timezone: "Asia/Shanghai",
@@ -30,15 +32,51 @@ const form = ref({
 
 const editingId = ref<number | null>(null);
 const loadingLocation = ref(false);
+const apiHostInput = ref<HTMLInputElement | null>(null);
 
 const weatherSources = computed(() =>
   props.sources.filter((s) => s.sourceType === "weather_api")
 );
 
+function formatResolvedLocation(result: { name?: string; adm1?: string; adm2?: string; country?: string; locationId?: string }) {
+  const parts = [result.country, result.adm1, result.adm2, result.name]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  const uniqueParts = parts.filter((part, index) => parts.indexOf(part) === index);
+  return uniqueParts.join(" / ");
+}
+
+function normalizedSubmitLocation() {
+  const value = form.value.location.trim();
+  if (!value) return undefined;
+  return /^\d+$/.test(value) ? value : undefined;
+}
+
+function normalizedDisplayLocation(config: Record<string, unknown>) {
+  const locationLabel = String(config.location_label || "").trim();
+  if (locationLabel) {
+    return locationLabel;
+  }
+  const rawLocation = String(config.location || "").trim();
+  if (rawLocation && !/^\d+$/.test(rawLocation)) {
+    return rawLocation;
+  }
+  const parts = [config.country, config.adm1, config.adm2, config.name]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  const uniqueParts = parts.filter((part, index) => parts.indexOf(part) === index);
+  if (uniqueParts.length > 0) {
+    return uniqueParts.join(" / ");
+  }
+  return rawLocation;
+}
+
 function resetForm() {
   editingId.value = null;
   form.value = {
     location: "",
+    apiKey: "",
+    apiHost: "",
     longitude: "",
     latitude: "",
     timezone: "Asia/Shanghai",
@@ -46,7 +84,16 @@ function resetForm() {
   };
 }
 
+async function focusForm() {
+  await nextTick();
+  apiHostInput.value?.focus();
+}
+
 async function requestBrowserLocation() {
+  if (!form.value.apiKey.trim() || !form.value.apiHost.trim()) {
+    alert(t("care.weather.errors.missingApiConfig"));
+    return;
+  }
   if (!navigator.geolocation) {
     alert(t("care.weather.errors.geolocationNotSupported"));
     return;
@@ -61,10 +108,12 @@ async function requestBrowserLocation() {
 
       // Try to get location name via reverse geocoding
       try {
-        const result = await reverseGeocode(lon, lat);
-        if (result.name) {
-          const parts = [result.adm2, result.name].filter(Boolean);
-          form.value.location = parts.join(" ");
+        const result = await reverseGeocode(lon, lat, form.value.apiKey.trim(), form.value.apiHost.trim());
+        const resolvedLocation = formatResolvedLocation(result);
+        if (resolvedLocation) {
+          form.value.location = resolvedLocation;
+        } else if (result.locationId) {
+          form.value.location = result.locationId;
         }
       } catch {
         // Ignore geocoding errors, user can fill location manually
@@ -88,7 +137,9 @@ function editSource(source: CareDataSourceRecord) {
   const config = source.config || {};
   editingId.value = source.id;
   form.value = {
-    location: String(config.location || ""),
+    location: normalizedDisplayLocation(config),
+    apiKey: String(config.api_key || ""),
+    apiHost: String(config.endpoint || "").replace(/^https?:\/\//, ""),
     longitude: config.longitude == null ? "" : String(config.longitude),
     latitude: config.latitude == null ? "" : String(config.latitude),
     timezone: String(config.timezone || "Asia/Shanghai"),
@@ -98,13 +149,17 @@ function editSource(source: CareDataSourceRecord) {
 
 function handleSubmit() {
   const payload: Partial<CareDataSourceRecord> = {
+    id: editingId.value ?? undefined,
     sourceType: "weather_api",
     name: editingId.value ? undefined : t("care.weather.types.qweather"),
     fetchFrequency: form.value.fetchFrequency,
     isActive: true,
     config: {
       provider: "qweather",
-      location: form.value.location.trim() || undefined,
+      api_key: form.value.apiKey.trim(),
+      endpoint: form.value.apiHost.trim(),
+      location: normalizedSubmitLocation(),
+      location_label: form.value.location.trim() || undefined,
       longitude: form.value.longitude.trim() ? Number(form.value.longitude) : undefined,
       latitude: form.value.latitude.trim() ? Number(form.value.latitude) : undefined,
       timezone: form.value.timezone,
@@ -113,11 +168,16 @@ function handleSubmit() {
   emit("save", payload);
 }
 
+function clearField(field: "apiHost" | "apiKey" | "location" | "longitude" | "latitude") {
+  form.value[field] = "";
+}
+
 watch(
   () => props.open,
   (val) => {
     if (val) {
       resetForm();
+      void focusForm();
     }
   },
   { immediate: true }
@@ -142,6 +202,14 @@ watch(
 
       <!-- Content -->
       <div class="p-5 max-h-[60vh] overflow-y-auto">
+        <div class="mb-4 rounded-2xl border border-[#E4E7EC] bg-[#F9FAFB] px-4 py-3 text-xs leading-6 text-[#667085]">
+          <div class="font-semibold text-[#344054]">{{ $t("care.weather.tutorial.title") }}</div>
+          <div class="mt-2">{{ $t("care.weather.tutorial.step1") }}</div>
+          <div>{{ $t("care.weather.tutorial.step2") }}</div>
+          <div>{{ $t("care.weather.tutorial.step3") }}</div>
+          <div>{{ $t("care.weather.tutorial.step4") }}</div>
+        </div>
+
         <!-- Existing Sources -->
         <div v-if="weatherSources.length > 0" class="mb-4">
           <div class="text-[10px] text-[#98A2B3] uppercase mb-2">{{ $t("care.weather.existingSources") }}</div>
@@ -181,34 +249,106 @@ watch(
             </div>
           </div>
         </div>
+        <div v-else class="mb-4 rounded-2xl border border-dashed border-[#D0D5DD] bg-[#F9FAFB] px-4 py-4">
+          <div class="text-sm font-medium text-[#344054]">{{ $t("care.weather.emptySources.title") }}</div>
+          <div class="mt-1 text-xs leading-6 text-[#667085]">{{ $t("care.weather.emptySources.description") }}</div>
+          <button
+            type="button"
+            class="mt-3 rounded-full border border-[#CFE5D6] bg-white px-4 py-2 text-xs font-medium text-[#07C160] transition-all hover:border-[#07C160] hover:bg-[#F2FBF5]"
+            @click="focusForm"
+          >
+            {{ $t("care.weather.actions.add") }}
+          </button>
+        </div>
 
         <!-- Form -->
         <div class="space-y-3">
-          <input
-            v-model="form.location"
-            :placeholder="$t('care.weather.form.location')"
-            class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
-          />
+          <div class="relative">
+            <input
+              ref="apiHostInput"
+              v-model="form.apiHost"
+              :placeholder="$t('care.weather.form.apiHost')"
+              class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 pr-10 text-sm outline-none focus:border-[#07C160]"
+            />
+            <button
+              v-if="form.apiHost"
+              type="button"
+              class="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-[#F2F4F7] text-xs text-[#667085] hover:bg-[#E4E7EC]"
+              @click="clearField('apiHost')"
+            >
+              ×
+            </button>
+          </div>
+          <div class="relative">
+            <input
+              v-model="form.apiKey"
+              :placeholder="$t('care.weather.form.apiKey')"
+              class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 pr-10 text-sm outline-none focus:border-[#07C160]"
+            />
+            <button
+              v-if="form.apiKey"
+              type="button"
+              class="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-[#F2F4F7] text-xs text-[#667085] hover:bg-[#E4E7EC]"
+              @click="clearField('apiKey')"
+            >
+              ×
+            </button>
+          </div>
           <div class="flex items-center gap-2">
             <button
               type="button"
-              class="shrink-0 rounded-xl border border-[#E4E7EC] bg-[#F2F4F7] px-3 py-2.5 text-sm text-[#344054] hover:bg-[#E4E7EC] disabled:opacity-50"
+              class="shrink-0 inline-flex h-[40px] items-center justify-center rounded-xl border border-[#E4E7EC] bg-[#F2F4F7] px-4 text-sm text-[#344054] hover:bg-[#E4E7EC] disabled:opacity-50"
               :disabled="loadingLocation"
               @click="requestBrowserLocation"
             >
               {{ loadingLocation ? $t("care.weather.form.locating") : $t("care.weather.form.autoLocation") }}
             </button>
-            <div class="flex-1 grid grid-cols-2 gap-2">
+            <div class="relative min-w-0 flex-1">
+              <input
+                v-model="form.location"
+                :placeholder="$t('care.weather.form.location')"
+                class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 pr-10 text-sm outline-none focus:border-[#07C160]"
+              />
+              <button
+                v-if="form.location"
+                type="button"
+                class="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-[#F2F4F7] text-xs text-[#667085] hover:bg-[#E4E7EC]"
+                @click="clearField('location')"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="relative">
               <input
                 v-model="form.longitude"
                 :placeholder="$t('care.weather.form.longitude')"
-                class="rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
+                class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 pr-10 text-sm outline-none focus:border-[#07C160]"
               />
+              <button
+                v-if="form.longitude"
+                type="button"
+                class="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-[#F2F4F7] text-xs text-[#667085] hover:bg-[#E4E7EC]"
+                @click="clearField('longitude')"
+              >
+                ×
+              </button>
+            </div>
+            <div class="relative">
               <input
                 v-model="form.latitude"
                 :placeholder="$t('care.weather.form.latitude')"
-                class="rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"
+                class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 pr-10 text-sm outline-none focus:border-[#07C160]"
               />
+              <button
+                v-if="form.latitude"
+                type="button"
+                class="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-[#F2F4F7] text-xs text-[#667085] hover:bg-[#E4E7EC]"
+                @click="clearField('latitude')"
+              >
+                ×
+              </button>
             </div>
           </div>
 
@@ -239,7 +379,7 @@ watch(
           :disabled="saving"
           @click="handleSubmit"
         >
-          {{ editingId ? $t("care.weather.actions.saveSource") : $t("care.weather.actions.addSource") }}
+          {{ editingId ? $t("care.weather.actions.saveSource") : $t("care.weather.actions.add") }}
         </button>
       </div>
     </div>

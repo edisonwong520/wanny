@@ -1,0 +1,504 @@
+{
+  "name": "小猫云台摄像机 青春版",
+  "model": "xiaovv.camera.q2lite",
+  "properties": [
+    {
+      "name": "on",
+      "description": "Switch Status / 开关",
+      "type": "bool",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 1
+      }
+    },
+    {
+      "name": "image-rollover",
+      "description": "Image Rollover / 图像翻转",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "arcdegrees",
+      "range": [
+        0,
+        360,
+        180
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 2,
+        "piid": 2
+      }
+    },
+    {
+      "name": "status",
+      "description": "Status / 工作状态",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 1,
+          "description": "Idle",
+          "desc_zh_cn": "无存储卡"
+        },
+        {
+          "value": 2,
+          "description": "Busy",
+          "desc_zh_cn": "正常读写"
+        },
+        {
+          "value": 3,
+          "description": "Abnormal",
+          "desc_zh_cn": "读/写异常"
+        },
+        {
+          "value": 4,
+          "description": "Formatting",
+          "desc_zh_cn": "正在格式化"
+        }
+      ],
+      "method": {
+        "siid": 3,
+        "piid": 1
+      }
+    },
+    {
+      "name": "storage-total-space",
+      "description": "Storage Total Space / 存储总空间(KB)",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": [
+        0,
+        2147483647,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 3,
+        "piid": 2
+      }
+    },
+    {
+      "name": "storage-free-space",
+      "description": "Storage Free Space / 存储剩余空间(KB)",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": [
+        0,
+        2147483647,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 3,
+        "piid": 3
+      }
+    },
+    {
+      "name": "recording-mode",
+      "description": "Recording Mode / 录制模式",
+      "type": "uint",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 1,
+          "description": "Not Recording",
+          "desc_zh_cn": "不录像"
+        },
+        {
+          "value": 2,
+          "description": "Spontaneous Recording",
+          "desc_zh_cn": "仅全天自动录像"
+        },
+        {
+          "value": 3,
+          "description": "Alarm Recording",
+          "desc_zh_cn": "仅报警录像"
+        }
+      ],
+      "method": {
+        "siid": 3,
+        "piid": 4
+      }
+    },
+    {
+      "name": "motion-detection",
+      "description": "Motion Detection / 移动侦测",
+      "type": "bool",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 5,
+        "piid": 1
+      }
+    },
+    {
+      "name": "alarm-interval",
+      "description": "Alarm Interval / 报警时间间隔",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "minutes",
+      "range": [
+        1,
+        30,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 5,
+        "piid": 2
+      }
+    },
+    {
+      "name": "detection-sensitivity",
+      "description": "Detection Sensitivity / 侦测灵敏度",
+      "type": "uint",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 1,
+          "description": "Low"
+        },
+        {
+          "value": 2,
+          "description": "Middle",
+          "desc_en": "High"
+        },
+        {
+          "value": 3,
+          "description": "High"
+        }
+      ],
+      "method": {
+        "siid": 5,
+        "piid": 3
+      }
+    },
+    {
+      "name": "motion-detection-start-time",
+      "description": "Motion Detection Start Time / 移动侦测开始时间",
+      "type": "string",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 5,
+        "piid": 4
+      }
+    },
+    {
+      "name": "motion-detection-end-time",
+      "description": "Motion Detection End Time / 移动侦测结束时间",
+      "type": "string",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 5,
+        "piid": 5
+      }
+    },
+    {
+      "name": "connection-status",
+      "description": "connection-status / 连接状态",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "Invalid "
+        },
+        {
+          "value": 1,
+          "description": "Avaliable"
+        },
+        {
+          "value": 2,
+          "description": "FullConnection"
+        }
+      ],
+      "method": {
+        "siid": 7,
+        "piid": 1
+      }
+    },
+    {
+      "name": "audio-mic-volume",
+      "description": "audio-mic-volume / 设备监听声音控制",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "percentage",
+      "range": [
+        0,
+        100,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 7,
+        "piid": 2
+      }
+    },
+    {
+      "name": "audio-spk-volume",
+      "description": "audio-spk-volume / 设备播放声音控制",
+      "type": "uint",
+      "rw": "rw",
+      "unit": "percentage",
+      "range": [
+        0,
+        100,
+        1
+      ],
+      "value-list": null,
+      "method": {
+        "siid": 7,
+        "piid": 3
+      }
+    },
+    {
+      "name": "alarm-prompt-switch",
+      "description": "alarm-prompt-switch / 设备报警提示控制",
+      "type": "bool",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 7,
+        "piid": 4
+      }
+    },
+    {
+      "name": "alarm-area",
+      "description": "alarm-area / 报警区域",
+      "type": "string",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 7,
+        "piid": 5
+      }
+    },
+    {
+      "name": "alarm-tips-type",
+      "description": "alarm-tips-type / 报警提示音类型",
+      "type": "uint",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "Default Area"
+        },
+        {
+          "value": 1,
+          "description": "Tone"
+        }
+      ],
+      "method": {
+        "siid": 7,
+        "piid": 6
+      }
+    },
+    {
+      "name": "alarm-sound-status",
+      "description": "alarm-sound-status / 报警提示音播放状态",
+      "type": "bool",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 7,
+        "piid": 7
+      }
+    },
+    {
+      "name": "alarm-trigger",
+      "description": "alarm-trigger / 报警提示音触发",
+      "type": "bool",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 7,
+        "piid": 8
+      }
+    },
+    {
+      "name": "ptz-type",
+      "description": "ptz-type / 云台支持类型",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "NotSupport"
+        },
+        {
+          "value": 1,
+          "description": "Horizon"
+        },
+        {
+          "value": 2,
+          "description": "Vertical"
+        },
+        {
+          "value": 3,
+          "description": "All"
+        }
+      ],
+      "method": {
+        "siid": 8,
+        "piid": 1
+      }
+    },
+    {
+      "name": "obj-tracking-sw",
+      "description": "obj-tracking-sw / 移动跟踪开关",
+      "type": "uint",
+      "rw": "rw",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "Close"
+        },
+        {
+          "value": 1,
+          "description": "Open"
+        }
+      ],
+      "method": {
+        "siid": 8,
+        "piid": 2
+      }
+    },
+    {
+      "name": "ptz-status",
+      "description": "ptz-status / 云台状态",
+      "type": "uint",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": [
+        {
+          "value": 0,
+          "description": "Idle"
+        },
+        {
+          "value": 1,
+          "description": "Running"
+        },
+        {
+          "value": 2,
+          "description": "Reset"
+        }
+      ],
+      "method": {
+        "siid": 8,
+        "piid": 3
+      }
+    },
+    {
+      "name": "ptz-cur-pos",
+      "description": "ptz-cur-pos / 云台当前坐标",
+      "type": "string",
+      "rw": "r",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 8,
+        "piid": 4
+      }
+    },
+    {
+      "name": "ptz-snap",
+      "description": "ptz-snap / 云台缩略图",
+      "type": "string",
+      "rw": "",
+      "unit": null,
+      "range": null,
+      "value-list": null,
+      "method": {
+        "siid": 8,
+        "piid": 5
+      }
+    }
+  ],
+  "actions": [
+    {
+      "name": "format",
+      "description": "Format / 格式化",
+      "method": {
+        "siid": 3,
+        "aiid": 1
+      }
+    },
+    {
+      "name": "start-p2p-stream",
+      "description": "Start P2P Stream / 开始实时视频流",
+      "method": {
+        "siid": 6,
+        "aiid": 1
+      }
+    },
+    {
+      "name": "stop-stream",
+      "description": "Stop Camera Stream / 停止流",
+      "method": {
+        "siid": 6,
+        "aiid": 2
+      }
+    },
+    {
+      "name": "upload-video",
+      "description": "upload-video / 录制并上传视频",
+      "method": {
+        "siid": 7,
+        "aiid": 1
+      }
+    },
+    {
+      "name": "device-reboot",
+      "description": "device-reboot / 设备重启",
+      "method": {
+        "siid": 7,
+        "aiid": 2
+      }
+    },
+    {
+      "name": "ptz-reset",
+      "description": "ptz-reset / 云台校准",
+      "method": {
+        "siid": 8,
+        "aiid": 1
+      }
+    }
+  ]
+}

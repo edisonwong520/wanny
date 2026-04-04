@@ -5,6 +5,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter, defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -14,6 +15,7 @@ from django.utils import timezone
 from providers.models import PlatformAuth
 from providers.clients.midea_cloud import get_device_mapping
 from utils.logger import logger
+from utils.telemetry import get_tracer
 
 from .queue import enqueue_account_refresh, get_queue_backend, redis_queue_enabled
 from .models import (
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
 
 
 class DeviceDashboardService:
+    tracer = get_tracer(__name__)
     state_key = "default"
     default_sync_interval_seconds = 300
     device_provider_names = ("mijia", "home_assistant", "midea_cloud", "mbapi2020")
@@ -72,6 +75,7 @@ class DeviceDashboardService:
         "app_flag",
         "operator",
     }
+    mijia_spec_cache_dir = Path(__file__).resolve().parents[2] / "runtime_cache" / "mijia_specs"
     mbapi2020_command_groups = (
         {
             "key": "door_lock",
@@ -264,13 +268,32 @@ class DeviceDashboardService:
     @classmethod
     def _run_provider_refresh_task(cls, account: Account, task: dict[str, Any]) -> dict:
         provider_started_at = time.perf_counter()
-        payload = task["builder"](account)
-        logger.info(
-            f"[Device Sync] {task['label']} snapshot built for account_id={account.id}: "
-            f"devices={len(payload.get('devices', []))} "
-            f"elapsed={time.perf_counter() - provider_started_at:.2f}s"
-        )
-        return payload
+        with cls.tracer.start_as_current_span("devices.provider_refresh") as span:
+            span.set_attribute("devices.account_id", account.id)
+            span.set_attribute("devices.provider", str(task.get("platform") or ""))
+            span.set_attribute("devices.trigger", "provider_refresh")
+            try:
+                payload = task["builder"](account)
+            except Exception as error:
+                elapsed = time.perf_counter() - provider_started_at
+                span.set_attribute("devices.provider.success", False)
+                span.set_attribute("devices.provider.elapsed_seconds", elapsed)
+                span.set_attribute("devices.provider.error", str(error))
+                logger.error(
+                    f"[Device Sync] {task['label']} snapshot failed for account_id={account.id}: "
+                    f"elapsed={elapsed:.2f}s error={error}"
+                )
+                raise
+            elapsed = time.perf_counter() - provider_started_at
+            span.set_attribute("devices.provider.success", True)
+            span.set_attribute("devices.provider.elapsed_seconds", elapsed)
+            span.set_attribute("devices.provider.device_count", len(payload.get("devices", [])))
+            logger.info(
+                f"[Device Sync] {task['label']} snapshot built for account_id={account.id}: "
+                f"devices={len(payload.get('devices', []))} "
+                f"elapsed={elapsed:.2f}s"
+            )
+            return payload
 
     @classmethod
     def _get_state(cls, account: Account) -> DeviceDashboardState:
@@ -452,160 +475,196 @@ class DeviceDashboardService:
 
     @classmethod
     def refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
-        logger.info(f"[Device Sync] refresh() called for account_id={account.id} email={account.email} trigger={trigger}")
-        refresh_started_at = time.perf_counter()
-        provider_payloads: list[dict] = []
-        enabled_tasks: list[dict[str, Any]] = []
+        with cls.tracer.start_as_current_span("devices.refresh") as span:
+            span.set_attribute("devices.account_id", account.id)
+            span.set_attribute("devices.trigger", trigger)
+            span.set_attribute("account.email", account.email)
+            logger.info(f"[Device Sync] refresh() started for account_id={account.id} email={account.email} trigger={trigger}")
+            refresh_started_at = time.perf_counter()
+            provider_payloads: list[dict] = []
+            enabled_tasks: list[dict[str, Any]] = []
 
-        for task in cls._provider_refresh_tasks():
-            try:
-                auth_record = task["auth_service"].get_auth_record(account=account, active_only=True)
-                logger.debug(
-                    f"[Device Sync] {task['label']} auth check for account_id={account.id}: "
-                    f"found={auth_record is not None}"
-                )
-                if auth_record:
-                    enabled_tasks.append(task)
-            except Exception as error:
-                logger.error(
-                    f"[Device Sync] Failed to check {task['label']} auth state for user {account.email}: {error}"
-                )
-
-        if enabled_tasks:
-            max_workers = min(len(enabled_tasks), 4)
-            logger.info(
-                f"[Device Sync] Running {len(enabled_tasks)} provider refresh task(s) in parallel "
-                f"for account_id={account.id} with max_workers={max_workers}"
-            )
-            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="device-sync") as executor:
-                future_to_task = {}
-                for task in enabled_tasks:
-                    logger.info(f"[Device Sync] Building {task['label']} snapshot for account_id={account.id}")
-                    future_to_task[executor.submit(cls._run_provider_refresh_task, account, task)] = task
-
-                for future in as_completed(future_to_task):
-                    task = future_to_task[future]
-                    try:
-                        provider_payloads.append(future.result())
-                    except Exception as error:
-                        logger.error(
-                            f"[Device Sync] Failed to build {task['label']} snapshot for user {account.email}: {error}"
-                        )
-
-        logger.info(f"[Device Sync] Merging {len(provider_payloads)} provider payloads for account_id={account.id}")
-        payload = cls._merge_snapshots(provider_payloads) if provider_payloads else cls._build_empty_snapshot()
-        logger.info(f"[Device Sync] Final payload for account_id={account.id}: rooms={len(payload['rooms'])} devices={len(payload['devices'])}")
-
-        persistence_started_at = time.perf_counter()
-        with transaction.atomic():
-            state = cls._get_state(account)
-            existing_room_sort_orders = {
-                room.slug: room.sort_order
-                for room in DeviceRoom.objects.filter(account=account).only("slug", "sort_order")
-            }
-            existing_device_sort_orders = {
-                device.external_id: device.sort_order
-                for device in DeviceSnapshot.objects.filter(account=account).only("external_id", "sort_order")
-            }
-
-            DeviceAnomaly.objects.filter(account=account).delete()
-            DeviceAutomationRule.objects.filter(account=account).delete()
-            DeviceControl.objects.filter(account=account).delete()
-            DeviceSnapshot.objects.filter(account=account).delete()
-            DeviceRoom.objects.filter(account=account).delete()
-
-            room_map: dict[str, DeviceRoom] = {}
-            for room_data in payload["rooms"]:
-                room = DeviceRoom.objects.create(
-                    account=account,
-                    slug=room_data["id"],
-                    name=room_data["name"],
-                    climate=room_data["climate"],
-                    summary=room_data["summary"],
-                    sort_order=existing_room_sort_orders.get(room_data["id"], room_data["sort_order"]),
-                )
-                room_map[room.slug] = room
-
-            device_map: dict[str, DeviceSnapshot] = {}
-            for device_data in payload["devices"]:
-                device = DeviceSnapshot.objects.create(
-                    account=account,
-                    external_id=device_data["id"],
-                    room=room_map.get(device_data["room_id"]),
-                    name=device_data["name"],
-                    category=device_data["category"],
-                    status=device_data["status"],
-                    telemetry=device_data["telemetry"],
-                    note=device_data["note"],
-                    capabilities=device_data["capabilities"],
-                    last_seen=device_data["last_seen"],
-                    sort_order=existing_device_sort_orders.get(device_data["id"], device_data["sort_order"]),
-                    source_payload=device_data.get("source_payload", {}),
-                )
-                device_map[device.external_id] = device
-
-                for control_data in device_data.get("controls", []):
-                    DeviceControl.objects.create(
-                        account=account,
-                        device=device,
-                        external_id=control_data["id"],
-                        parent_external_id=control_data.get("parent_id", "") or "",
-                        source_type=control_data["source_type"],
-                        kind=control_data["kind"],
-                        key=control_data["key"],
-                        label=control_data["label"],
-                        group_label=control_data.get("group_label", ""),
-                        writable=control_data.get("writable", False),
-                        value=control_data.get("value") if control_data.get("value") is not None else {},
-                        unit=control_data.get("unit", ""),
-                        options=control_data.get("options", []),
-                        range_spec=control_data.get("range_spec", {}),
-                        action_params=control_data.get("action_params", {}),
-                        source_payload=control_data.get("source_payload", {}),
-                        sort_order=control_data.get("sort_order", 0),
+            for task in cls._provider_refresh_tasks():
+                try:
+                    auth_record = task["auth_service"].get_auth_record(account=account, active_only=True)
+                    logger.debug(
+                        f"[Device Sync] {task['label']} auth check for account_id={account.id}: "
+                        f"found={auth_record is not None}"
+                    )
+                    if auth_record:
+                        enabled_tasks.append(task)
+                except Exception as error:
+                    logger.error(
+                        f"[Device Sync] Failed to check {task['label']} auth state for user {account.email}: {error}"
                     )
 
-            for anomaly_data in payload["anomalies"]:
-                DeviceAnomaly.objects.create(
-                    account=account,
-                    external_id=anomaly_data["id"],
-                    room=room_map.get(anomaly_data["room_id"]),
-                    device=device_map.get(anomaly_data.get("device_id")),
-                    severity=anomaly_data["severity"],
-                    title=anomaly_data["title"],
-                    body=anomaly_data["body"],
-                    recommendation=anomaly_data["recommendation"],
-                    sort_order=anomaly_data["sort_order"],
+            span.set_attribute("devices.provider_enabled_count", len(enabled_tasks))
+            span.set_attribute("devices.providers", ",".join(task["platform"] for task in enabled_tasks))
+            logger.info(
+                f"[Device Sync] Enabled providers for account_id={account.id}: "
+                f"{', '.join(task['label'] for task in enabled_tasks) or 'none'}"
+            )
+
+            if enabled_tasks:
+                max_workers = min(len(enabled_tasks), 4)
+                logger.info(
+                    f"[Device Sync] Running {len(enabled_tasks)} provider refresh task(s) in parallel "
+                    f"for account_id={account.id} with max_workers={max_workers}"
                 )
+                with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="device-sync") as executor:
+                    future_to_task = {}
+                    for task in enabled_tasks:
+                        logger.info(f"[Device Sync] Building {task['label']} snapshot for account_id={account.id}")
+                        future_to_task[executor.submit(cls._run_provider_refresh_task, account, task)] = task
 
-            for rule_data in payload["rules"]:
-                DeviceAutomationRule.objects.create(
-                    account=account,
-                    external_id=rule_data["id"],
-                    room=room_map.get(rule_data["room_id"]),
-                    device=device_map.get(rule_data.get("device_id")),
-                    mode_key=rule_data["mode_key"],
-                    mode_label=rule_data["mode_label"],
-                    target=rule_data["target"],
-                    condition=rule_data["condition"],
-                    decision=rule_data["decision"],
-                    rationale=rule_data["rationale"],
-                    sort_order=rule_data["sort_order"],
-                )
+                    for future in as_completed(future_to_task):
+                        task = future_to_task[future]
+                        try:
+                            provider_payloads.append(future.result())
+                        except Exception as error:
+                            logger.error(
+                                f"[Device Sync] Failed to build {task['label']} snapshot for user {account.email}: {error}"
+                            )
 
-            state.source = payload["source"]
-            state.last_trigger = trigger
-            state.requested_trigger = ""
-            state.refresh_requested_at = None
-            state.last_error = ""
-            state.refreshed_at = timezone.now()
-            state.save()
+            logger.info(f"[Device Sync] Merging {len(provider_payloads)} provider payloads for account_id={account.id}")
+            payload = cls._merge_snapshots(provider_payloads) if provider_payloads else cls._build_empty_snapshot()
+            span.set_attribute("devices.room_count", len(payload["rooms"]))
+            span.set_attribute("devices.device_count", len(payload["devices"]))
+            logger.info(
+                f"[Device Sync] Final payload for account_id={account.id}: "
+                f"rooms={len(payload['rooms'])} devices={len(payload['devices'])}"
+            )
 
-        logger.info(
-            f"[Device Sync] Refresh persisted for account_id={account.id}: "
-            f"elapsed={time.perf_counter() - persistence_started_at:.2f}s total={time.perf_counter() - refresh_started_at:.2f}s"
-        )
-        return cls.get_dashboard(account)
+            persistence_started_at = time.perf_counter()
+            with transaction.atomic():
+                state = cls._get_state(account)
+                existing_room_sort_orders = {
+                    room.slug: room.sort_order
+                    for room in DeviceRoom.objects.filter(account=account).only("slug", "sort_order")
+                }
+                existing_device_sort_orders = {
+                    device.external_id: device.sort_order
+                    for device in DeviceSnapshot.objects.filter(account=account).only("external_id", "sort_order")
+                }
+                existing_device_controls: dict[str, list[dict]] = defaultdict(list)
+                for control in (
+                    DeviceControl.objects.filter(account=account)
+                    .select_related("device")
+                    .order_by("sort_order", "id")
+                ):
+                    if control.device_id and control.device:
+                        existing_device_controls[control.device.external_id].append(cls._serialize_existing_control(control))
+
+                DeviceAnomaly.objects.filter(account=account).delete()
+                DeviceAutomationRule.objects.filter(account=account).delete()
+                DeviceControl.objects.filter(account=account).delete()
+                DeviceSnapshot.objects.filter(account=account).delete()
+                DeviceRoom.objects.filter(account=account).delete()
+
+                room_map: dict[str, DeviceRoom] = {}
+                for room_data in payload["rooms"]:
+                    room = DeviceRoom.objects.create(
+                        account=account,
+                        slug=room_data["id"],
+                        name=room_data["name"],
+                        climate=room_data["climate"],
+                        summary=room_data["summary"],
+                        sort_order=existing_room_sort_orders.get(room_data["id"], room_data["sort_order"]),
+                    )
+                    room_map[room.slug] = room
+
+                device_map: dict[str, DeviceSnapshot] = {}
+                for device_data in payload["devices"]:
+                    cls._apply_mijia_control_fallback(
+                        device_data,
+                        stale_controls=existing_device_controls.get(device_data["id"], []),
+                    )
+                    device = DeviceSnapshot.objects.create(
+                        account=account,
+                        external_id=device_data["id"],
+                        room=room_map.get(device_data["room_id"]),
+                        name=device_data["name"],
+                        category=device_data["category"],
+                        status=device_data["status"],
+                        telemetry=device_data["telemetry"],
+                        note=device_data["note"],
+                        capabilities=device_data["capabilities"],
+                        last_seen=device_data["last_seen"],
+                        sort_order=existing_device_sort_orders.get(device_data["id"], device_data["sort_order"]),
+                        source_payload=device_data.get("source_payload", {}),
+                    )
+                    device_map[device.external_id] = device
+
+                    for control_data in device_data.get("controls", []):
+                        DeviceControl.objects.create(
+                            account=account,
+                            device=device,
+                            external_id=control_data["id"],
+                            parent_external_id=control_data.get("parent_id", "") or "",
+                            source_type=control_data["source_type"],
+                            kind=control_data["kind"],
+                            key=control_data["key"],
+                            label=control_data["label"],
+                            group_label=control_data.get("group_label", ""),
+                            writable=control_data.get("writable", False),
+                            value=control_data.get("value") if control_data.get("value") is not None else {},
+                            unit=control_data.get("unit", ""),
+                            options=control_data.get("options", []),
+                            range_spec=control_data.get("range_spec", {}),
+                            action_params=control_data.get("action_params", {}),
+                            source_payload=control_data.get("source_payload", {}),
+                            sort_order=control_data.get("sort_order", 0),
+                        )
+
+                for anomaly_data in payload["anomalies"]:
+                    DeviceAnomaly.objects.create(
+                        account=account,
+                        external_id=anomaly_data["id"],
+                        room=room_map.get(anomaly_data["room_id"]),
+                        device=device_map.get(anomaly_data.get("device_id")),
+                        severity=anomaly_data["severity"],
+                        title=anomaly_data["title"],
+                        body=anomaly_data["body"],
+                        recommendation=anomaly_data["recommendation"],
+                        sort_order=anomaly_data["sort_order"],
+                    )
+
+                for rule_data in payload["rules"]:
+                    DeviceAutomationRule.objects.create(
+                        account=account,
+                        external_id=rule_data["id"],
+                        room=room_map.get(rule_data["room_id"]),
+                        device=device_map.get(rule_data.get("device_id")),
+                        mode_key=rule_data["mode_key"],
+                        mode_label=rule_data["mode_label"],
+                        target=rule_data["target"],
+                        condition=rule_data["condition"],
+                        decision=rule_data["decision"],
+                        rationale=rule_data["rationale"],
+                        sort_order=rule_data["sort_order"],
+                    )
+
+                state.source = payload["source"]
+                state.last_trigger = trigger
+                state.requested_trigger = ""
+                state.refresh_requested_at = None
+                state.last_error = ""
+                state.refreshed_at = timezone.now()
+                state.save()
+
+            persistence_elapsed = time.perf_counter() - persistence_started_at
+            total_elapsed = time.perf_counter() - refresh_started_at
+            span.set_attribute("devices.persistence_elapsed_seconds", persistence_elapsed)
+            span.set_attribute("devices.total_elapsed_seconds", total_elapsed)
+            logger.info(
+                f"[Device Sync] Refresh persisted for account_id={account.id}: "
+                f"elapsed={persistence_elapsed:.2f}s total={total_elapsed:.2f}s"
+            )
+            logger.info(
+                f"[Device Sync] refresh() completed for account_id={account.id}: "
+                f"providers={len(provider_payloads)} rooms={len(payload['rooms'])} devices={len(payload['devices'])} total={total_elapsed:.2f}s"
+            )
+            return cls.get_dashboard(account)
 
     @classmethod
     def reorder_devices(cls, account: Account, *, ordered_device_ids: list[str]) -> dict:
@@ -824,91 +883,141 @@ class DeviceDashboardService:
         from mijiaAPI import get_device_info, mijiaDevice
         from providers.services import MijiaAuthService
 
-        logger.debug(f"[Device Sync] _build_mijia_snapshot start for account_id={account.id}")
-        try:
-            logger.debug(f"[Device Sync] Getting Mijia authenticated API for account_id={account.id}")
-            api = MijiaAuthService.get_authenticated_api(account=account)
-            logger.debug(f"[Device Sync] Fetching devices list from Mijia for account_id={account.id}")
-            devices = api.get_devices_list()
-            logger.info(f"[Device Sync] Mijia devices list fetched for account_id={account.id}: count={len(devices)}")
-            homes = api.get_homes_list()
-            logger.debug(f"[Device Sync] Mijia homes list fetched for account_id={account.id}: count={len(homes)}")
-        except Exception as error:
-            logger.error(f"[Device Sync] Failed to fetch real MiJia data, falling back to empty: {error}")
-            return cls._build_empty_snapshot()
-
-        home_map = {str(h.get("id")): h.get("name") or "默认家庭" for h in homes}
-        room_index: dict[str, dict] = {}
-        devices_data: list[dict] = []
-
-        for index, dev in enumerate(devices, start=1):
-            did = str(dev.get("did", "")).strip()
-            if not did:
-                continue
-
-            home_id = str(dev.get("home_id") or "default")
-            home_name = home_map.get(home_id) or "默认家庭"
-            room_name = dev.get("room_name") or home_name
-            room_key = f"{home_name}:{room_name}"
-            room_id = cls._make_room_id("mijia", room_key)
-            room_index.setdefault(
-                room_id,
-                {
-                    "id": room_id,
-                    "name": room_name,
-                    "climate": home_name,
-                    "summary": f"来自米家家庭: {home_name}",
-                    "sort_order": 10 + len(room_index) * 10,
-                },
-            )
-
-            model = str(dev.get("model", "")).strip()
-            controls = []
-            control_capabilities = []
-            device_client = None
-
+        with cls.tracer.start_as_current_span("devices.mijia_snapshot") as span:
+            started_at = time.perf_counter()
+            span.set_attribute("devices.account_id", account.id)
+            logger.info(f"[Device Sync] Mijia snapshot start for account_id={account.id}")
             try:
-                spec = get_device_info(model)
+                logger.info(f"[Device Sync] Mijia auth start for account_id={account.id}")
+                api = MijiaAuthService.get_authenticated_api(account=account)
+                logger.info(f"[Device Sync] Mijia auth ready for account_id={account.id}")
+                devices_list_started_at = time.perf_counter()
+                devices = api.get_devices_list()
+                logger.info(
+                    f"[Device Sync] Mijia devices list fetched for account_id={account.id}: "
+                    f"count={len(devices)} elapsed={time.perf_counter() - devices_list_started_at:.2f}s"
+                )
+                homes_list_started_at = time.perf_counter()
+                homes = api.get_homes_list()
+                logger.info(
+                    f"[Device Sync] Mijia homes list fetched for account_id={account.id}: "
+                    f"count={len(homes)} elapsed={time.perf_counter() - homes_list_started_at:.2f}s"
+                )
             except Exception as error:
-                logger.warning(f"[Device Sync] Failed to load MiJia spec for {model}: {error}")
-                spec = {}
+                span.set_attribute("devices.mijia.success", False)
+                span.set_attribute("devices.mijia.error", str(error))
+                logger.error(f"[Device Sync] Failed to fetch real MiJia data, falling back to empty: {error}")
+                return cls._build_empty_snapshot()
 
-            if spec:
+            home_map = {str(h.get("id")): h.get("name") or "默认家庭" for h in homes}
+            room_index: dict[str, dict] = {}
+            devices_data: list[dict] = []
+            spec_failed_count = 0
+            fallback_reused_count = 0
+
+            for index, dev in enumerate(devices, start=1):
+                did = str(dev.get("did", "")).strip()
+                if not did:
+                    continue
+
+                device_started_at = time.perf_counter()
+                home_id = str(dev.get("home_id") or "default")
+                home_name = home_map.get(home_id) or "默认家庭"
+                room_name = dev.get("room_name") or home_name
+                room_key = f"{home_name}:{room_name}"
+                room_id = cls._make_room_id("mijia", room_key)
+                room_index.setdefault(
+                    room_id,
+                    {
+                        "id": room_id,
+                        "name": room_name,
+                        "climate": home_name,
+                        "summary": f"来自米家家庭: {home_name}",
+                        "sort_order": 10 + len(room_index) * 10,
+                    },
+                )
+
+                model = str(dev.get("model", "")).strip()
+                controls = []
+                control_capabilities = []
+                device_client = None
+                spec_failed = False
+
+                logger.info(
+                    f"[Device Sync] Mijia device processing account_id={account.id}: "
+                    f"did={did} model={model or 'unknown'} room={room_name}"
+                )
+
                 try:
-                    device_client = mijiaDevice(api, did=did)
+                    spec = cls._load_mijia_spec(model, get_device_info=get_device_info)
                 except Exception as error:
-                    logger.warning(f"[Device Sync] Failed to create MiJia device client for {did}: {error}")
+                    logger.warning(f"[Device Sync] Failed to load MiJia spec for {model}: {error}")
+                    spec = {}
+                    spec_failed = True
+                    spec_failed_count += 1
 
-            for control in cls._build_mijia_controls(dev=dev, spec=spec, device_client=device_client):
-                controls.append(control)
-                if control["kind"] != DeviceControl.KindChoices.SENSOR and control["key"] not in control_capabilities:
-                    control_capabilities.append(control["key"])
+                if spec:
+                    try:
+                        device_client = mijiaDevice(api, did=did)
+                    except Exception as error:
+                        logger.warning(f"[Device Sync] Failed to create MiJia device client for {did}: {error}")
 
-            is_online = bool(dev.get("isOnline", False))
-            devices_data.append(
-                {
-                    "id": f"mijia:{did}",
-                    "room_id": room_id,
-                    "name": cls._infer_mijia_device_name(dev=dev, did=did, model=model),
-                    "category": cls._map_model_to_category(model),
-                    "status": "online" if is_online else "offline",
-                    "telemetry": cls._summarize_mijia_telemetry(controls, is_online=is_online),
-                    "note": f"DID: {did} | 模型: {model or 'unknown'}",
-                    "capabilities": control_capabilities[:8],
-                    "controls": controls,
-                    "last_seen": timezone.now(),
-                    "sort_order": index * 10,
-                    "source_payload": dev,
-                }
+                for control in cls._build_mijia_controls(dev=dev, spec=spec, device_client=device_client):
+                    controls.append(control)
+                    if control["kind"] != DeviceControl.KindChoices.SENSOR and control["key"] not in control_capabilities:
+                        control_capabilities.append(control["key"])
+
+                if spec_failed and not controls:
+                    controls = cls._load_existing_device_controls(account, device_external_id=f"mijia:{did}")
+                    if controls:
+                        fallback_reused_count += 1
+                        logger.info(
+                            f"[Device Sync] Mijia fallback reused existing controls for did={did}: "
+                            f"count={len(controls)}"
+                        )
+                    control_capabilities = [control["key"] for control in controls if control["kind"] != DeviceControl.KindChoices.SENSOR][:8]
+
+                is_online = bool(dev.get("isOnline", False))
+                devices_data.append(
+                    {
+                        "id": f"mijia:{did}",
+                        "room_id": room_id,
+                        "name": cls._infer_mijia_device_name(dev=dev, did=did, model=model),
+                        "category": cls._map_model_to_category(model),
+                        "status": "online" if is_online else "offline",
+                        "telemetry": cls._summarize_mijia_telemetry(controls, is_online=is_online),
+                        "note": f"DID: {did} | 模型: {model or 'unknown'}",
+                        "capabilities": control_capabilities[:8],
+                        "controls": controls,
+                        "last_seen": timezone.now(),
+                        "sort_order": index * 10,
+                        "source_payload": dev,
+                    }
+                )
+                logger.info(
+                    f"[Device Sync] Mijia device processed account_id={account.id}: "
+                    f"did={did} controls={len(controls)} elapsed={time.perf_counter() - device_started_at:.2f}s"
+                )
+
+            total_elapsed = time.perf_counter() - started_at
+            span.set_attribute("devices.mijia.success", True)
+            span.set_attribute("devices.mijia.device_count", len(devices_data))
+            span.set_attribute("devices.mijia.spec_failed_count", spec_failed_count)
+            span.set_attribute("devices.mijia.fallback_reused_count", fallback_reused_count)
+            span.set_attribute("devices.mijia.elapsed_seconds", total_elapsed)
+            logger.info(
+                f"[Device Sync] Mijia snapshot completed for account_id={account.id}: "
+                f"devices={len(devices_data)} spec_failed={spec_failed_count} "
+                f"fallback_reused={fallback_reused_count} elapsed={total_elapsed:.2f}s"
             )
 
-        return {
-            "source": "mijia",
-            "rooms": list(room_index.values()),
-            "devices": devices_data,
-            "anomalies": [],
-            "rules": [],
-        }
+            return {
+                "source": "mijia",
+                "rooms": list(room_index.values()),
+                "devices": devices_data,
+                "anomalies": [],
+                "rules": [],
+            }
 
     @classmethod
     def _build_midea_cloud_snapshot(cls, account: Account) -> dict:
@@ -1259,12 +1368,16 @@ class DeviceDashboardService:
         model = str(raw_payload.get("model") or "").strip()
         api = MijiaAuthService.get_authenticated_api(account=account)
         device_client = mijiaDevice(api, did=did)
+        spec_failed = False
         try:
-            spec = get_device_info(model)
+            spec = cls._load_mijia_spec(model, get_device_info=get_device_info)
         except Exception:
             spec = {}
+            spec_failed = True
 
         controls = cls._build_mijia_controls(dev=raw_payload, spec=spec, device_client=device_client)
+        if spec_failed and not controls:
+            controls = cls._load_existing_device_controls(account, device_external_id=device.external_id)
         device_data = {
             "id": device.external_id,
             "room_id": device.room.slug if device.room else None,
@@ -1289,6 +1402,60 @@ class DeviceDashboardService:
                 "sort_order": device.room.sort_order,
             }
         return cls._persist_single_device_refresh(account, device=device, room_data=room_data, device_data=device_data, trigger=trigger)
+
+    @classmethod
+    def _load_mijia_spec(cls, model: str, *, get_device_info) -> dict:
+        normalized_model = str(model or "").strip()
+        if not normalized_model:
+            return {}
+        return get_device_info(normalized_model, cache_path=cls.mijia_spec_cache_dir)
+
+    @classmethod
+    def _load_existing_device_controls(cls, account: Account, *, device_external_id: str) -> list[dict]:
+        existing_controls = (
+            DeviceControl.objects.filter(account=account, device__external_id=device_external_id)
+            .order_by("sort_order", "id")
+        )
+        return [cls._serialize_existing_control(control) for control in existing_controls]
+
+    @staticmethod
+    def _serialize_existing_control(control: DeviceControl) -> dict:
+        return {
+            "id": control.external_id,
+            "parent_id": control.parent_external_id,
+            "source_type": control.source_type,
+            "kind": control.kind,
+            "key": control.key,
+            "label": control.label,
+            "group_label": control.group_label,
+            "writable": control.writable,
+            "value": control.value if control.value is not None else {},
+            "unit": control.unit,
+            "options": control.options or [],
+            "range_spec": control.range_spec or {},
+            "action_params": control.action_params or {},
+            "source_payload": control.source_payload or {},
+            "sort_order": control.sort_order,
+        }
+
+    @classmethod
+    def _apply_mijia_control_fallback(cls, device_data: dict, *, stale_controls: list[dict]) -> None:
+        if not str(device_data.get("id") or "").startswith("mijia:"):
+            return
+        if device_data.get("controls"):
+            return
+        if not stale_controls:
+            return
+        device_data["controls"] = [dict(control) for control in stale_controls]
+        device_data["capabilities"] = [
+            control["key"]
+            for control in device_data["controls"]
+            if control["kind"] != DeviceControl.KindChoices.SENSOR
+        ][:8]
+        device_data["telemetry"] = cls._summarize_mijia_telemetry(
+            device_data["controls"],
+            is_online=device_data.get("status") != DeviceSnapshot.StatusChoices.OFFLINE,
+        )
 
     @classmethod
     def _persist_single_device_refresh(

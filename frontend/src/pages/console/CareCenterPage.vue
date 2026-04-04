@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import WeatherPanel from "@/components/console/care/WeatherPanel.vue";
@@ -58,6 +58,7 @@ const confirmDialogOpen = ref(false);
 const pendingConfirmAction = ref<"approve" | "execute">("approve");
 const rejectDialogOpen = ref(false);
 const rejectReason = ref("");
+let weatherRefreshTimer: number | null = null;
 
 // Computed
 const selectedSuggestion = computed(
@@ -130,6 +131,28 @@ async function handleRefreshWeather() {
   } finally {
     weatherLoading.value = false;
   }
+}
+
+function clearWeatherRefreshTimer() {
+  if (weatherRefreshTimer !== null) {
+    window.clearTimeout(weatherRefreshTimer);
+    weatherRefreshTimer = null;
+  }
+}
+
+function scheduleNextHourlyWeatherRefresh() {
+  clearWeatherRefreshTimer();
+  const now = new Date();
+  const nextHour = new Date(now);
+  nextHour.setMinutes(0, 0, 0);
+  nextHour.setHours(nextHour.getHours() + 1);
+  const delay = Math.max(nextHour.getTime() - now.getTime(), 1000);
+  weatherRefreshTimer = window.setTimeout(async () => {
+    if (weatherSourceId.value && !weatherLoading.value) {
+      await handleRefreshWeather();
+    }
+    scheduleNextHourlyWeatherRefresh();
+  }, delay);
 }
 
 async function handleRunInspection() {
@@ -208,9 +231,15 @@ async function handleSaveDataSource(payload: Partial<CareDataSourceRecord>) {
   errorMessage.value = "";
   actionMessage.value = "";
   try {
-    await createCareDataSource(payload);
-    actionMessage.value = t("care.feedback.weatherSourceCreated");
+    if (payload.id) {
+      await updateCareDataSource(payload.id, payload);
+      actionMessage.value = t("care.feedback.weatherSourceUpdated");
+    } else {
+      await createCareDataSource(payload);
+      actionMessage.value = t("care.feedback.weatherSourceCreated");
+    }
     await loadDataSources();
+    await handleRefreshWeather();
     dataSourceDialogOpen.value = false;
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : t("care.errors.action");
@@ -322,6 +351,11 @@ onMounted(async () => {
   if (selectedSuggestionId.value) {
     await selectSuggestion(selectedSuggestionId.value);
   }
+  scheduleNextHourlyWeatherRefresh();
+});
+
+onBeforeUnmount(() => {
+  clearWeatherRefreshTimer();
 });
 
 watch(selectedSuggestion, async (next, previous) => {
@@ -332,6 +366,10 @@ watch(selectedSuggestion, async (next, previous) => {
   if (!confirmDetail.value || previous?.id !== next.id) {
     await selectSuggestion(next.id);
   }
+});
+
+watch(weatherSourceId, () => {
+  scheduleNextHourlyWeatherRefresh();
 });
 </script>
 

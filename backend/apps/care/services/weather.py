@@ -91,39 +91,126 @@ class WeatherDataService:
 
     @classmethod
     def _fetch_qweather(cls, config: dict) -> dict:
-        endpoint = str(config.get("endpoint") or cls.default_qweather_endpoint).strip().rstrip("/")
+        endpoint = str(config.get("endpoint") or "").strip().rstrip("/")
         if endpoint and not endpoint.startswith(("http://", "https://")):
             endpoint = f"https://{endpoint}"
+        if not endpoint:
+            raise ValueError("qweather provider requires endpoint")
 
-        api_key = str(config.get("api_key") or cls.default_qweather_api_key).strip()
+        api_key = str(config.get("api_key") or "").strip()
         if not api_key:
             raise ValueError("qweather provider requires api_key")
 
         location = str(config.get("location") or "").strip()
+        longitude = config.get("longitude")
+        latitude = config.get("latitude")
         if not location:
-            latitude = config.get("latitude")
-            longitude = config.get("longitude")
             if latitude is not None and longitude is not None:
                 location = f"{longitude},{latitude}"
             else:
                 raise ValueError("qweather requires location or latitude/longitude")
 
         timeout = max(int(config.get("timeout_seconds") or 8), 1)
-        response = requests.get(
-            f"{endpoint}/v7/weather/now",
-            params={
-                "location": location,
-                "key": api_key,
-            },
+        headers = {"X-QW-Api-Key": api_key}
+
+        now_payload = cls._qweather_get(
+            endpoint=endpoint,
+            path="/v7/weather/now",
+            headers=headers,
+            params={"location": location},
             timeout=timeout,
         )
-        response.raise_for_status()
-        payload = response.json()
-        if str(payload.get("code") or "") != "200":
-            raise ValueError(
-                f"QWeather API error: {payload.get('code') or 'unknown'} - {payload.get('message') or 'Unknown error'}"
+        forecast_payload = cls._qweather_get(
+            endpoint=endpoint,
+            path="/v7/weather/3d",
+            headers=headers,
+            params={"location": location},
+            timeout=timeout,
+            allow_failure=True,
+        )
+        indices_payload = cls._qweather_get(
+            endpoint=endpoint,
+            path="/v7/indices/1d",
+            headers=headers,
+            params={"location": location, "type": "1,2,3,5"},
+            timeout=timeout,
+            allow_failure=True,
+        )
+        warning_payload = cls._qweather_get(
+            endpoint=endpoint,
+            path="/v7/warning/now",
+            headers=headers,
+            params={"location": location},
+            timeout=timeout,
+            allow_failure=True,
+        )
+
+        air_payload = {}
+        if latitude is not None and longitude is not None:
+            air_payload = cls._qweather_get(
+                endpoint=endpoint,
+                path=f"/airquality/v1/current/{latitude}/{longitude}",
+                headers=headers,
+                timeout=timeout,
+                allow_failure=True,
             )
-        return payload
+
+        return {
+            "code": now_payload.get("code"),
+            "now": now_payload.get("now") or {},
+            "daily": forecast_payload.get("daily") or [],
+            "indices": indices_payload.get("daily") or [],
+            "warning": warning_payload.get("warning") or [],
+            "air_now": cls._extract_qweather_air_now(air_payload),
+            "updateTime": now_payload.get("updateTime") or forecast_payload.get("updateTime"),
+        }
+
+    @classmethod
+    def _qweather_get(
+        cls,
+        *,
+        endpoint: str,
+        path: str,
+        headers: dict[str, str],
+        timeout: int,
+        params: dict | None = None,
+        allow_failure: bool = False,
+    ) -> dict:
+        try:
+            response = requests.get(
+                f"{endpoint}{path}",
+                params=params,
+                headers=headers,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            code = str(payload.get("code") or "")
+            if code and code != "200":
+                raise ValueError(
+                    f"QWeather API error: {payload.get('code') or 'unknown'} - {payload.get('message') or 'Unknown error'}"
+                )
+            return payload
+        except Exception:
+            if allow_failure:
+                return {}
+            raise
+
+    @classmethod
+    def _extract_qweather_air_now(cls, payload: dict) -> dict:
+        indexes = payload.get("indexes") if isinstance(payload, dict) else None
+        if not isinstance(indexes, list) or not indexes:
+            return {}
+        first = indexes[0] if isinstance(indexes[0], dict) else {}
+        primary = first.get("primaryPollutant") if isinstance(first.get("primaryPollutant"), dict) else {}
+        health = first.get("health") if isinstance(first.get("health"), dict) else {}
+        advice = health.get("advice") if isinstance(health.get("advice"), dict) else {}
+        return {
+            "aqi": first.get("aqiDisplay") or first.get("aqi"),
+            "category": first.get("category") or "",
+            "primaryPollutant": primary.get("name") or primary.get("fullName") or "",
+            "healthAdvice": advice.get("generalPopulation") or "",
+        }
 
     @classmethod
     def _fetch_home_assistant_entity(cls, *, source: ExternalDataSource, config: dict) -> dict:
@@ -146,6 +233,46 @@ class WeatherDataService:
             "raw": payload,
             "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+        if isinstance(payload.get("now"), dict):
+            now = payload["now"]
+            normalized["humidity"] = cls._to_float(now.get("humidity"))
+            normalized["feels_like"] = cls._to_float(now.get("feelsLike"))
+        if isinstance(payload.get("air_now"), dict) and payload.get("air_now"):
+            normalized["air_quality"] = payload.get("air_now")
+        if isinstance(payload.get("daily"), list):
+            normalized["forecast"] = [
+                {
+                    "date": str(item.get("fxDate") or "").strip(),
+                    "textDay": str(item.get("textDay") or "").strip(),
+                    "tempMin": cls._to_float(item.get("tempMin")),
+                    "tempMax": cls._to_float(item.get("tempMax")),
+                    "uvIndex": str(item.get("uvIndex") or "").strip(),
+                    "precip": str(item.get("precip") or "").strip(),
+                }
+                for item in payload.get("daily", [])[:3]
+                if isinstance(item, dict)
+            ]
+        if isinstance(payload.get("indices"), list):
+            normalized["indices"] = [
+                {
+                    "name": str(item.get("name") or "").strip(),
+                    "category": str(item.get("category") or "").strip(),
+                    "text": str(item.get("text") or "").strip(),
+                }
+                for item in payload.get("indices", [])[:4]
+                if isinstance(item, dict)
+            ]
+        if isinstance(payload.get("warning"), list):
+            normalized["warnings"] = [
+                {
+                    "title": str(item.get("title") or "").strip(),
+                    "severity": str(item.get("severity") or item.get("severityColor") or "").strip(),
+                    "typeName": str(item.get("typeName") or "").strip(),
+                    "text": str(item.get("text") or "").strip(),
+                }
+                for item in payload.get("warning", [])[:3]
+                if isinstance(item, dict)
+            ]
         if isinstance(previous, dict):
             if "temperature" in previous:
                 normalized["previous_temperature"] = previous.get("temperature")
@@ -222,21 +349,23 @@ class WeatherDataService:
         return current
 
     @classmethod
-    def reverse_geocode(cls, longitude: float, latitude: float) -> dict:
+    def reverse_geocode(cls, longitude: float, latitude: float, *, api_key: str, endpoint: str) -> dict:
         """Reverse geocode coordinates to location name using QWeather GeoAPI."""
-        endpoint = cls.default_qweather_endpoint
+        endpoint = str(endpoint or "").strip().rstrip("/")
         if not endpoint.startswith(("http://", "https://")):
             endpoint = f"https://{endpoint}"
+        if not endpoint:
+            raise ValueError("qweather geocode requires endpoint")
 
-        api_key = cls.default_qweather_api_key
+        api_key = str(api_key or "").strip()
+        if not api_key:
+            raise ValueError("qweather geocode requires api_key")
         location = f"{longitude},{latitude}"
 
         response = requests.get(
-            f"{endpoint}/v7/city/lookup",
-            params={
-                "location": location,
-                "key": api_key,
-            },
+            f"{endpoint}/geo/v2/city/lookup",
+            params={"location": location},
+            headers={"X-QW-Api-Key": api_key},
             timeout=8,
         )
         response.raise_for_status()

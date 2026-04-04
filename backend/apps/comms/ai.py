@@ -102,7 +102,7 @@ class AIAgent:
                 elapsed = time.perf_counter() - started_at
                 span.set_attribute("ai.elapsed_seconds", elapsed)
                 span.set_attribute("ai.error", "invalid_json")
-                logger.error(f"[AI Agent] 模型没有返回合规 JSON，原文: {content}, 错误: {e}")
+                logger.info(f"[AI Agent] 模型没有返回合规 JSON，原文: {content}, 错误: {e}")
                 logger.info(
                     f"[AI Agent] generate_json 失败: provider={self.provider}, model={self.model if self.provider == 'openai' else self.gemini_model_name}, elapsed={elapsed:.2f}s, reason=invalid_json"
                 )

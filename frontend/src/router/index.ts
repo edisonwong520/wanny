@@ -8,7 +8,6 @@ import DevicesPage from "@/pages/console/DevicesPage.vue";
 import ManagePage from "@/pages/console/ManagePage.vue";
 import MissionsPage from "@/pages/console/MissionsPage.vue";
 import CareCenterPage from "@/pages/console/CareCenterPage.vue";
-import CareRulesPage from "@/pages/console/CareRulesPage.vue";
 import { isAuthenticated } from "@/lib/auth";
 
 const router = createRouter({
@@ -40,7 +39,7 @@ const router = createRouter({
       children: [
         {
           path: "",
-          redirect: "/console/devices",
+          redirect: "/console/care",
         },
         {
           path: "devices",
@@ -59,8 +58,7 @@ const router = createRouter({
         },
         {
           path: "care/rules",
-          name: "console-care-rules",
-          component: CareRulesPage,
+          redirect: "/console/care",
         },
         {
           path: "manage",

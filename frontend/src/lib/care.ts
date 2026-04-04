@@ -240,3 +240,9 @@ export async function refreshCurrentWeather() {
     },
   );
 }
+
+export async function reverseGeocode(longitude: number, latitude: number) {
+  return requestJson<{ name: string; adm1: string; adm2: string; country: string; locationId: string }>(
+    `/api/care/geocode/?longitude=${longitude}&latitude=${latitude}`,
+  );
+}

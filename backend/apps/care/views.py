@@ -219,6 +219,13 @@ def _validate_condition_spec(condition_spec: dict) -> tuple[bool, str]:
 
 def _validate_data_source(source_type: str, config: dict) -> tuple[bool, str]:
     if source_type == ExternalDataSource.SourceTypeChoices.WEATHER_API:
+        provider = str(config.get("provider") or "").strip().lower()
+        if provider == "qweather":
+            has_coords = config.get("latitude") is not None and config.get("longitude") is not None
+            has_location = bool(str(config.get("location") or "").strip())
+            if not (has_location or has_coords):
+                return False, "qweather source requires location or latitude/longitude"
+            return True, ""
         has_coords = config.get("latitude") is not None and config.get("longitude") is not None
         has_endpoint = bool(str(config.get("endpoint") or "").strip())
         if not (has_coords or has_endpoint):
@@ -549,3 +556,26 @@ def handle_run_inspection(request):
         return JsonResponse({"error": "Unauthorized"}, status=401)
     created = InspectionScanner.scan_account(account)
     return JsonResponse({"created": [_serialize_suggestion(item) for item in created]}, status=200)
+
+
+@csrf_exempt
+def handle_geocode(request):
+    if request.method != "GET":
+        return JsonResponse({"error": "Method must be GET"}, status=405)
+    account = _get_account(request)
+    if not account:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+    longitude = request.GET.get("longitude", "").strip()
+    latitude = request.GET.get("latitude", "").strip()
+    if not longitude or not latitude:
+        return JsonResponse({"error": "longitude and latitude are required"}, status=400)
+    try:
+        lon = float(longitude)
+        lat = float(latitude)
+    except ValueError:
+        return JsonResponse({"error": "longitude and latitude must be numbers"}, status=400)
+    try:
+        result = WeatherDataService.reverse_geocode(lon, lat)
+        return JsonResponse(result, status=200)
+    except Exception as error:
+        return JsonResponse({"error": str(error)}, status=500)

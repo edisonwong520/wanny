@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { CareDataSourceRecord } from "@/lib/care";
+import { reverseGeocode } from "@/lib/care";
 
 const props = defineProps<{
   open: boolean;
@@ -45,16 +46,30 @@ function resetForm() {
   };
 }
 
-function requestBrowserLocation() {
+async function requestBrowserLocation() {
   if (!navigator.geolocation) {
     alert(t("care.weather.errors.geolocationNotSupported"));
     return;
   }
   loadingLocation.value = true;
   navigator.geolocation.getCurrentPosition(
-    (position) => {
-      form.value.longitude = position.coords.longitude.toFixed(4);
-      form.value.latitude = position.coords.latitude.toFixed(4);
+    async (position) => {
+      const lon = position.coords.longitude;
+      const lat = position.coords.latitude;
+      form.value.longitude = lon.toFixed(4);
+      form.value.latitude = lat.toFixed(4);
+
+      // Try to get location name via reverse geocoding
+      try {
+        const result = await reverseGeocode(lon, lat);
+        if (result.name) {
+          const parts = [result.adm2, result.name].filter(Boolean);
+          form.value.location = parts.join(" ");
+        }
+      } catch {
+        // Ignore geocoding errors, user can fill location manually
+      }
+
       loadingLocation.value = false;
     },
     (error) => {

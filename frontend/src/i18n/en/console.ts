@@ -362,8 +362,6 @@ export default {
       },
       types: {
         qweather: "QWeather",
-        openMeteo: "Open-Meteo",
-        haEntity: "HA weather entity",
       },
       actions: {
         addSource: "Add weather source",

@@ -365,8 +365,6 @@ export default {
       },
       types: {
         qweather: "和风天气",
-        openMeteo: "Open-Meteo",
-        haEntity: "HA 天气实体",
       },
       actions: {
         addSource: "添加天气源",

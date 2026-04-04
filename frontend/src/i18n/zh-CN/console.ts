@@ -283,6 +283,11 @@ export default {
       type: "建议类型",
       reset: "重置筛选",
     },
+    priority: {
+      high: "高",
+      medium: "中",
+      low: "低",
+    },
     labels: {
       detail: "建议详情",
       device: "目标设备",

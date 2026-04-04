@@ -280,6 +280,11 @@ export default {
       type: "Suggestion type",
       reset: "Reset filters",
     },
+    priority: {
+      high: "High",
+      medium: "Medium",
+      low: "Low",
+    },
     labels: {
       detail: "Suggestion detail",
       device: "Target device",

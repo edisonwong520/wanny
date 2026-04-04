@@ -36,10 +36,10 @@ const filters = computed(() => [
 ]);
 
 const priorityFilters = computed(() => [
-  { id: "all", label: t("care.filters.allPriorities") },
-  { id: "high", label: t("care.filters.high") },
-  { id: "medium", label: t("care.filters.medium") },
-  { id: "low", label: t("care.filters.low") },
+  { id: "all", label: t("care.filters.all") },
+  { id: "high", label: t("care.priority.high") },
+  { id: "medium", label: t("care.priority.medium") },
+  { id: "low", label: t("care.priority.low") },
 ]);
 
 function loadSavedFilters() {

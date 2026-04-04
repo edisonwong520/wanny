@@ -21,7 +21,6 @@ const { t } = useI18n();
 
 const form = ref({
   sourceType: "weather_api" as "weather_api" | "ha_entity",
-  provider: "qweather",
   name: "",
   location: "",
   latitude: "",
@@ -41,8 +40,7 @@ function resetForm() {
   editingId.value = null;
   form.value = {
     sourceType: "weather_api",
-    provider: "qweather",
-    name: "",
+    name: t("care.weather.types.qweather"),
     location: "",
     latitude: "",
     longitude: "",
@@ -52,19 +50,11 @@ function resetForm() {
   };
 }
 
-function switchProvider(provider: "qweather" | "open_meteo") {
-  form.value.provider = provider;
-  if (!editingId.value || !form.value.name.trim()) {
-    form.value.name = provider === "qweather" ? t("care.weather.types.qweather") : "Open-Meteo";
-  }
-}
-
 function editSource(source: CareDataSourceRecord) {
   const config = source.config || {};
   editingId.value = source.id;
   form.value = {
     sourceType: source.sourceType as "weather_api" | "ha_entity",
-    provider: String(config.provider || "qweather"),
     name: source.name,
     location: String(config.location || ""),
     latitude: config.latitude == null ? "" : String(config.latitude),
@@ -84,20 +74,13 @@ function handleSubmit() {
     config:
       form.value.sourceType === "ha_entity"
         ? { ha_entity_id: form.value.haEntityId }
-        : form.value.provider === "qweather"
-          ? {
-              provider: "qweather",
-              location: form.value.location.trim() || undefined,
-              latitude: form.value.latitude.trim() ? Number(form.value.latitude) : undefined,
-              longitude: form.value.longitude.trim() ? Number(form.value.longitude) : undefined,
-              timezone: form.value.timezone,
-            }
-          : {
-              provider: "open_meteo",
-              latitude: Number(form.value.latitude),
-              longitude: Number(form.value.longitude),
-              timezone: form.value.timezone,
-            },
+        : {
+            provider: "qweather",
+            location: form.value.location.trim() || undefined,
+            latitude: form.value.latitude.trim() ? Number(form.value.latitude) : undefined,
+            longitude: form.value.longitude.trim() ? Number(form.value.longitude) : undefined,
+            timezone: form.value.timezone,
+          },
   };
   emit("save", payload);
 }
@@ -105,8 +88,11 @@ function handleSubmit() {
 watch(
   () => props.open,
   (val) => {
-    if (!val) resetForm();
-  }
+    if (val) {
+      resetForm();
+    }
+  },
+  { immediate: true }
 );
 </script>
 
@@ -144,9 +130,7 @@ watch(
                     {{
                       source.sourceType === "ha_entity"
                         ? $t("care.weather.types.haEntity")
-                        : source.config?.provider === "qweather"
-                          ? $t("care.weather.types.qweather")
-                          : "Open-Meteo"
+                        : $t("care.weather.types.qweather")
                     }}
                   </div>
                 </div>
@@ -188,7 +172,7 @@ watch(
               :class="form.sourceType === 'weather_api' ? 'bg-[#07C160] text-white' : 'bg-[#F2F4F7] text-[#667085]'"
               @click="form.sourceType = 'weather_api'"
             >
-              {{ $t("care.weather.apiSource") }}
+              {{ $t("care.weather.types.qweather") }}
             </button>
             <button
               class="flex-1 rounded-full px-3 py-2 text-xs transition-all"
@@ -196,24 +180,6 @@ watch(
               @click="form.sourceType = 'ha_entity'"
             >
               {{ $t("care.weather.types.haEntity") }}
-            </button>
-          </div>
-
-          <!-- Provider Selection (for weather_api) -->
-          <div v-if="form.sourceType === 'weather_api'" class="flex gap-2 pl-2">
-            <button
-              class="flex-1 rounded-full px-3 py-1.5 text-[11px] transition-all"
-              :class="form.provider === 'qweather' ? 'bg-[#07C160] text-white' : 'bg-[#F2F4F7] text-[#667085]'"
-              @click="switchProvider('qweather')"
-            >
-              {{ $t("care.weather.types.qweather") }}
-            </button>
-            <button
-              class="flex-1 rounded-full px-3 py-1.5 text-[11px] transition-all"
-              :class="form.provider === 'open_meteo' ? 'bg-[#07C160] text-white' : 'bg-[#F2F4F7] text-[#667085]'"
-              @click="switchProvider('open_meteo')"
-            >
-              {{ $t("care.weather.types.openMeteo") }}
             </button>
           </div>
 
@@ -233,10 +199,9 @@ watch(
             />
           </template>
 
-          <!-- Weather API Fields -->
+          <!-- QWeather Fields -->
           <template v-else>
             <input
-              v-if="form.provider === 'qweather'"
               v-model="form.location"
               :placeholder="$t('care.weather.form.location')"
               class="w-full rounded-xl border border-[#E4E7EC] px-4 py-2.5 text-sm outline-none focus:border-[#07C160]"

@@ -141,6 +141,8 @@ class DeviceControl(models.Model):
         MIDEA_CLOUD_ACTION = "midea_cloud_action", "美的动作"
         MBAPI2020_PROPERTY = "mbapi2020_property", "奔驰属性"
         MBAPI2020_ACTION = "mbapi2020_action", "奔驰动作"
+        HISENSE_HA_PROPERTY = "hisense_ha_property", "海信属性"
+        HISENSE_HA_ACTION = "hisense_ha_action", "海信动作"
 
     account = models.ForeignKey(
         'accounts.Account',

@@ -93,6 +93,7 @@ def handle_device_list(request):
                 When(external_id__startswith="midea_cloud:", then=Value(1)),
                 When(external_id__startswith="mijia:", then=Value(2)),
                 When(external_id__startswith="mbapi2020:", then=Value(3)),
+                When(external_id__startswith="hisense_ha:", then=Value(4)),
                 default=Value(9),
                 output_field=IntegerField(),
             ),

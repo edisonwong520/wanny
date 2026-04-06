@@ -14,8 +14,9 @@ from .clients.midea_cloud.client import MideaCloudClient
 from .clients.midea_cloud.lua_codec import MideaLuaCodec, ensure_lua_support_files, lua_runtime_available
 from .clients.midea_cloud.mappings import UPSTREAM_MAPPING_ROOT, audit_device_mapping, get_device_mapping
 from .models import PlatformAuth
-from .services import HomeAssistantAuthService, MbApi2020AuthService, MideaCloudAuthService, MijiaAuthService
+from .services import HisenseHAAuthService, HomeAssistantAuthService, MbApi2020AuthService, MideaCloudAuthService, MijiaAuthService
 from .clients.mbapi2020.client import MbApi2020Client
+from .clients.hisense_ha.client import HisenseHAClient
 
 
 class PlatformAuthAPITest(TestCase):
@@ -92,6 +93,7 @@ class PlatformAuthAPITest(TestCase):
         self.assertIn("home_assistant", providers)
         self.assertIn("midea_cloud", providers)
         self.assertIn("mbapi2020", providers)
+        self.assertIn("hisense_ha", providers)
         self.assertEqual(providers["wechat"]["status"], "connected")
         self.assertTrue(providers["wechat"]["configured"])
         self.assertNotEqual(
@@ -471,6 +473,43 @@ class PlatformAuthAPITest(TestCase):
         self.assertEqual(payload["session"]["auth_kind"], "form")
         self.assertEqual(payload["session"]["status"], "completed")
         mocked_sync.assert_called_once_with(self.account, trigger="connect_mbapi2020")
+
+    def test_authorize_hisense_endpoint_validates_and_stores_payload(self):
+        auth_obj = PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="hisense_ha",
+            auth_payload={
+                "username": "hisense@example.com",
+                "instance_name": "海信空调家庭",
+            },
+            is_active=True,
+        )
+
+        with patch("providers.views.HisenseHAAuthService.validate_and_store", return_value=auth_obj), patch(
+            "devices.services.DeviceDashboardService.sync_after_provider_change"
+        ) as mocked_sync:
+            response = self.client.post(
+                self.authorize_url("hisense"),
+                data=json.dumps(
+                    {
+                        "payload": {
+                            "username": "hisense@example.com",
+                            "password": "secret",
+                            "home_id": "home-1",
+                            "device_ids": ["ac-1", "ac-2"],
+                        }
+                    }
+                ),
+                content_type="application/json",
+                **self.auth_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"]["platform"], "hisense_ha")
+        self.assertEqual(payload["session"]["auth_kind"], "form")
+        self.assertEqual(payload["session"]["status"], "completed")
+        mocked_sync.assert_called_once_with(self.account, trigger="connect_hisense_ha")
 
     def test_authorize_get_returns_latest_session_for_platform(self):
         AuthorizationSessionStore.create(
@@ -852,6 +891,127 @@ class MbApi2020ClientTest(TestCase):
         self.assertEqual(devices[0]["region"], "China")
         self.assertTrue(devices[0]["pin_available"])
         self.assertEqual(devices[0]["status_payload"]["doorlockstatusvehicle"], "locked")
+
+
+class HisenseHAAuthServiceTest(TestCase):
+    def setUp(self):
+        self.account = Account.objects.create(
+            email="hisense-test@example.com",
+            name="Hisense Test",
+            password="pwd",
+        )
+
+    def test_validate_and_store_persists_profile_and_encrypts_password(self):
+        with patch.object(HisenseHAClient, "get_account_profile", return_value={
+            "account": "hisense@example.com",
+            "home_id": "home-1",
+            "home_name": "我的家",
+            "homes": [{"home_id": "home-1", "home_name": "我的家"}],
+            "devices": [{"device_id": "dev-1", "wifi_id": "wifi-1", "name": "客厅空调"}],
+            "instance_name": "Hisense (我的家)",
+            "auth_state": {
+                "access_token": "hs-token",
+                "refresh_token": "hs-refresh",
+                "home_id": "home-1",
+                "devices": [{"device_id": "dev-1", "wifi_id": "wifi-1", "name": "客厅空调"}],
+            },
+        }):
+            auth_obj = HisenseHAAuthService.validate_and_store(
+                self.account,
+                {
+                    "username": "hisense@example.com",
+                    "password": "plain-password",
+                },
+            )
+
+        self.assertEqual(auth_obj.platform_name, "hisense_ha")
+        self.assertEqual(auth_obj.auth_payload["username"], "hisense@example.com")
+        self.assertEqual(auth_obj.auth_payload["refresh_token"], "hs-refresh")
+        self.assertEqual(auth_obj.auth_payload["devices"][0]["device_id"], "dev-1")
+        self.assertNotEqual(auth_obj.auth_payload["password"], "plain-password")
+        self.assertEqual(decrypt_value(auth_obj.auth_payload["password"]), "plain-password")
+
+    def test_validate_and_store_allows_empty_home_when_no_ac_devices_are_found(self):
+        with patch.object(HisenseHAClient, "get_account_profile", return_value={
+            "account": "hisense@example.com",
+            "home_id": "home-1",
+            "home_name": "我的家",
+            "homes": [{"home_id": "home-1", "home_name": "我的家"}],
+            "devices": [],
+            "instance_name": "Hisense (我的家)",
+            "auth_state": {
+                "access_token": "hs-token",
+                "refresh_token": "hs-refresh",
+                "home_id": "home-1",
+                "devices": [],
+            },
+        }):
+            auth_obj = HisenseHAAuthService.validate_and_store(
+                self.account,
+                {
+                    "username": "hisense@example.com",
+                    "password": "plain-password",
+                },
+            )
+
+        self.assertEqual(auth_obj.platform_name, "hisense_ha")
+        self.assertEqual(auth_obj.auth_payload["home_id"], "home-1")
+        self.assertEqual(auth_obj.auth_payload["devices"], [])
+
+    def test_get_client_reads_and_decrypts_active_payload(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="hisense_ha",
+            auth_payload={
+                "username": "hisense@example.com",
+                "password": encrypt_value("plain-password"),
+                "refresh_token": "hs-refresh",
+                "devices": [{"device_id": "dev-1", "wifi_id": "wifi-1", "name": "客厅空调"}],
+            },
+            is_active=True,
+        )
+
+        client = HisenseHAAuthService.get_client(self.account)
+        self.assertEqual(client.payload["username"], "hisense@example.com")
+        self.assertEqual(client.payload["password"], "plain-password")
+
+
+class HisenseHAClientTest(TestCase):
+    def test_validate_payload_requires_username_and_secret(self):
+        with self.assertRaises(ValueError):
+            HisenseHAClient.validate_payload({"password": "x"})
+        with self.assertRaises(ValueError):
+            HisenseHAClient.validate_payload({"username": "u"})
+
+    def test_get_account_profile_persists_selected_home_and_devices_into_payload(self):
+        client = HisenseHAClient(
+            {
+                "username": "hisense@example.com",
+                "password": "secret",
+            }
+        )
+
+        with patch.object(client, "_login", return_value={"access_token": "hs-token", "refresh_token": "hs-refresh"}), patch.object(
+            client,
+            "list_homes",
+            return_value=[{"home_id": "home-1", "home_name": "我的家"}],
+        ), patch.object(
+            client,
+            "list_home_devices",
+            return_value=[{"device_id": "dev-1", "wifi_id": "wifi-1", "name": "客厅空调"}],
+        ):
+            profile = client.get_account_profile()
+
+        self.assertEqual(profile["home_id"], "home-1")
+        self.assertEqual(client.payload["home_id"], "home-1")
+        self.assertEqual(client.payload["devices"][0]["device_id"], "dev-1")
+        self.assertEqual(client.payload["access_token"], "hs-token")
+        self.assertEqual(client.payload["refresh_token"], "hs-refresh")
+
+    def test_parse_status_extracts_core_fields(self):
+        status = HisenseHAClient._parse_status(",".join(["0"] * 210))
+        self.assertIn("status_payload", status)
+        self.assertEqual(status["hvac_mode"], "fan_only")
 
     def test_execute_control_builds_and_sends_supported_command(self):
         client = MbApi2020Client(

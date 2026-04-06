@@ -23,6 +23,7 @@ This repository is licensed under [Apache License 2.0](./LICENSE). Third-party s
 
 - **Messaging entry**: WeChat
 - **Smart home platforms**: Mijia, Midea
+- **Smart appliance platforms**: Hisense
 - **Mobility platforms**: Mercedes-Benz
 - **Automation hubs**: Home Assistant
 
@@ -82,7 +83,7 @@ That is also why this project keeps expanding toward more device integrations an
 - **Database**: MySQL + vector storage (ChromaDB/FAISS)
 - **AI Engine**: Gemini CLI (`gemini`)
 - **Messaging**: WeChat iLink protocol (`wechatbot-sdk`)
-- **Device Integrations**: Mijia API (`mijiaAPI`), Midea cloud, Mercedes `mbapi2020`
+- **Device Integrations**: Mijia API (`mijiaAPI`), Midea cloud, Hisense, Mercedes `mbapi2020`
 - **Frontend**: Vue 3 + Vite + TypeScript + Tailwind CSS + shadcn-vue + vue-i18n
 
 ## 📁 Repository Structure
@@ -137,9 +138,11 @@ For the current backend/frontend scope, scheduler behavior, and remaining gaps, 
 
 - `third_party/midea_auto_cloud` is included as a Git submodule and used as a reference implementation for Midea integration work. Upstream license: Apache License 2.0.
 - `third_party/mbapi2020` is included as a Git submodule and used as a reference implementation for Mercedes integration work. Upstream license: MIT License.
+- `third_party/HisenseHA` is included as a Git submodule and used as a reference implementation for Hisense integration work. Upstream license: MIT License.
 - These repositories are used for protocol study, field mapping, and migration reference rather than as runtime dependencies of Wanny.
 - Thanks to [`sususweet/midea_auto_cloud`](https://github.com/sususweet/midea_auto_cloud) for the upstream Home Assistant integration and implementation ideas.
 - Thanks to [`ReneNulschDE/mbapi2020`](https://github.com/ReneNulschDE/mbapi2020) for the upstream Home Assistant integration and implementation ideas.
+- Thanks to [`manymuch/HisenseHA`](https://github.com/manymuch/HisenseHA) for the upstream Home Assistant integration and implementation ideas.
 
 ## ⚠️ Disclaimer
 

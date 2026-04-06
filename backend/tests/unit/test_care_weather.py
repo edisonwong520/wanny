@@ -118,6 +118,14 @@ def test_weather_service_supports_qweather_payload():
             build_response(
                 {
                     "code": "200",
+                    "hourly": [
+                        {"fxTime": "2026-04-05T13:00+08:00", "text": "多云", "temp": "19", "pop": "10"},
+                    ],
+                }
+            ),
+            build_response(
+                {
+                    "code": "200",
                     "daily": [
                         {"name": "运动指数", "category": "较适宜", "text": "适合轻量户外活动"},
                         {"name": "穿衣指数", "category": "偏凉", "text": "建议加一件薄外套"},
@@ -148,7 +156,7 @@ def test_weather_service_supports_qweather_payload():
     ) as requests_get:
         updated = WeatherDataService.fetch_source(source)
 
-    assert requests_get.call_count == 5
+    assert requests_get.call_count == 6
     assert updated.last_data["provider"] == "qweather"
     assert updated.last_data["temperature"] == 19.0
     assert updated.last_data["condition"] == "多云"
@@ -157,6 +165,7 @@ def test_weather_service_supports_qweather_payload():
     assert updated.last_data["feels_like"] == 17.0
     assert updated.last_data["air_quality"]["aqi"] == "42"
     assert updated.last_data["forecast"][0]["textDay"] == "多云"
+    assert updated.last_data["hourly_forecast"][0]["text"] == "多云"
     assert updated.last_data["indices"][0]["name"] == "运动指数"
     assert updated.last_data["warnings"][0]["title"] == "大风蓝色预警"
 

@@ -149,6 +149,9 @@ uv run pytest tests/integration/test_device_intent_real_ai.py -q
 - 奔驰 `mbapi2020` 接入当前以 git submodule 形式放在 [`third_party/mbapi2020`](../third_party/mbapi2020)，上游项目来源与致谢：
   [ReneNulschDE/mbapi2020](https://github.com/ReneNulschDE/mbapi2020)
 - 当前 Wanny 业务层没有直接复用其 Home Assistant 登录流程，而是在 `apps/providers/clients/mbapi2020/` 中按本项目约束做了 token 直连封装。
+- 海信 `HisenseHA` 接入当前以 git submodule 形式放在 [`third_party/HisenseHA`](../third_party/HisenseHA)，上游项目来源与致谢：
+  [manymuch/HisenseHA](https://github.com/manymuch/HisenseHA)
+- 当前 Wanny 业务层没有直接复用其 Home Assistant runtime，而是在 `apps/providers/clients/hisense_ha/` 中按本项目约束做了同步封装。
 
 ## 📖 参考文档
 

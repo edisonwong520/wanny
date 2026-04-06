@@ -4,3 +4,6 @@
 [submodule "third_party/mbapi2020"]
 	path = third_party/mbapi2020
 	url = https://github.com/ReneNulschDE/mbapi2020.git
+[submodule "third_party/HisenseHA"]
+	path = third_party/HisenseHA
+	url = https://github.com/manymuch/HisenseHA.git

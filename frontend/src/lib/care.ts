@@ -102,6 +102,13 @@ export interface WeatherSnapshot {
     uvIndex?: string;
     precip?: string;
   }>;
+  hourly_forecast?: Array<{
+    time?: string;
+    text?: string;
+    icon?: string;
+    temp?: number | null;
+    pop?: string;
+  }>;
   warnings?: Array<{
     title?: string;
     severity?: string;

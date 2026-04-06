@@ -18,6 +18,7 @@ from utils.crypto import encrypt_value, decrypt_value
 from utils.logger import logger
 
 from .models import PlatformAuth
+from .clients.hisense_ha import HisenseHAClient
 from .clients.mbapi2020 import MbApi2020Client
 from .clients.midea_cloud import MideaCloudClient
 
@@ -604,3 +605,89 @@ class MbApi2020AuthService:
             payload.update(next_state)
 
         return MbApi2020Client(validated_payload, on_token_update=persist_token_state)
+
+
+class HisenseHAAuthService:
+    platform_name = "hisense_ha"
+    platform_aliases = ("hisense_ha", "hisense", "hisense-ha")
+
+    @classmethod
+    def get_auth_record(cls, account: Account, active_only: bool = False) -> PlatformAuth | None:
+        queryset = PlatformAuth.objects.filter(account=account, platform_name__in=cls.platform_aliases)
+        if active_only:
+            queryset = queryset.filter(is_active=True)
+
+        records = list(queryset.order_by("platform_name"))
+        for record in records:
+            if record.platform_name == cls.platform_name:
+                return record
+        return records[0] if records else None
+
+    @classmethod
+    def _extract_payload(cls, auth_obj: PlatformAuth | None) -> dict:
+        payload = getattr(auth_obj, "auth_payload", None)
+        return payload if isinstance(payload, dict) else {}
+
+    @classmethod
+    def validate_payload(cls, payload: dict) -> dict:
+        return HisenseHAClient.validate_payload(payload)
+
+    @classmethod
+    def validate_and_store(cls, account: Account, payload: dict) -> PlatformAuth:
+        logger.info(f"[Hisense Auth] validate_and_store called for account_id={account.id}, email={account.email}")
+
+        validated_payload = cls.validate_payload(payload)
+        client = HisenseHAClient(validated_payload)
+        profile = client.get_account_profile()
+        devices = profile.get("devices", [])
+        if not isinstance(devices, list):
+            devices = []
+        if not devices:
+            home_name = str(profile.get("home_name") or validated_payload.get("home_id") or "").strip()
+            logger.warning(
+                "[Hisense Auth] No AC devices found for account=%s home=%s; authorization will be saved without devices.",
+                account.email,
+                home_name or "<unknown>",
+            )
+
+        auth_state = profile.get("auth_state", {})
+        validated_payload.update(auth_state)
+        validated_payload["account"] = profile.get("account", validated_payload.get("username", account.email))
+        validated_payload["username"] = profile.get("account", validated_payload.get("username", account.email))
+        validated_payload["home_id"] = profile.get("home_id", validated_payload.get("home_id", ""))
+        validated_payload["home_name"] = profile.get("home_name", "")
+        validated_payload["homes"] = profile.get("homes", [])
+        validated_payload["devices"] = devices
+        validated_payload["instance_name"] = profile.get("instance_name") or f"Hisense ({profile.get('home_name', '')})".strip()
+        if validated_payload.get("password"):
+            validated_payload["password"] = encrypt_value(validated_payload["password"])
+
+        auth_obj, _ = PlatformAuth.objects.update_or_create(
+            account=account,
+            platform_name=cls.platform_name,
+            defaults={
+                "auth_payload": validated_payload,
+                "is_active": True,
+            },
+        )
+        logger.info(f"[Hisense Auth] 已保存账户 {account.email} 的海信配置。")
+        return auth_obj
+
+    @classmethod
+    def get_client(cls, account: Account) -> HisenseHAClient:
+        auth_obj = cls.get_auth_record(account=account, active_only=True)
+        if auth_obj is None:
+            raise ValueError("No active Hisense authorization found")
+
+        payload = cls._extract_payload(auth_obj)
+        if not payload:
+            raise ValueError("No active Hisense authorization found")
+
+        if payload.get("password"):
+            try:
+                payload["password"] = decrypt_value(payload["password"])
+            except Exception:
+                pass
+
+        validated_payload = cls.validate_payload(payload)
+        return HisenseHAClient(validated_payload)

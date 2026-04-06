@@ -35,7 +35,7 @@ class DeviceDashboardService:
     tracer = get_tracer(__name__)
     state_key = "default"
     default_sync_interval_seconds = 300
-    device_provider_names = ("mijia", "home_assistant", "midea_cloud", "mbapi2020")
+    device_provider_names = ("mijia", "home_assistant", "midea_cloud", "mbapi2020", "hisense_ha")
     supported_ha_domains = {
         "light",
         "switch",
@@ -236,7 +236,13 @@ class DeviceDashboardService:
 
     @classmethod
     def _provider_refresh_tasks(cls) -> tuple[dict[str, Any], ...]:
-        from providers.services import HomeAssistantAuthService, MbApi2020AuthService, MideaCloudAuthService, MijiaAuthService
+        from providers.services import (
+            HisenseHAAuthService,
+            HomeAssistantAuthService,
+            MbApi2020AuthService,
+            MideaCloudAuthService,
+            MijiaAuthService,
+        )
 
         return (
             {
@@ -262,6 +268,12 @@ class DeviceDashboardService:
                 "auth_service": MbApi2020AuthService,
                 "builder": cls._build_mbapi2020_snapshot,
                 "label": "MbApi2020",
+            },
+            {
+                "platform": "hisense_ha",
+                "auth_service": HisenseHAAuthService,
+                "builder": cls._build_hisense_ha_snapshot,
+                "label": "HisenseHA",
             },
         )
 
@@ -716,8 +728,11 @@ class DeviceDashboardService:
     @classmethod
     def request_refresh(cls, account: Account, *, trigger: str = "manual") -> dict:
         logger.info(f"[Device Sync] request_refresh called: account_id={account.id} email={account.email} trigger={trigger}")
-        interactive_trigger = trigger == "api" or trigger == "bootstrap" or trigger.startswith("connect_")
-        if cls.has_active_device_provider_auth(account) and (interactive_trigger or not redis_queue_enabled()):
+        provider_connect_trigger = trigger.startswith("connect_")
+        interactive_trigger = trigger == "api" or trigger == "bootstrap"
+        if cls.has_active_device_provider_auth(account) and not provider_connect_trigger and (
+            interactive_trigger or not redis_queue_enabled()
+        ):
             logger.info(
                 f"[Device Sync] Inline refresh selected for account_id={account.id}; "
                 f"trigger={trigger} backend={get_queue_backend()}"
@@ -778,6 +793,11 @@ class DeviceDashboardService:
             DeviceControl.SourceTypeChoices.MBAPI2020_ACTION,
         }:
             cls._execute_mbapi2020_control(account, device=device, control=control, action=action, value=value)
+        elif control.source_type in {
+            DeviceControl.SourceTypeChoices.HISENSE_HA_PROPERTY,
+            DeviceControl.SourceTypeChoices.HISENSE_HA_ACTION,
+        }:
+            cls._execute_hisense_ha_control(account, device=device, control=control, action=action, value=value)
         else:
             raise ValueError(f"Unsupported control source: {control.source_type}")
 
@@ -1283,6 +1303,83 @@ class DeviceDashboardService:
         return cls._persist_single_device_refresh(account, device=device, room_data=room_data, device_data=device_data, trigger=trigger)
 
     @classmethod
+    def _build_hisense_ha_snapshot(cls, account: Account) -> dict:
+        from providers.services import HisenseHAAuthService
+
+        logger.debug(f"[Device Sync] _build_hisense_ha_snapshot start for account_id={account.id}")
+        try:
+            client = HisenseHAAuthService.get_client(account=account)
+            devices = client.list_devices()
+            logger.info(f"[Device Sync] Hisense devices fetched for account_id={account.id}: count={len(devices)}")
+        except Exception as error:
+            logger.error(f"[Device Sync] Failed to fetch Hisense data, falling back to empty: {error}")
+            return cls._build_empty_snapshot()
+
+        room_index: dict[str, dict] = {}
+        devices_data: list[dict] = []
+        for index, raw_device in enumerate(devices, start=1):
+            if not isinstance(raw_device, dict):
+                continue
+            room_data, device_data = cls._build_hisense_ha_device_snapshot(raw_device, sort_order=index * 10)
+            room_index.setdefault(room_data["id"], room_data)
+            devices_data.append(device_data)
+
+        return {
+            "source": "hisense_ha",
+            "rooms": list(room_index.values()),
+            "devices": devices_data,
+            "anomalies": [],
+            "rules": [],
+        }
+
+    @classmethod
+    def _build_hisense_ha_device_snapshot(cls, raw_device: dict, *, sort_order: int) -> tuple[dict, dict]:
+        device_id = str(raw_device.get("device_id") or raw_device.get("id") or "").strip()
+        room_name = str(raw_device.get("room_name") or raw_device.get("home_name") or "海信空调").strip()
+        room_id = cls._make_room_id("hisense_ha", room_name or "default")
+        room_data = {
+            "id": room_id,
+            "name": room_name or "海信空调",
+            "climate": str(raw_device.get("home_name") or "").strip(),
+            "summary": "来自海信云接入",
+            "sort_order": 10,
+        }
+        controls = cls._build_hisense_ha_controls(raw_device)
+        capabilities = [control["key"] for control in controls if control["kind"] != DeviceControl.KindChoices.SENSOR][:8]
+        status_payload = raw_device.get("status_payload") if isinstance(raw_device.get("status_payload"), dict) else {}
+        device_data = {
+            "id": f"hisense_ha:{device_id}",
+            "room_id": room_id,
+            "name": str(raw_device.get("name") or raw_device.get("device_name") or f"海信空调 {device_id[-4:]}").strip(),
+            "category": "climate",
+            "status": cls._map_hisense_ha_status(status_payload),
+            "telemetry": cls._summarize_hisense_ha_device(status_payload, controls),
+            "note": f"Hisense Device: {device_id}",
+            "capabilities": capabilities,
+            "controls": controls,
+            "last_seen": timezone.now(),
+            "sort_order": sort_order,
+            "source_payload": raw_device,
+        }
+        return room_data, device_data
+
+    @classmethod
+    def _refresh_hisense_ha_device(cls, account: Account, *, device_external_id: str, trigger: str) -> dict:
+        from providers.services import HisenseHAAuthService
+
+        device = DeviceSnapshot.objects.filter(account=account, external_id=device_external_id).first()
+        if device is None:
+            raise ValueError("Device not found")
+
+        client = HisenseHAAuthService.get_client(account=account)
+        raw_device = client.get_device(device.external_id.removeprefix("hisense_ha:"))
+        if not isinstance(raw_device, dict):
+            raise ValueError("Hisense device refresh returned empty payload")
+
+        room_data, device_data = cls._build_hisense_ha_device_snapshot(raw_device, sort_order=device.sort_order or 10)
+        return cls._persist_single_device_refresh(account, device=device, room_data=room_data, device_data=device_data, trigger=trigger)
+
+    @classmethod
     def _refresh_device_after_control(
         cls,
         account: Account,
@@ -1308,6 +1405,11 @@ class DeviceDashboardService:
             DeviceControl.SourceTypeChoices.MBAPI2020_ACTION,
         }:
             return cls._refresh_mbapi2020_vehicle(account, device_external_id=device.external_id, trigger=trigger)
+        if control.source_type in {
+            DeviceControl.SourceTypeChoices.HISENSE_HA_PROPERTY,
+            DeviceControl.SourceTypeChoices.HISENSE_HA_ACTION,
+        }:
+            return cls._refresh_hisense_ha_device(account, device_external_id=device.external_id, trigger=trigger)
         return cls.request_refresh(account, trigger=trigger)
 
     @classmethod
@@ -1735,6 +1837,80 @@ class DeviceDashboardService:
                     "range_spec": {},
                     "action_params": {},
                     "source_payload": {"key": status_key, "value": status_value},
+                    "sort_order": sort_order,
+                }
+            )
+            sort_order += 10
+
+        return controls
+
+    @classmethod
+    def _build_hisense_ha_controls(cls, raw_device: dict) -> list[dict]:
+        device_id = str(raw_device.get("device_id") or raw_device.get("id") or "").strip()
+        status_payload = raw_device.get("status_payload") if isinstance(raw_device.get("status_payload"), dict) else {}
+        controls: list[dict] = []
+        definitions = raw_device.get("controls") if isinstance(raw_device.get("controls"), list) else []
+        sort_order = 10
+
+        for definition in definitions:
+            if not isinstance(definition, dict):
+                continue
+            key = str(definition.get("key") or "").strip()
+            if not key:
+                continue
+            kind = str(definition.get("kind") or DeviceControl.KindChoices.SENSOR)
+            control = {
+                "id": f"hisense_ha:{device_id}:{key}",
+                "parent_id": f"hisense_ha:{device_id}",
+                "source_type": (
+                    DeviceControl.SourceTypeChoices.HISENSE_HA_ACTION
+                    if kind == DeviceControl.KindChoices.ACTION
+                    else DeviceControl.SourceTypeChoices.HISENSE_HA_PROPERTY
+                ),
+                "kind": kind,
+                "key": key,
+                "label": str(definition.get("label") or key).strip(),
+                "group_label": "空调",
+                "writable": bool(definition.get("writable")),
+                "value": None if kind == DeviceControl.KindChoices.ACTION else status_payload.get(key),
+                "unit": str(definition.get("unit") or "").strip(),
+                "options": definition.get("options") or [],
+                "range_spec": definition.get("range") or {},
+                "action_params": {
+                    "device_id": device_id,
+                    "wifi_id": raw_device.get("wifi_id"),
+                    "control_key": key,
+                    "command_id": definition.get("command_id"),
+                    "action": definition.get("action"),
+                },
+                "source_payload": definition,
+                "sort_order": sort_order,
+            }
+            controls.append(control)
+            sort_order += 10
+
+        for key, label, unit in (
+            ("indoor_temperature", "室温", "°C"),
+            ("nature_wind", "自然风", ""),
+        ):
+            if key not in status_payload:
+                continue
+            controls.append(
+                {
+                    "id": f"hisense_ha:{device_id}:status:{key}",
+                    "parent_id": f"hisense_ha:{device_id}",
+                    "source_type": DeviceControl.SourceTypeChoices.HISENSE_HA_PROPERTY,
+                    "kind": DeviceControl.KindChoices.SENSOR,
+                    "key": key,
+                    "label": label,
+                    "group_label": "状态",
+                    "writable": False,
+                    "value": status_payload.get(key),
+                    "unit": unit,
+                    "options": [],
+                    "range_spec": {},
+                    "action_params": {},
+                    "source_payload": {"key": key, "value": status_payload.get(key)},
                     "sort_order": sort_order,
                 }
             )
@@ -2689,6 +2865,39 @@ class DeviceDashboardService:
         client.execute_control(vehicle_id=str(vehicle_id), control=payload, value=value)
 
     @classmethod
+    def _execute_hisense_ha_control(
+        cls,
+        account: Account,
+        *,
+        device: DeviceSnapshot,
+        control: DeviceControl,
+        action: str,
+        value: Any,
+    ) -> None:
+        from providers.services import HisenseHAAuthService
+
+        client = HisenseHAAuthService.get_client(account=account)
+        params = control.action_params or {}
+        device_id = params.get("device_id") or (device.source_payload or {}).get("device_id")
+        if not device_id:
+            device_id = device.external_id.removeprefix("hisense_ha:")
+        if not device_id:
+            raise ValueError("Hisense device identifier is missing")
+
+        effective_value = value
+        if control.kind == DeviceControl.KindChoices.TOGGLE and value is None:
+            effective_value = action in {"turn_on", "on", "true", "1"}
+        elif control.kind == DeviceControl.KindChoices.ACTION and value in (None, ""):
+            effective_value = action or "refresh"
+
+        client.execute_control(
+            device_id=str(device_id),
+            control_key=control.key,
+            action=action,
+            value=effective_value,
+        )
+
+    @classmethod
     def _apply_optimistic_control_result(cls, control: DeviceControl, *, action: str, value: Any) -> None:
         next_value = value
         if control.kind == DeviceControl.KindChoices.TOGGLE:
@@ -3195,6 +3404,39 @@ class DeviceDashboardService:
         if len(parts) < 2:
             action_count = len([item for item in controls if item["kind"] == DeviceControl.KindChoices.ACTION])
             parts.append(f"{action_count} 个可用动作")
+        return " | ".join(parts[:3])
+
+    @staticmethod
+    def _map_hisense_ha_status(status_payload: dict) -> str:
+        if not isinstance(status_payload, dict):
+            return DeviceSnapshot.StatusChoices.OFFLINE
+        indoor_temperature = status_payload.get("indoor_temperature")
+        if status_payload.get("power_on") is True:
+            return DeviceSnapshot.StatusChoices.ONLINE
+        if indoor_temperature not in (None, "", {}, []):
+            return DeviceSnapshot.StatusChoices.ATTENTION
+        return DeviceSnapshot.StatusChoices.OFFLINE
+
+    @staticmethod
+    def _summarize_hisense_ha_device(status_payload: dict, controls: list[dict]) -> str:
+        if not isinstance(status_payload, dict):
+            return "离线"
+        parts: list[str] = []
+        power = "已开机" if status_payload.get("power_on") else "已关机"
+        parts.append(power)
+        target_temperature = status_payload.get("desired_temperature")
+        if target_temperature not in (None, "", {}, []):
+            parts.append(f"设定 {target_temperature}°C")
+        indoor_temperature = status_payload.get("indoor_temperature")
+        if indoor_temperature not in (None, "", {}, []):
+            parts.append(f"室温 {indoor_temperature}°C")
+        if len(parts) < 3:
+            hvac_mode = status_payload.get("hvac_mode")
+            if hvac_mode:
+                parts.append(f"模式 {hvac_mode}")
+        if len(parts) < 3:
+            writable_count = len([item for item in controls if item.get("writable")])
+            parts.append(f"{writable_count} 个可控项")
         return " | ".join(parts[:3])
 
     @staticmethod

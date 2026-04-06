@@ -179,6 +179,44 @@ def test_create_rule_rejects_invalid_condition_spec(client):
 
 
 @pytest.mark.django_db
+def test_system_rule_can_toggle_active_but_cannot_edit_fields(client):
+    account = Account.objects.create(email="care-system-rule@example.com", name="care-system-rule", password="x")
+    rule = InspectionRule.objects.create(
+        account=None,
+        is_system_default=True,
+        rule_type=InspectionRule.RuleTypeChoices.MAINTENANCE,
+        device_category="water_purifier",
+        name="系统滤芯提醒",
+        description="系统规则",
+        condition_spec={"field": "control.filter_life_percent", "operator": "<", "threshold": 20},
+        suggestion_template="{device_name} 需要更换滤芯。",
+        priority=8,
+        is_active=True,
+    )
+
+    toggle_response = client.put(
+        reverse("care:rule_detail", args=[rule.id]),
+        data=json.dumps({"is_active": False}),
+        content_type="application/json",
+        HTTP_X_WANNY_EMAIL=account.email,
+    )
+
+    assert toggle_response.status_code == 200
+    rule.refresh_from_db()
+    assert rule.is_active is False
+
+    update_response = client.put(
+        reverse("care:rule_detail", args=[rule.id]),
+        data=json.dumps({"name": "被改掉的系统规则"}),
+        content_type="application/json",
+        HTTP_X_WANNY_EMAIL=account.email,
+    )
+
+    assert update_response.status_code == 400
+    assert "only supports is_active updates" in update_response.json()["error"]
+
+
+@pytest.mark.django_db
 def test_care_suggestion_list_includes_semantic_aggregation_sources_for_rules(client):
     account = Account.objects.create(email="care-aggregation-rule@example.com", name="care-aggregation-rule", password="x")
     rule = InspectionRule.objects.create(

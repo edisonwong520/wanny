@@ -34,8 +34,8 @@ class CarePushService:
     @classmethod
     async def deliver_due_suggestions(cls, bot=None) -> int:
         active_bot = bot or get_current_bot()
-        if not active_bot or not getattr(active_bot, "_context_tokens", None):
-            logger.debug("[Care Push] 当前没有活跃的微信上下文，跳过主动关怀推送。")
+        if not active_bot:
+            logger.debug("[Care Push] 当前没有活跃的微信 Bot 进程，跳过主动关怀推送。")
             return 0
 
         delivered = 0
@@ -51,7 +51,7 @@ class CarePushService:
                 continue
             payload = auth.auth_payload if isinstance(auth.auth_payload, dict) else {}
             wechat_user_id = str(payload.get("user_id") or payload.get("userId") or "").strip()
-            if not wechat_user_id or wechat_user_id not in active_bot._context_tokens:
+            if not wechat_user_id:
                 continue
             suggestions = await sync_to_async(cls._select_due_suggestions)(account)
             if not suggestions:

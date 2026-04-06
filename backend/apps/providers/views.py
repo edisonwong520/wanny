@@ -14,6 +14,7 @@ from .auth_sessions import (
 from .models import PlatformAuth
 from .services import (
     HomeAssistantAuthService,
+    HisenseHAAuthService,
     MbApi2020AuthService,
     MideaCloudAuthService,
     MijiaAuthService,
@@ -52,6 +53,12 @@ PLATFORM_CATALOG = {
         "category": "vehicle",
         "auth_mode": "form",
     },
+    "hisense_ha": {
+        "display_name": "Hisense",
+        "display_name_zh": "海信",
+        "category": "iot",
+        "auth_mode": "form",
+    },
 }
 
 PLATFORM_ALIASES = {
@@ -63,6 +70,8 @@ PLATFORM_ALIASES = {
     "mercedes": MbApi2020AuthService.platform_name,
     "mercedes-benz": MbApi2020AuthService.platform_name,
     "mercedes_benz": MbApi2020AuthService.platform_name,
+    "hisense": HisenseHAAuthService.platform_name,
+    "hisense-ha": HisenseHAAuthService.platform_name,
 }
 
 SENSITIVE_KEYWORDS = (
@@ -90,6 +99,8 @@ def _get_platform_lookup_names(platform_name: str) -> tuple[str, ...]:
         return MideaCloudAuthService.platform_aliases
     if platform_name == MbApi2020AuthService.platform_name:
         return MbApi2020AuthService.platform_aliases
+    if platform_name == HisenseHAAuthService.platform_name:
+        return HisenseHAAuthService.platform_aliases
     return (platform_name,)
 
 
@@ -104,6 +115,8 @@ def _get_platform_auth(request, platform_name: str) -> PlatformAuth | None:
         return MideaCloudAuthService.get_auth_record(account=account)
     if normalized_name == MbApi2020AuthService.platform_name:
         return MbApi2020AuthService.get_auth_record(account=account)
+    if normalized_name == HisenseHAAuthService.platform_name:
+        return HisenseHAAuthService.get_auth_record(account=account)
 
     return PlatformAuth.objects.filter(account=account, platform_name=normalized_name).first()
 
@@ -367,6 +380,19 @@ def handle_platform_auth_authorize(request, platform_name: str):
                 instruction="已保存奔驰 token 配置，可直接复用 mbapi2020 风格接口访问车辆信息。",
                 detail=f"配置 {auth_obj.auth_payload.get('instance_name') or 'Mercedes-Benz'} 已完成校验。",
             )
+        elif normalized_name == HisenseHAAuthService.platform_name:
+            auth_payload = data.get("payload", {})
+            auth_obj = HisenseHAAuthService.validate_and_store(account=account, payload=auth_payload)
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.sync_after_provider_change(account, trigger="connect_hisense_ha")
+            session = AuthorizationSessionStore.create(
+                platform=normalized_name,
+                auth_kind="form",
+                status="completed",
+                title="海信已连接",
+                instruction="已保存海信账号配置，可同步海信空调设备并执行基础控制。",
+                detail=f"配置 {auth_obj.auth_payload.get('instance_name') or 'Hisense'} 已完成校验。",
+            )
         else:
             return JsonResponse({"error": f"Interactive login is not supported for {normalized_name}"}, status=400)
 
@@ -466,6 +492,9 @@ def handle_platform_auth_detail(request, platform_name: str):
         elif normalized_name == MbApi2020AuthService.platform_name:
             from devices.services import DeviceDashboardService
             DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_mbapi2020")
+        elif normalized_name == HisenseHAAuthService.platform_name:
+            from devices.services import DeviceDashboardService
+            DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_hisense_ha")
         elif normalized_name == HomeAssistantAuthService.platform_name:
             from devices.services import DeviceDashboardService
             DeviceDashboardService.sync_after_provider_change(account, trigger="disconnect_home_assistant")

@@ -383,7 +383,7 @@ def handle_rule_detail(request, pk: int):
     account = _get_account(request)
     if not account:
         return JsonResponse({"error": "Unauthorized"}, status=401)
-    rule = InspectionRule.objects.filter(pk=pk, account=account).first()
+    rule = InspectionRule.objects.filter(pk=pk).filter(Q(account=account) | Q(account__isnull=True)).first()
     if rule is None:
         return JsonResponse({"error": "Rule not found"}, status=404)
     if request.method == "PUT":
@@ -391,6 +391,21 @@ def handle_rule_detail(request, pk: int):
             payload = json.loads(request.body or "{}")
         except json.JSONDecodeError:
             return JsonResponse({"error": "Invalid JSON payload"}, status=400)
+        if rule.is_system_default:
+            unsupported_fields = {
+                "rule_type",
+                "device_category",
+                "name",
+                "description",
+                "check_frequency",
+                "condition_spec",
+                "action_spec",
+                "suggestion_template",
+                "priority",
+                "cooldown_hours",
+            }
+            if any(field in payload for field in unsupported_fields):
+                return JsonResponse({"error": "System default rule only supports is_active updates"}, status=400)
         next_condition_spec = payload.get("condition_spec", rule.condition_spec)
         if "condition_spec" in payload:
             is_valid, error_message = _validate_condition_spec(next_condition_spec)

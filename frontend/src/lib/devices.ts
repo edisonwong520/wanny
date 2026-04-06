@@ -48,7 +48,9 @@ export interface DeviceControlRecord {
     | "midea_cloud_property"
     | "midea_cloud_action"
     | "mbapi2020_property"
-    | "mbapi2020_action";
+    | "mbapi2020_action"
+    | "hisense_ha_property"
+    | "hisense_ha_action";
   kind: "sensor" | "toggle" | "range" | "enum" | "action" | "text";
   key: string;
   label: string;

@@ -43,37 +43,8 @@ const customRules = computed(() => props.rules.filter((r) => !r.isSystemDefault)
         {{ $t("common.loading") }}
       </div>
       <template v-else>
-        <!-- System Rules -->
-        <div class="mb-4">
-          <div class="text-[10px] text-[#98A2B3] uppercase mb-2">{{ $t("care.rules.systemTitle") }}</div>
-          <div v-if="systemRules.length === 0" class="text-xs text-[#98A2B3]">
-            {{ $t("care.rules.empty") }}
-          </div>
-          <div v-else class="space-y-2">
-            <div
-              v-for="rule in systemRules"
-              :key="rule.id"
-              class="rounded-xl bg-[#F9FAFB] p-3"
-            >
-              <div class="flex items-start justify-between gap-2">
-                <div class="flex-1 min-w-0">
-                  <div class="text-xs font-semibold text-[#1F2A22] truncate">{{ rule.name }}</div>
-                  <div class="text-[10px] text-[#667085] mt-0.5 line-clamp-2">{{ rule.description || rule.suggestionTemplate }}</div>
-                </div>
-                <button
-                  class="rounded-full px-2 py-1 text-[10px] shrink-0"
-                  :class="rule.isActive ? 'bg-[#E8F8EC] text-[#07C160]' : 'bg-[#F2F4F7] text-[#667085]'"
-                  @click="emit('toggle', rule.id, !rule.isActive)"
-                >
-                  {{ rule.isActive ? $t("care.rules.actions.enabled") : $t("care.rules.actions.disabled") }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- Custom Rules -->
-        <div>
+        <div class="mb-4">
           <div class="text-[10px] text-[#98A2B3] uppercase mb-2">{{ $t("care.rules.customTitle") }}</div>
           <div v-if="customRules.length === 0" class="text-xs text-[#98A2B3]">
             {{ $t("care.rules.empty") }}
@@ -111,6 +82,35 @@ const customRules = computed(() => props.rules.filter((r) => !r.isSystemDefault)
                     {{ $t("care.rules.actions.delete") }}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- System Rules -->
+        <div>
+          <div class="text-[10px] text-[#98A2B3] uppercase mb-2">{{ $t("care.rules.systemTitle") }}</div>
+          <div v-if="systemRules.length === 0" class="text-xs text-[#98A2B3]">
+            {{ $t("care.rules.empty") }}
+          </div>
+          <div v-else class="space-y-2">
+            <div
+              v-for="rule in systemRules"
+              :key="rule.id"
+              class="rounded-xl bg-[#F9FAFB] p-3"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex-1 min-w-0">
+                  <div class="text-xs font-semibold text-[#1F2A22] truncate">{{ rule.name }}</div>
+                  <div class="text-[10px] text-[#667085] mt-0.5 line-clamp-2">{{ rule.description || rule.suggestionTemplate }}</div>
+                </div>
+                <button
+                  class="rounded-full px-2 py-1 text-[10px] shrink-0"
+                  :class="rule.isActive ? 'bg-[#E8F8EC] text-[#07C160]' : 'bg-[#F2F4F7] text-[#667085]'"
+                  @click="emit('toggle', rule.id, !rule.isActive)"
+                >
+                  {{ rule.isActive ? $t("care.rules.actions.enabled") : $t("care.rules.actions.disabled") }}
+                </button>
               </div>
             </div>
           </div>

@@ -4,7 +4,6 @@ import { useI18n } from "vue-i18n";
 
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -39,6 +38,8 @@ const mbapi2020AccessToken = ref("");
 const mbapi2020RefreshToken = ref("");
 const mbapi2020ExpiresIn = ref("14399");
 const mbapi2020Region = ref<"Europe" | "North America" | "Asia-Pacific" | "China">("China");
+const hisenseAccount = ref("");
+const hisensePassword = ref("");
 
 // 美的服务器选项
 const mideaServerOptions = computed(() => [
@@ -80,6 +81,7 @@ const modalQrImageUrl = computed(() => {
 const isHomeAssistantModal = computed(() => modalProvider.value?.platform === "home_assistant");
 const isMideaCloudModal = computed(() => modalProvider.value?.platform === "midea_cloud");
 const isMbApi2020Modal = computed(() => modalProvider.value?.platform === "mbapi2020");
+const isHisenseModal = computed(() => modalProvider.value?.platform === "hisense_ha");
 
 const homeAssistantInstanceName = computed(() => {
   const preview = modalProvider.value?.payload_preview ?? {};
@@ -209,6 +211,11 @@ function openModal(platform: string) {
         ? preview.region
         : "China";
   }
+  if (platform === "hisense_ha") {
+    const preview = provider?.payload_preview ?? {};
+    hisenseAccount.value = typeof preview.username === "string" ? preview.username : "";
+    hisensePassword.value = "";
+  }
 }
 
 function closeModal() {
@@ -219,6 +226,7 @@ function closeModal() {
   mbapi2020AccessToken.value = "";
   mbapi2020RefreshToken.value = "";
   mbapi2020ExpiresIn.value = "14399";
+  hisensePassword.value = "";
 }
 
 function handleDialogOpenChange(open: boolean) {
@@ -248,7 +256,8 @@ async function handleClick(provider: ProviderRecord) {
   if (
     provider.platform === "home_assistant" ||
     provider.platform === "midea_cloud" ||
-    provider.platform === "mbapi2020"
+    provider.platform === "mbapi2020" ||
+    provider.platform === "hisense_ha"
   ) {
     openModal(provider.platform);
     return;
@@ -348,6 +357,33 @@ async function handleMbApi2020Authorize() {
   }
 }
 
+async function handleHisenseAuthorize() {
+  const provider = modalProvider.value;
+  if (!provider || provider.platform !== "hisense_ha") return;
+
+  modalLoading.value = true;
+  busyAction.value = `${provider.platform}:connect`;
+  errorMessage.value = "";
+
+  try {
+    const response = await startAuthorization(provider.platform, {
+      payload: {
+        username: hisenseAccount.value.trim(),
+        password: hisensePassword.value.trim(),
+      },
+    });
+    updateProvider(response.provider);
+    sessions.value = { ...sessions.value, [provider.platform]: response.session };
+    hisensePassword.value = "";
+    closeModal();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : t("manage.auth.errors.action");
+  } finally {
+    busyAction.value = "";
+    modalLoading.value = false;
+  }
+}
+
 async function handleDisconnect(provider: ProviderRecord) {
   if (!window.confirm(t("manage.auth.confirmDisconnect"))) return;
   busyAction.value = `${provider.platform}:disconnect`;
@@ -426,11 +462,6 @@ onBeforeUnmount(() => stopAllPolling());
         <DialogHeader class="sr-only">
           <DialogTitle>{{ locale === "zh-CN" ? modalProvider.display_name_zh : modalProvider.display_name }}</DialogTitle>
         </DialogHeader>
-        <DialogClose
-          class="absolute right-4 top-4 w-8 h-8 flex items-center justify-center rounded-full border border-[#EDEDED] text-[#888888] transition-all duration-200 hover:bg-[#F7F7F7] hover:text-[#333333]"
-        >
-          ×
-        </DialogClose>
 
         <div class="space-y-4">
           <h3 class="text-lg font-medium text-[#333333]">
@@ -467,13 +498,22 @@ onBeforeUnmount(() => stopAllPolling());
                 {{ $t("manage.auth.currentInstance") }}: {{ homeAssistantInstanceName }}
               </div>
             </div>
-            <button
-              :disabled="modalLoading || !homeAssistantBaseUrl.trim() || !homeAssistantAccessToken.trim()"
-              class="w-full rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
-              @click="handleHomeAssistantAuthorize"
-            >
-              {{ $t("manage.auth.actions.save") }}
-            </button>
+            <div class="grid grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                class="rounded-full border border-[#DDE7E1] bg-white px-4 py-3 text-sm font-medium text-[#5E7466] transition-all duration-200 hover:bg-[#F7FAF8] hover:border-[#C9D9CF]"
+                @click="closeModal"
+              >
+                {{ $t("common.actions.cancel") }}
+              </button>
+              <button
+                :disabled="modalLoading || !homeAssistantBaseUrl.trim() || !homeAssistantAccessToken.trim()"
+                class="rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                @click="handleHomeAssistantAuthorize"
+              >
+                {{ $t("manage.auth.actions.save") }}
+              </button>
+            </div>
           </div>
 
           <!-- 美的表单 -->
@@ -536,13 +576,22 @@ onBeforeUnmount(() => stopAllPolling());
             </div>
 
             <!-- 提交按钮 -->
-            <button
-              :disabled="modalLoading || !mideaCloudAccount.trim() || !mideaCloudPassword.trim()"
-              class="w-full rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
-              @click="handleMideaCloudAuthorize"
-            >
-              {{ $t("manage.auth.actions.save") }}
-            </button>
+            <div class="grid grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                class="rounded-full border border-[#DDE7E1] bg-white px-4 py-3 text-sm font-medium text-[#5E7466] transition-all duration-200 hover:bg-[#F7FAF8] hover:border-[#C9D9CF]"
+                @click="closeModal"
+              >
+                {{ $t("common.actions.cancel") }}
+              </button>
+              <button
+                :disabled="modalLoading || !mideaCloudAccount.trim() || !mideaCloudPassword.trim()"
+                class="rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                @click="handleMideaCloudAuthorize"
+              >
+                {{ $t("manage.auth.actions.save") }}
+              </button>
+            </div>
           </div>
 
           <div v-if="isMbApi2020Modal" class="space-y-3">
@@ -625,13 +674,65 @@ onBeforeUnmount(() => stopAllPolling());
               </div>
             </div>
 
-            <button
-              :disabled="modalLoading || !mbapi2020AccessToken.trim()"
-              class="w-full rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
-              @click="handleMbApi2020Authorize"
-            >
-              {{ $t("manage.auth.actions.save") }}
-            </button>
+            <div class="grid grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                class="rounded-full border border-[#DDE7E1] bg-white px-4 py-3 text-sm font-medium text-[#5E7466] transition-all duration-200 hover:bg-[#F7FAF8] hover:border-[#C9D9CF]"
+                @click="closeModal"
+              >
+                {{ $t("common.actions.cancel") }}
+              </button>
+              <button
+                :disabled="modalLoading || !mbapi2020AccessToken.trim()"
+                class="rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                @click="handleMbApi2020Authorize"
+              >
+                {{ $t("manage.auth.actions.save") }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="isHisenseModal" class="space-y-3">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.account") }}
+              </label>
+              <input
+                v-model="hisenseAccount"
+                type="text"
+                :placeholder="$t('manage.auth.fields.hisenseAccountPlaceholder')"
+                class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
+              />
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium uppercase tracking-[0.12em] text-[#888888]">
+                {{ $t("manage.auth.fields.password") }}
+              </label>
+              <input
+                v-model="hisensePassword"
+                type="password"
+                :placeholder="$t('manage.auth.fields.hisensePasswordPlaceholder')"
+                class="w-full rounded-2xl border border-[#EDEDED] bg-[#FCFCFC] px-4 py-3 text-sm text-[#333333] outline-none transition-all duration-200 focus:border-[#07C160] focus:bg-white"
+              />
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                class="rounded-full border border-[#DDE7E1] bg-white px-4 py-3 text-sm font-medium text-[#5E7466] transition-all duration-200 hover:bg-[#F7FAF8] hover:border-[#C9D9CF]"
+                @click="closeModal"
+              >
+                {{ $t("common.actions.cancel") }}
+              </button>
+              <button
+                :disabled="modalLoading || !hisenseAccount.trim() || !hisensePassword.trim()"
+                class="rounded-full bg-[#07C160] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                @click="handleHisenseAuthorize"
+              >
+                {{ $t("manage.auth.actions.save") }}
+              </button>
+            </div>
           </div>
 
           <!-- 米家：只显示二维码 -->

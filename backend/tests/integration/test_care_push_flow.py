@@ -52,3 +52,29 @@ def test_care_push_service_sends_due_suggestions_to_wechat():
     suggestion.refresh_from_db()
     assert suggestion.user_feedback["push"]["count"] == 1
     assert ProactiveLog.objects.filter(account=account, source="care:push").exists()
+
+
+@pytest.mark.django_db
+def test_care_push_service_sends_without_active_context_tokens():
+    account = Account.objects.create(email="care-push-no-context@example.com", name="care-push-no-context", password="x")
+    PlatformAuth.objects.create(
+        account=account,
+        platform_name="wechat",
+        is_active=True,
+        auth_payload={"user_id": "wx-care-user"},
+    )
+    CareSuggestion.objects.create(
+        account=account,
+        suggestion_type=CareSuggestion.SuggestionTypeChoices.CARE,
+        title="天气提醒",
+        body="body",
+        priority=8.3,
+        dedupe_key="care-push-flow-no-context",
+    )
+
+    bot = FakeBot()
+    bot._context_tokens = {}
+    pushed = async_to_sync(CarePushService.deliver_due_suggestions)(bot=bot)
+
+    assert pushed == 1
+    assert bot.sent

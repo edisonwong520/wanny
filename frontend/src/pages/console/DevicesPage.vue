@@ -107,6 +107,7 @@ function getPlatformMeta(platformId: string) {
     mijia: "bg-[#EAF3FF] text-[#2F6FDB] border-[#BDD4FF]",
     midea_cloud: "bg-[#EAFBF7] text-[#138A6B] border-[#B7E7DA]",
     mbapi2020: "bg-[#F5F0FF] text-[#6941C6] border-[#D9CCFF]",
+    hisense_ha: "bg-[#EEF8FF] text-[#0F6CBD] border-[#B9D8F4]",
     unknown: "bg-[#F2F4F7] text-[#667085] border-[#D0D5DD]",
   };
 
@@ -123,6 +124,7 @@ const platformOptions = computed(() => {
     ["mijia", getPlatformMeta("mijia")],
     ["midea_cloud", getPlatformMeta("midea_cloud")],
     ["mbapi2020", getPlatformMeta("mbapi2020")],
+    ["hisense_ha", getPlatformMeta("hisense_ha")],
   ]);
 
   (dashboard.value?.devices ?? []).forEach((device) => {
@@ -380,6 +382,9 @@ function inferDevicePlatform(deviceId: string) {
   }
   if (normalized.startsWith("mbapi2020:")) {
     return getPlatformMeta("mbapi2020");
+  }
+  if (normalized.startsWith("hisense_ha:")) {
+    return getPlatformMeta("hisense_ha");
   }
   return getPlatformMeta("unknown");
 }

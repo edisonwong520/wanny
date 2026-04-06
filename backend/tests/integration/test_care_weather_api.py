@@ -207,6 +207,7 @@ def test_weather_refresh_supports_qweather_source(client):
         side_effect=[
             build_response({"code": "200", "now": {"temp": "16", "text": "阴", "humidity": "75", "feelsLike": "15"}}),
             build_response({"code": "200", "daily": [{"fxDate": "2026-04-05", "textDay": "阴", "tempMin": "14", "tempMax": "20"}]}),
+            build_response({"code": "200", "hourly": [{"fxTime": "2026-04-05T13:00+08:00", "text": "阴", "temp": "16", "pop": "5"}]}),
             build_response({"code": "200", "daily": [{"name": "穿衣指数", "category": "凉", "text": "建议外套"}]}),
             build_response({"code": "200", "warning": []}),
             build_response({"indexes": [{"aqiDisplay": "31", "category": "Excellent", "primaryPollutant": {"name": "PM2.5"}}]}),
@@ -219,5 +220,6 @@ def test_weather_refresh_supports_qweather_source(client):
     assert payload["weather"]["provider"] == "qweather"
     assert payload["weather"]["temperature"] == 16.0
     assert payload["weather"]["air_quality"]["aqi"] == "31"
+    assert payload["weather"]["hourly_forecast"][0]["text"] == "阴"
     assert payload["weather"]["indices"][0]["name"] == "穿衣指数"
     assert payload["suggestionId"] is not None

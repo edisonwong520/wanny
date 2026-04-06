@@ -21,6 +21,7 @@ def build_sample_snapshot(source: str = "home_assistant") -> dict:
         "home_assistant": "ha_entity",
         "midea_cloud": "midea_cloud_property",
         "mbapi2020": "mbapi2020_property",
+        "hisense_ha": "hisense_ha_property",
     }
     default_source_type = source_type_map.get(source, "mijia_property")
     key_prefix = "switch.fridge_power" if source == "home_assistant" else "power"
@@ -284,6 +285,25 @@ class DeviceDashboardServiceTest(TestCase):
         self.assertTrue(payload["snapshot"]["has_snapshot"])
         self.assertFalse(payload["snapshot"]["pending_refresh"])
 
+    def test_request_refresh_does_not_run_inline_for_connect_trigger(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="hisense_ha",
+            auth_payload={"username": "hisense@example.com", "refresh_token": "refresh-token"},
+            is_active=True,
+        )
+
+        with patch(
+            "devices.services.DeviceDashboardService.refresh",
+        ) as mocked_refresh:
+            payload = DeviceDashboardService.request_refresh(self.account, trigger="connect_hisense_ha")
+
+        mocked_refresh.assert_not_called()
+        self.assertFalse(payload["snapshot"]["has_snapshot"])
+        self.assertTrue(payload["snapshot"]["pending_refresh"])
+        state = DeviceDashboardState.objects.get(account=self.account, key=DeviceDashboardService.state_key)
+        self.assertEqual(state.requested_trigger, "connect_hisense_ha")
+
     def test_refresh_uses_home_assistant_snapshot_when_authorized(self):
         PlatformAuth.objects.create(
             account=self.account,
@@ -347,6 +367,27 @@ class DeviceDashboardServiceTest(TestCase):
 
         self.assertEqual(payload["snapshot"]["source"], "mbapi2020")
         self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["source_type"], "mbapi2020_property")
+
+    def test_refresh_uses_hisense_ha_snapshot_when_authorized(self):
+        PlatformAuth.objects.create(
+            account=self.account,
+            platform_name="hisense_ha",
+            auth_payload={"username": "hisense@example.com", "refresh_token": "refresh-token"},
+            is_active=True,
+        )
+
+        snapshot = build_sample_snapshot("midea_cloud")
+        snapshot["source"] = "hisense_ha"
+        snapshot["devices"][0]["id"] = "hisense_ha:dev-1"
+        snapshot["devices"][0]["controls"][0]["source_type"] = "hisense_ha_property"
+        with patch(
+            "devices.services.DeviceDashboardService._build_hisense_ha_snapshot",
+            return_value=snapshot,
+        ):
+            payload = DeviceDashboardService.refresh(self.account, trigger="test")
+
+        self.assertEqual(payload["snapshot"]["source"], "hisense_ha")
+        self.assertEqual(payload["snapshot"]["devices"][0]["controls"][0]["source_type"], "hisense_ha_property")
 
     def test_mbapi2020_lock_status_is_humanized(self):
         raw_vehicle = {
@@ -1709,6 +1750,55 @@ class DeviceDashboardApiTest(TestCase):
         payload = response.json()
         self.assertEqual(payload["pagination"]["total"], 2)
         self.assertEqual([device["id"] for device in payload["devices"]], ["mijia:light-1", "home_assistant:ac-1"])
+
+    def test_device_list_endpoint_sorts_hisense_after_mbapi2020_before_unknown(self):
+        room = DeviceRoom.objects.create(
+            account=self.account,
+            slug="study",
+            name="书房",
+            climate="",
+            summary="",
+            sort_order=10,
+        )
+        DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="mbapi2020:VIN001",
+            room=room,
+            name="奔驰",
+            category="汽车",
+            status="online",
+            telemetry="在线",
+            sort_order=0,
+        )
+        DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="hisense_ha:ac-1",
+            room=room,
+            name="海信空调",
+            category="空调",
+            status="online",
+            telemetry="制冷",
+            sort_order=0,
+        )
+        DeviceSnapshot.objects.create(
+            account=self.account,
+            external_id="unknown:device-1",
+            room=room,
+            name="未知设备",
+            category="其他",
+            status="online",
+            telemetry="在线",
+            sort_order=0,
+        )
+
+        response = self.client.get(self.list_url, HTTP_X_WANNY_EMAIL=self.account.email)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            [device["id"] for device in payload["devices"][:3]],
+            ["mbapi2020:VIN001", "hisense_ha:ac-1", "unknown:device-1"],
+        )
 
     def test_device_list_endpoint_sorts_by_manual_order_first(self):
         room = DeviceRoom.objects.create(

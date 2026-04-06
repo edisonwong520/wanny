@@ -153,6 +153,7 @@ export default {
       mijia: "米家",
       midea_cloud: "美的",
       mbapi2020: "奔驰",
+      hisense_ha: "海信",
       unknown: "未知平台",
     },
     highlights: {
@@ -370,6 +371,7 @@ export default {
       sections: {
         indices: "天气指数",
         forecast: "天气预报",
+        recent: "最近天气",
         warning: "天气预警",
       },
       airQuality: {
@@ -593,12 +595,18 @@ export default {
         accountOptionalPlaceholder: "可选，用于标识奔驰账号邮箱",
         password: "密码",
         passwordPlaceholder: "美的账号密码",
+        hisenseAccountPlaceholder: "海信 App 登录账号",
+        hisensePasswordPlaceholder: "海信 App 登录密码",
         server: "服务器",
         refreshToken: "刷新令牌",
         refreshTokenPlaceholder: "可选，令牌过期时用于自动刷新",
         expiresIn: "有效期秒数",
         expiresInPlaceholder: "默认 14399",
         region: "区域",
+        homeId: "家庭 ID",
+        homeIdPlaceholder: "可选，不填则默认取第一个家庭",
+        deviceIds: "设备 ID",
+        deviceIdsPlaceholder: "可选，每行一个 device id；不填则默认同步该家庭下全部空调",
         mbapiAccessTokenPlaceholder: "填入你提供的 Mercedes-Benz access token",
       },
       hint: {
@@ -610,6 +618,8 @@ export default {
         midea_server_info: "请使用美的美居或 MSmartHome App 的账号密码。不同服务器对应不同 App 平台。",
         mbapi2020: "奔驰授权",
         mbapi2020_token_info: "这里不走登录流程，直接保存你提供的 access token。可同时填写 refresh token 和 expires_in；系统会在 access token 即将过期时自动刷新。",
+        hisense_ha: "海信授权",
+        hisense_info: "请填写海信 App 的账号密码。可选填写家庭 ID 和设备 ID；如果留空，系统会默认使用第一个家庭并同步该家庭下所有海信空调。",
       },
       servers: {
         msmartHome: "MSmartHome",

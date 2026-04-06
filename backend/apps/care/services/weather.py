@@ -128,6 +128,14 @@ class WeatherDataService:
             timeout=timeout,
             allow_failure=True,
         )
+        hourly_payload = cls._qweather_get(
+            endpoint=endpoint,
+            path="/v7/weather/24h",
+            headers=headers,
+            params={"location": location},
+            timeout=timeout,
+            allow_failure=True,
+        )
         indices_payload = cls._qweather_get(
             endpoint=endpoint,
             path="/v7/indices/1d",
@@ -159,10 +167,11 @@ class WeatherDataService:
             "code": now_payload.get("code"),
             "now": now_payload.get("now") or {},
             "daily": forecast_payload.get("daily") or [],
+            "hourly": hourly_payload.get("hourly") or [],
             "indices": indices_payload.get("daily") or [],
             "warning": warning_payload.get("warning") or [],
             "air_now": cls._extract_qweather_air_now(air_payload),
-            "updateTime": now_payload.get("updateTime") or forecast_payload.get("updateTime"),
+            "updateTime": now_payload.get("updateTime") or hourly_payload.get("updateTime") or forecast_payload.get("updateTime"),
         }
 
     @classmethod
@@ -250,6 +259,18 @@ class WeatherDataService:
                     "precip": str(item.get("precip") or "").strip(),
                 }
                 for item in payload.get("daily", [])[:3]
+                if isinstance(item, dict)
+            ]
+        if isinstance(payload.get("hourly"), list):
+            normalized["hourly_forecast"] = [
+                {
+                    "time": str(item.get("fxTime") or "").strip(),
+                    "text": str(item.get("text") or "").strip(),
+                    "icon": str(item.get("icon") or "").strip(),
+                    "temp": cls._to_float(item.get("temp")),
+                    "pop": str(item.get("pop") or "").strip(),
+                }
+                for item in payload.get("hourly", [])[:12]
                 if isinstance(item, dict)
             ]
         if isinstance(payload.get("indices"), list):

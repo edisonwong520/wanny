@@ -150,6 +150,7 @@ export default {
       mijia: "Mijia",
       midea_cloud: "Midea",
       mbapi2020: "Mercedes-Benz",
+      hisense_ha: "Hisense",
       unknown: "Unknown platform",
     },
     highlights: {
@@ -367,6 +368,7 @@ export default {
       sections: {
         indices: "Weather indices",
         forecast: "Forecast",
+        recent: "Hourly outlook",
         warning: "Warnings",
       },
       airQuality: {
@@ -590,12 +592,18 @@ export default {
         accountOptionalPlaceholder: "Optional Mercedes-Benz account email",
         password: "Password",
         passwordPlaceholder: "Midea account password",
+        hisenseAccountPlaceholder: "Hisense app username",
+        hisensePasswordPlaceholder: "Hisense app password",
         server: "Server",
         refreshToken: "Refresh Token",
         refreshTokenPlaceholder: "Optional, used to refresh access token automatically",
         expiresIn: "Expires In (Seconds)",
         expiresInPlaceholder: "Defaults to 14399",
         region: "Region",
+        homeId: "Home ID",
+        homeIdPlaceholder: "Optional, defaults to the first home",
+        deviceIds: "Device IDs",
+        deviceIdsPlaceholder: "Optional, one device id per line; leave empty to sync all AC devices in the selected home",
         mbapiAccessTokenPlaceholder: "Paste the Mercedes-Benz access token you already have",
       },
       hint: {
@@ -607,6 +615,8 @@ export default {
         midea_server_info: "Use your Midea Meiju or MSmartHome App account. Different servers correspond to different App platforms.",
         mbapi2020: "Mercedes-Benz Authorization",
         mbapi2020_token_info: "This flow does not perform login. It stores the access token you provide directly. You can also provide refresh_token and expires_in so Wanny can refresh the access token before it expires.",
+        hisense_ha: "Hisense Authorization",
+        hisense_info: "Use your Hisense app account and password. Home ID and device IDs are optional; if omitted, Wanny uses the first home and syncs all AC devices in that home.",
       },
       servers: {
         msmartHome: "MSmartHome",

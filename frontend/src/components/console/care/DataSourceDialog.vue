@@ -37,6 +37,7 @@ const apiHostInput = ref<HTMLInputElement | null>(null);
 const weatherSources = computed(() =>
   props.sources.filter((s) => s.sourceType === "weather_api")
 );
+const shouldShowForm = computed(() => weatherSources.value.length === 0 || editingId.value !== null);
 
 function formatResolvedLocation(result: { name?: string; adm1?: string; adm2?: string; country?: string; locationId?: string }) {
   const parts = [result.country, result.adm1, result.adm2, result.name]
@@ -202,7 +203,10 @@ watch(
 
       <!-- Content -->
       <div class="p-5 max-h-[60vh] overflow-y-auto">
-        <div class="mb-4 rounded-2xl border border-[#E4E7EC] bg-[#F9FAFB] px-4 py-3 text-xs leading-6 text-[#667085]">
+        <div
+          v-if="shouldShowForm"
+          class="mb-4 rounded-2xl border border-[#E4E7EC] bg-[#F9FAFB] px-4 py-3 text-xs leading-6 text-[#667085]"
+        >
           <div class="font-semibold text-[#344054]">{{ $t("care.weather.tutorial.title") }}</div>
           <div class="mt-2">{{ $t("care.weather.tutorial.step1") }}</div>
           <div>{{ $t("care.weather.tutorial.step2") }}</div>
@@ -212,7 +216,6 @@ watch(
 
         <!-- Existing Sources -->
         <div v-if="weatherSources.length > 0" class="mb-4">
-          <div class="text-[10px] text-[#98A2B3] uppercase mb-2">{{ $t("care.weather.existingSources") }}</div>
           <div class="space-y-2">
             <div
               v-for="source in weatherSources"
@@ -262,7 +265,7 @@ watch(
         </div>
 
         <!-- Form -->
-        <div class="space-y-3">
+        <div v-if="shouldShowForm" class="space-y-3">
           <div class="relative">
             <input
               ref="apiHostInput"
@@ -375,6 +378,7 @@ watch(
           {{ $t("care.actions.cancel") }}
         </button>
         <button
+          v-if="shouldShowForm"
           class="rounded-full bg-[#07C160] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           :disabled="saving"
           @click="handleSubmit"

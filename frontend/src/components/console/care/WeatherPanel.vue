@@ -31,6 +31,7 @@ const feelsLikeLabel = computed(() => {
 
 const airQuality = computed(() => props.weather?.air_quality ?? null);
 const forecastItems = computed(() => props.weather?.forecast ?? []);
+const hourlyForecastItems = computed(() => props.weather?.hourly_forecast ?? []);
 const indexItems = computed(() => props.weather?.indices ?? []);
 const warningItems = computed(() => props.weather?.warnings ?? []);
 const airQualityTone = computed(() => {
@@ -73,15 +74,6 @@ const airQualityBadgeLabel = computed(() => {
   return parts.map((part) => String(part)).join(" ");
 });
 
-const weatherDelta = computed(() => {
-  const current = props.weather?.temperature;
-  const previous = props.weather?.previous_temperature;
-  if (typeof current !== "number" || typeof previous !== "number") return "";
-  const diff = current - previous;
-  if (Math.abs(diff) < 0.1) return "";
-  return `${diff > 0 ? "+" : ""}${diff.toFixed(1)}°C`;
-});
-
 function formatForecastTemperature(min?: number | null, max?: number | null) {
   const minLabel = typeof min === "number" ? `${min.toFixed(0)}°` : "--";
   const maxLabel = typeof max === "number" ? `${max.toFixed(0)}°` : "--";
@@ -99,6 +91,7 @@ const currentTimeLabel = computed(() => {
 
 function weatherEmoji(text?: string) {
   const value = String(text || "");
+  if (value.includes("雾") || value.includes("霾") || value.includes("烟")) return "🌫️";
   if (value.includes("雷")) return "⛈️";
   if (value.includes("雪")) return "❄️";
   if (value.includes("雨")) return "🌧️";
@@ -106,6 +99,13 @@ function weatherEmoji(text?: string) {
   if (value.includes("风")) return "🌬️";
   if (value.includes("晴")) return "☀️";
   return "🌤️";
+}
+
+function formatHourlyTime(value?: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "--:--";
+  const match = raw.match(/T(\d{2}:\d{2})/);
+  return match?.[1] ?? raw.slice(-5);
 }
 
 onMounted(() => {
@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
           <div class="text-[36px] font-semibold text-[#1F2A22] leading-none">{{ weatherTemperature }}</div>
           <div>
             <div class="flex flex-wrap items-center gap-2">
-              <div class="text-sm text-[#344054]">{{ weather.condition || "--" }}</div>
+              <div class="text-sm text-[#344054]">{{ `${weatherEmoji(weather.condition)} ${weather.condition || "--"}` }}</div>
               <div
                 v-if="airQualityBadgeLabel"
                 class="rounded-full px-2 py-1 text-[10px] font-medium"
@@ -172,15 +172,35 @@ onBeforeUnmount(() => {
             <div class="text-xs text-[#667085]">{{ currentTimeLabel }}</div>
           </div>
         </div>
-        <div v-if="weatherDelta" class="mt-2 text-xs text-[#667085]">
-          {{ $t("care.weather.delta") }}: {{ weatherDelta }}
-        </div>
       </div>
       <div v-else class="rounded-2xl border border-dashed border-[#D0D5DD] px-4 py-5 text-sm text-[#98A2B3] mb-3">
         {{ weatherSourceId ? $t("care.weather.empty") : $t("care.weather.noSource") }}
       </div>
 
-      <!-- Weather Indices -->
+      <div v-if="hourlyForecastItems.length > 0" class="mt-3">
+        <div class="mb-2 text-[10px] text-[#98A2B3] uppercase">{{ $t("care.weather.sections.recent") }}</div>
+        <div class="weather-hourly-strip flex gap-2 overflow-x-auto pb-2">
+          <div
+            v-for="item in hourlyForecastItems"
+            :key="`${item.time}-${item.text}`"
+            class="min-w-[76px] rounded-xl border border-[#E9EEF1] bg-[#FBFDFC] px-3 py-3 text-center"
+          >
+            <div class="text-[11px] font-medium text-[#667085]">{{ formatHourlyTime(item.time) }}</div>
+            <div class="mt-2 text-lg leading-none">{{ weatherEmoji(item.text) }}</div>
+            <div class="mt-2 text-sm font-semibold text-[#1F2A22]">
+              {{ typeof item.temp === "number" ? `${item.temp.toFixed(0)}°` : "--" }}
+            </div>
+            <div class="mt-1 text-[11px] text-[#667085] truncate">{{ item.text || "--" }}</div>
+            <div
+              v-if="item.pop"
+              class="mt-2 inline-flex rounded-full bg-[#EEF4FF] px-2 py-1 text-[10px] font-medium text-[#3559B2]"
+            >
+              {{ item.pop }}%
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div v-if="forecastItems.length > 0" class="mt-3">
         <div class="mb-2 text-[10px] text-[#98A2B3] uppercase">{{ $t("care.weather.sections.forecast") }}</div>
         <div class="grid gap-2 sm:grid-cols-3">
@@ -198,13 +218,18 @@ onBeforeUnmount(() => {
 
       <div v-if="indexItems.length > 0" class="mt-3">
         <div class="mb-2 text-[10px] text-[#98A2B3] uppercase">{{ $t("care.weather.sections.indices") }}</div>
-        <div class="space-y-2">
-          <div v-for="item in indexItems" :key="`${item.name}-${item.category}`" class="rounded-xl border border-[#E9EEF1] bg-[#FBFDFC] p-3">
-            <div class="flex items-center justify-between gap-2">
-              <div class="text-sm font-medium text-[#223126]">{{ item.name || "--" }}</div>
-              <div class="rounded-full bg-[#E8F8EC] px-2 py-1 text-[10px] font-medium text-[#138A6B]">{{ item.category || "--" }}</div>
+        <div class="grid gap-2">
+          <div
+            v-for="item in indexItems"
+            :key="`${item.name}-${item.category}`"
+            class="flex items-center justify-between gap-3 rounded-xl border border-[#E9EEF1] bg-[#FBFDFC] px-3 py-3"
+          >
+            <div class="min-w-0 text-sm font-medium text-[#223126] truncate">
+              {{ item.name || "--" }}
             </div>
-            <div class="mt-2 text-xs leading-5 text-[#667085]">{{ item.text || "--" }}</div>
+            <span class="inline-flex shrink-0 rounded-full bg-[#E8F8EC] px-2.5 py-1 text-[10px] font-medium text-[#138A6B]">
+              {{ item.category || "--" }}
+            </span>
           </div>
         </div>
       </div>
@@ -225,3 +250,31 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.weather-hourly-strip {
+  scrollbar-width: none;
+}
+
+.weather-hourly-strip::-webkit-scrollbar {
+  height: 0;
+}
+
+.weather-hourly-strip:hover {
+  scrollbar-width: thin;
+}
+
+.weather-hourly-strip:hover::-webkit-scrollbar {
+  height: 8px;
+}
+
+.weather-hourly-strip:hover::-webkit-scrollbar-track {
+  background: #eef2ef;
+  border-radius: 999px;
+}
+
+.weather-hourly-strip:hover::-webkit-scrollbar-thumb {
+  background: #c7d4cc;
+  border-radius: 999px;
+}
+</style>

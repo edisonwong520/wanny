@@ -8,6 +8,7 @@ interface User {
   id: number;
   email: string;
   name: string;
+  token: string;
 }
 
 const STORAGE_KEY = "wanny_auth_user";
@@ -20,7 +21,8 @@ const initialState: { user: User | null } = {
 
 export const authStore = reactive(initialState);
 
-export const isAuthenticated = computed(() => !!authStore.user);
+export const isAuthenticated = computed(() => !!authStore.user?.token);
+export const authToken = computed(() => authStore.user?.token ?? "");
 
 export const currentUser = computed(() => authStore.user);
 
@@ -39,8 +41,8 @@ export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (authStore.user?.email) {
-    headers["X-Wanny-Email"] = authStore.user.email;
+  if (authStore.user?.token) {
+    headers.Authorization = `Bearer ${authStore.user.token}`;
   }
   return headers;
 }

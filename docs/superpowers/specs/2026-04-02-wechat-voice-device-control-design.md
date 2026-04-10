@@ -54,7 +54,7 @@
   - `backend/tests/integration/test_device_control_flow.py`
   - `backend/tests/integration/test_wechat_device_command.py`
 - Scripts:
-  - `backend/tests/scripts/test_wechat_device_command.py`
+  - `backend/tests/scripts/wechat_device_command_smoke.py`
   - `backend/tests/scripts/test_mijia_voice_command.py`
   - `backend/tests/scripts/test_midea_voice_command.py`
 

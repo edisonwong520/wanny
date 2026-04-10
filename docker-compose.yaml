@@ -1,0 +1,139 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-wanny}
+      MYSQL_USER: ${MYSQL_USER:-wanny}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DB_ENGINE: django.db.backends.mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: ${MYSQL_DATABASE:-wanny}
+      DB_USER: ${MYSQL_USER:-wanny}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_PERSIST_DIR: /app/chroma_data
+    volumes:
+      - backend_chroma:/app/chroma_data
+      - backend_credentials:/app/credentials
+      - backend_logs:/app/logs
+      - backend_runtime_cache:/app/runtime_cache
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    profiles:
+      - worker
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DB_ENGINE: django.db.backends.mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: ${MYSQL_DATABASE:-wanny}
+      DB_USER: ${MYSQL_USER:-wanny}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_PERSIST_DIR: /app/chroma_data
+    command: ["uv", "run", "python", "manage.py", "runworker"]
+    volumes:
+      - backend_chroma:/app/chroma_data
+      - backend_credentials:/app/credentials
+      - backend_logs:/app/logs
+      - backend_runtime_cache:/app/runtime_cache
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  wechatbot:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    profiles:
+      - wechat
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DB_ENGINE: django.db.backends.mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: ${MYSQL_DATABASE:-wanny}
+      DB_USER: ${MYSQL_USER:-wanny}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_PERSIST_DIR: /app/chroma_data
+    command: ["uv", "run", "python", "manage.py", "runwechatbot"]
+    volumes:
+      - backend_chroma:/app/chroma_data
+      - backend_credentials:/app/credentials
+      - backend_logs:/app/logs
+      - backend_runtime_cache:/app/runtime_cache
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  mysql_data:
+  redis_data:
+  backend_chroma:
+  backend_credentials:
+  backend_logs:
+  backend_runtime_cache:

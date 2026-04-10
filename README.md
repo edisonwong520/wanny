@@ -105,6 +105,7 @@ That is also why this project keeps expanding toward more device integrations an
 
 ## 📖 Project Documents
 
+- Docker deployment guide: [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).
 - The system overview lives in [2026-03-29-wanny-design.md](./docs/superpowers/specs/2026-03-29-wanny-design.md).
 - The proactive care design and implementation status lives in [2026-04-03-proactive-care-design.md](./docs/superpowers/specs/2026-04-03-proactive-care-design.md).
 - The roadmap lives in [docs/ROADMAP.md](./docs/ROADMAP.md).

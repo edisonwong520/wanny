@@ -8,6 +8,7 @@ from django.test import TestCase, Client
 from django.urls import reverse
 
 from accounts.models import Account
+from accounts.test_utils import auth_headers
 from utils.crypto import decrypt_value, encrypt_value
 from .auth_sessions import AuthorizationSessionStore
 from .clients.midea_cloud.client import MideaCloudClient
@@ -28,7 +29,7 @@ class PlatformAuthAPITest(TestCase):
             name="Provider Test",
             password="pwd",
         )
-        self.auth_headers = {"HTTP_X_WANNY_EMAIL": self.account.email}
+        self.auth_headers = auth_headers(self.account)
         self.url = reverse('providers:platform_auth_upsert')
         self.detail_url = lambda platform_name: reverse('providers:platform_auth_detail', args=[platform_name])
         self.login_url = lambda platform_name: reverse('providers:platform_auth_login', args=[platform_name])

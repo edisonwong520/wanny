@@ -1,12 +1,13 @@
-import json
 from django.utils.deprecation import MiddlewareMixin
 from django.http import JsonResponse
-from accounts.models import Account
+
+from accounts.auth import AccountTokenError, authenticate_account_token
+
 
 class AccountAuthenticationMiddleware(MiddlewareMixin):
     """
     轻量级账户鉴权中间件。
-    通过读取 HTTP Header 中的 'X-Wanny-Email' 来识别当前请求所属的账户。
+    通过校验 Authorization: Bearer <token> 来识别当前请求所属的账户。
     并将 Account 实例注入到 request.account 中供后续视图使用。
     """
     def process_request(self, request):
@@ -19,17 +20,17 @@ class AccountAuthenticationMiddleware(MiddlewareMixin):
         if any(request.path.startswith(url) for url in exempt_urls):
             return None
 
-        # 从 Header 中获取邮箱标识
-        email = request.headers.get('X-Wanny-Email')
-        
-        if not email:
-            # 如果是开发环境下的某些脚本请求，可以暂时允许，但在多租户模式下应严格校验
+        request.account = None
+
+        auth_header = request.headers.get("Authorization", "")
+        scheme, _, token = auth_header.partition(" ")
+
+        if scheme.lower() != "bearer" or not token.strip():
             return None
 
         try:
-            account = Account.objects.get(email=email)
-            request.account = account
-        except Account.DoesNotExist:
-            return JsonResponse({"error": "账户不存在或会话已过期"}, status=401)
+            request.account = authenticate_account_token(token.strip())
+        except AccountTokenError as exc:
+            return JsonResponse({"error": str(exc)}, status=401)
 
         return None

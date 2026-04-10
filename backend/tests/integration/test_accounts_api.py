@@ -1,6 +1,7 @@
 import pytest
 import json
 from accounts.models import Account
+from accounts.auth import create_account_token
 from django.urls import reverse
 
 @pytest.mark.django_db
@@ -121,6 +122,45 @@ def test_user_login_success(client):
     
     assert response.status_code == 200
     assert response.json()["data"]["name"] == "Login User"
+    assert response.json()["data"]["token"]
+
+
+@pytest.mark.django_db
+def test_bearer_token_authenticates_account(client):
+    """
+    测试已签名 bearer token 能注入 request.account。
+    """
+    account = Account.objects.create(
+        email="token-auth@example.com",
+        name="Token Auth",
+        password="x",
+    )
+
+    response = client.get(
+        reverse("comms:mission-list"),
+        HTTP_AUTHORIZATION=f"Bearer {create_account_token(account)}",
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_email_header_cannot_impersonate_account(client):
+    """
+    测试客户端不能再仅靠 X-Wanny-Email 冒充账户。
+    """
+    Account.objects.create(
+        email="victim@example.com",
+        name="Victim",
+        password="x",
+    )
+
+    response = client.get(
+        reverse("comms:mission-list"),
+        HTTP_X_WANNY_EMAIL="victim@example.com",
+    )
+
+    assert response.status_code == 401
 
 @pytest.mark.django_db
 def test_user_login_failure(client):

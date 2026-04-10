@@ -1,9 +1,11 @@
 import pytest
 import json
 import asyncio
+from uuid import uuid4
 from asgiref.sync import sync_to_async
 from django.urls import reverse
 from accounts.models import Account
+from accounts.test_utils import auth_headers
 from comms.models import Mission
 from devices.models import DeviceSnapshot, DeviceRoom, DeviceDashboardState
 
@@ -45,7 +47,7 @@ def test_multi_tenancy_isolation(client):
     url_missions = reverse('comms:mission-list')
     response_b_missions = client.get(
         url_missions,
-        HTTP_X_WANNY_EMAIL="user_b@example.com"
+        **auth_headers(user_b),
     )
     assert response_b_missions.status_code == 200
     assert len(response_b_missions.json()) == 0
@@ -53,7 +55,7 @@ def test_multi_tenancy_isolation(client):
     # 用户 A 应该能看到自己的
     response_a_missions = client.get(
         url_missions,
-        HTTP_X_WANNY_EMAIL="user_a@example.com"
+        **auth_headers(user_a),
     )
     assert response_a_missions.status_code == 200
     assert len(response_a_missions.json()) == 1
@@ -63,7 +65,7 @@ def test_multi_tenancy_isolation(client):
     url_dashboard = reverse('devices:dashboard')
     response_b_devices = client.get(
         url_dashboard,
-        HTTP_X_WANNY_EMAIL="user_b@example.com"
+        **auth_headers(user_b),
     )
     assert response_b_devices.status_code == 200
     snapshot_b = response_b_devices.json()["snapshot"]
@@ -73,7 +75,7 @@ def test_multi_tenancy_isolation(client):
     # 用户 A 应该能看到自己的
     response_a_devices = client.get(
         url_dashboard,
-        HTTP_X_WANNY_EMAIL="user_a@example.com"
+        **auth_headers(user_a),
     )
     assert response_a_devices.status_code == 200
     snapshot_a = response_a_devices.json()["snapshot"]
@@ -104,9 +106,17 @@ async def test_memory_and_profile_isolation():
     VectorStore._instance = None # 强制重新初始化
 
     try:
+        unique_suffix = uuid4().hex
+
         # 1. 准备账户
-        user_a = await sync_to_async(Account.objects.create)(email="mem_a@example.com", name="Mem A")
-        user_b = await sync_to_async(Account.objects.create)(email="mem_b@example.com", name="Mem B")
+        user_a = await sync_to_async(Account.objects.create)(
+            email=f"mem_a_{unique_suffix}@example.com",
+            name=f"Mem A {unique_suffix}",
+        )
+        user_b = await sync_to_async(Account.objects.create)(
+            email=f"mem_b_{unique_suffix}@example.com",
+            name=f"Mem B {unique_suffix}",
+        )
 
         # 2. 注入记忆 (VectorStore)
         await MemoryService.record_conversation(user_a, "user", "My secret code is 1234")

@@ -5,6 +5,7 @@ import pytest
 from django.urls import reverse
 
 from accounts.models import Account
+from accounts.test_utils import auth_headers
 from care.models import CareSuggestion, ExternalDataSource
 from devices.models import DeviceControl, DeviceSnapshot
 
@@ -45,7 +46,7 @@ def test_weather_refresh_endpoint_updates_source_and_generates_suggestion(client
     response.json.return_value = {"current": {"temperature_2m": 13.0, "weather_code": 3}}
 
     with patch("care.services.weather.requests.get", return_value=response):
-        result = client.post(reverse("care:weather_refresh"), data="{}", content_type="application/json", HTTP_X_WANNY_EMAIL=account.email)
+        result = client.post(reverse("care:weather_refresh"), data="{}", content_type="application/json", **auth_headers(account))
 
     assert result.status_code == 200
     payload = result.json()
@@ -62,7 +63,7 @@ def test_weather_source_creation_rejects_invalid_home_assistant_config(client):
         reverse("care:data_sources"),
         data='{"source_type":"ha_entity","name":"HA Weather","config":{}}',
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 400
@@ -77,7 +78,7 @@ def test_weather_source_creation_rejects_invalid_qweather_config(client):
         reverse("care:data_sources"),
         data='{"source_type":"weather_api","name":"QWeather","config":{"provider":"qweather"}}',
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 400
@@ -92,7 +93,7 @@ def test_weather_source_creation_rejects_qweather_without_endpoint(client):
         reverse("care:data_sources"),
         data='{"source_type":"weather_api","name":"QWeather","config":{"provider":"qweather","api_key":"Q0606E43B6","location":"101020100"}}',
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 400
@@ -142,13 +143,13 @@ def test_weather_refresh_flow_exposes_generated_suggestion_with_action_spec(clie
     response.json.return_value = {"current": {"temperature_2m": 12.0, "weather_code": 61}}
 
     with patch("care.services.weather.requests.get", return_value=response):
-        refresh_result = client.post(reverse("care:weather_refresh"), data="{}", content_type="application/json", HTTP_X_WANNY_EMAIL=account.email)
+        refresh_result = client.post(reverse("care:weather_refresh"), data="{}", content_type="application/json", **auth_headers(account))
 
     assert refresh_result.status_code == 200
     suggestion_id = refresh_result.json()["suggestionId"]
     assert suggestion_id is not None
 
-    suggestions_result = client.get(reverse("care:suggestions"), HTTP_X_WANNY_EMAIL=account.email)
+    suggestions_result = client.get(reverse("care:suggestions"), **auth_headers(account))
     assert suggestions_result.status_code == 200
     suggestion = suggestions_result.json()["suggestions"][0]
     assert suggestion["id"] == suggestion_id
@@ -213,7 +214,7 @@ def test_weather_refresh_supports_qweather_source(client):
             build_response({"indexes": [{"aqiDisplay": "31", "category": "Excellent", "primaryPollutant": {"name": "PM2.5"}}]}),
         ],
     ):
-        refresh_result = client.post(reverse("care:weather_refresh"), data="{}", content_type="application/json", HTTP_X_WANNY_EMAIL=account.email)
+        refresh_result = client.post(reverse("care:weather_refresh"), data="{}", content_type="application/json", **auth_headers(account))
 
     assert refresh_result.status_code == 200
     payload = refresh_result.json()

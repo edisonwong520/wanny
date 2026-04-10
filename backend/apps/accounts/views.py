@@ -5,6 +5,7 @@ from accounts.models import Account
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.contrib.auth.hashers import make_password, check_password
+from accounts.auth import create_account_token
 
 
 def _error(message: str, status: int, *, code: str | None = None):
@@ -48,7 +49,8 @@ def login_user(request):
             "data": {
                 "id": account.id,
                 "email": account.email,
-                "name": account.name
+                "name": account.name,
+                "token": create_account_token(account),
             }
         })
         
@@ -105,7 +107,8 @@ def register_user(request):
             "data": {
                 "id": account.id,
                 "email": account.email,
-                "name": account.name
+                "name": account.name,
+                "token": create_account_token(account),
             }
         }, status=201)
         

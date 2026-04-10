@@ -241,7 +241,7 @@ def _extract_temperature(cls, payload: dict, config: dict) -> float | None:
 ```http
 POST /care/data-sources
 Content-Type: application/json
-X-Wanny-Email: user@example.com
+Authorization: Bearer <account-token>
 
 {
   "source_type": "weather_api",
@@ -346,7 +346,7 @@ def test_create_qweather_data_source(client):
             "fetch_frequency": "30m",
         }),
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
     assert response.status_code == 201
     source = ExternalDataSource.objects.get(account=account)
@@ -363,7 +363,7 @@ def test_qweather_data_source_validation_requires_api_key(client):
             "config": {"provider": "qweather", "location": "101010100"},
         }),
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
     assert response.status_code == 400
     assert "api_key" in response.json()["error"]

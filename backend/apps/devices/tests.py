@@ -9,6 +9,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from accounts.models import Account
+from accounts.test_utils import auth_headers
 from devices.management.commands.runworker import Command as RunWorkerCommand
 from providers.models import PlatformAuth
 
@@ -1659,7 +1660,7 @@ class DeviceDashboardApiTest(TestCase):
         self.env_patcher.stop()
 
     def test_dashboard_endpoint_returns_pending_snapshot_when_worker_has_not_run(self):
-        response = self.client.get(self.dashboard_url, HTTP_X_WANNY_EMAIL=self.account.email)
+        response = self.client.get(self.dashboard_url, **auth_headers(self.account))
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -1680,7 +1681,7 @@ class DeviceDashboardApiTest(TestCase):
         ):
             DeviceDashboardService.refresh(self.account, trigger="test")
 
-        response = self.client.get(self.dashboard_url, HTTP_X_WANNY_EMAIL=self.account.email)
+        response = self.client.get(self.dashboard_url, **auth_headers(self.account))
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -1690,7 +1691,7 @@ class DeviceDashboardApiTest(TestCase):
         self.assertEqual(payload["snapshot"]["devices"][0]["controls"][1]["label"], "冷藏区温度")
 
     def test_refresh_endpoint_queues_worker_refresh(self):
-        response = self.client.post(self.refresh_url, HTTP_X_WANNY_EMAIL=self.account.email)
+        response = self.client.post(self.refresh_url, **auth_headers(self.account))
 
         self.assertEqual(response.status_code, 202)
         payload = response.json()
@@ -1743,7 +1744,7 @@ class DeviceDashboardApiTest(TestCase):
 
         response = self.client.get(
             f"{self.list_url}?platforms=mijia&platforms=home_assistant",
-            HTTP_X_WANNY_EMAIL=self.account.email,
+            **auth_headers(self.account),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1791,7 +1792,7 @@ class DeviceDashboardApiTest(TestCase):
             sort_order=0,
         )
 
-        response = self.client.get(self.list_url, HTTP_X_WANNY_EMAIL=self.account.email)
+        response = self.client.get(self.list_url, **auth_headers(self.account))
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -1873,7 +1874,7 @@ class DeviceDashboardApiTest(TestCase):
             value="off",
         )
 
-        response = self.client.get(self.list_url, HTTP_X_WANNY_EMAIL=self.account.email)
+        response = self.client.get(self.list_url, **auth_headers(self.account))
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -1931,7 +1932,7 @@ class DeviceDashboardApiTest(TestCase):
             reverse("devices:device_list_reorder"),
             data=json.dumps({"device_ids": [third.external_id, first.external_id]}),
             content_type="application/json",
-            HTTP_X_WANNY_EMAIL=self.account.email,
+            **auth_headers(self.account),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1968,7 +1969,7 @@ class DeviceDashboardApiTest(TestCase):
                 url,
                 data='{"action":"turn_off"}',
                 content_type="application/json",
-                HTTP_X_WANNY_EMAIL=self.account.email,
+                **auth_headers(self.account),
             )
 
         self.assertEqual(response.status_code, 200)

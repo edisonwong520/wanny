@@ -16,7 +16,7 @@ from accounts.models import Account
 from comms.services import WeChatService
 from devices.models import DeviceControl, DeviceRoom, DeviceSnapshot
 from providers.models import PlatformAuth
-from tests.scripts.test_wechat_device_command import ensure_required_schema, reset_fixture
+from tests.scripts.wechat_device_command_smoke import ensure_required_schema, reset_fixture
 
 
 class FakeBot:

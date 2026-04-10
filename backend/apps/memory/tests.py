@@ -7,6 +7,7 @@ from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 from accounts.models import Account
+from accounts.test_utils import auth_headers
 from memory.models import UserProfile
 from memory.review import parse_review_hours, should_run_review_now
 from memory.services import (
@@ -76,7 +77,7 @@ class UserProfileFeatureTests(TestCase):
             name="Memory Test",
             password="pwd",
         )
-        self.auth_headers = {"HTTP_X_WANNY_EMAIL": self.account.email}
+        self.auth_headers = auth_headers(self.account)
 
     def test_manual_profile_api_marks_profile_as_user_edited(self):
         response = self.client.post(

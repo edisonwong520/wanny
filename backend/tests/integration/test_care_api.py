@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.urls import reverse
 
 from accounts.models import Account
+from accounts.test_utils import auth_headers
 from care.models import CareSuggestion, ExternalDataSource, InspectionRule
 from devices.models import DeviceControl, DeviceSnapshot
 from memory.models import ProactiveLog, UserProfile
@@ -55,7 +56,7 @@ def test_care_suggestion_feedback_approve_creates_mission(client):
         reverse("care:suggestion_feedback", args=[suggestion.id]),
         data=json.dumps({"action": "approve"}),
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 200
@@ -101,7 +102,7 @@ def test_care_run_inspection_endpoint_creates_suggestion(client):
         reverse("care:run_inspection"),
         data="{}",
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 200
@@ -148,7 +149,7 @@ def test_care_feedback_updates_logs_and_profiles(client):
         reverse("care:suggestion_feedback", args=[suggestion.id]),
         data=json.dumps({"action": "approve"}),
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 200
@@ -171,7 +172,7 @@ def test_create_rule_rejects_invalid_condition_spec(client):
             }
         ),
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 400
@@ -198,7 +199,7 @@ def test_system_rule_can_toggle_active_but_cannot_edit_fields(client):
         reverse("care:rule_detail", args=[rule.id]),
         data=json.dumps({"is_active": False}),
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert toggle_response.status_code == 200
@@ -209,7 +210,7 @@ def test_system_rule_can_toggle_active_but_cannot_edit_fields(client):
         reverse("care:rule_detail", args=[rule.id]),
         data=json.dumps({"name": "被改掉的系统规则"}),
         content_type="application/json",
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert update_response.status_code == 400
@@ -242,7 +243,7 @@ def test_care_suggestion_list_includes_semantic_aggregation_sources_for_rules(cl
 
     response = client.get(
         reverse("care:suggestions"),
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 200
@@ -276,7 +277,7 @@ def test_care_suggestion_list_includes_semantic_aggregation_sources_for_weather(
 
     response = client.get(
         reverse("care:suggestions"),
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 200
@@ -309,7 +310,7 @@ def test_care_suggestion_list_includes_push_audit(client):
 
     response = client.get(
         reverse("care:suggestions"),
-        HTTP_X_WANNY_EMAIL=account.email,
+        **auth_headers(account),
     )
 
     assert response.status_code == 200
@@ -356,8 +357,8 @@ def test_run_inspection_flow_merges_repeated_hits_into_existing_suggestion(clien
         cooldown_hours=24,
     )
 
-    first = client.post(reverse("care:run_inspection"), data="{}", content_type="application/json", HTTP_X_WANNY_EMAIL=account.email)
-    second = client.post(reverse("care:run_inspection"), data="{}", content_type="application/json", HTTP_X_WANNY_EMAIL=account.email)
+    first = client.post(reverse("care:run_inspection"), data="{}", content_type="application/json", **auth_headers(account))
+    second = client.post(reverse("care:run_inspection"), data="{}", content_type="application/json", **auth_headers(account))
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -410,7 +411,7 @@ def test_execute_suggestion_api_returns_failed_status_when_device_operation_fail
             reverse("care:suggestion_execute", args=[suggestion.id]),
             data=json.dumps({"confirmed": True}),
             content_type="application/json",
-            HTTP_X_WANNY_EMAIL=account.email,
+            **auth_headers(account),
         )
 
     assert response.status_code == 200
